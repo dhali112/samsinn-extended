@@ -6,7 +6,7 @@ import {
   collectEnvelopeLatLngs,
   MARKER_ICONS,
   type ValidatedMap,
-} from './map.ts'
+} from './schema.ts'
 
 const expectOk = (r: ValidatedMap): Extract<ValidatedMap, { ok: true }> => {
   if (!r.ok) throw new Error(`expected ok; got errors: ${formatMapErrors(r.errors)}`)
