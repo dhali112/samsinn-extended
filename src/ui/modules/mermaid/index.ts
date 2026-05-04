@@ -2,8 +2,6 @@
 //
 //   renderMermaidBlocks(container) — post-processes ```mermaid code fences
 //     inside a rendered markdown container (used by chat message rendering).
-//   renderMermaidSource(container, source) — renders a raw mermaid string
-//     into a container (used by the mermaid artifact renderer).
 //   reRenderAllMermaid() — re-renders every live mermaid node on the page
 //     with the current theme (called on theme flip).
 //
@@ -67,37 +65,6 @@ export const renderMermaidBlocks = async (container: HTMLElement): Promise<void>
       showRenderFallback(wrapper, rawSource, 'render-failed')
       pre.replaceWith(wrapper)
     }
-  }
-}
-
-export const renderMermaidSource = async (
-  container: HTMLElement,
-  source: string,
-): Promise<void> => {
-  const api = await ensureMermaid()
-
-  if (!api) {
-    showRenderFallback(container, source, 'unavailable')
-    return
-  }
-
-  if (isOversized(source)) {
-    showRenderFallback(container, source, 'too-large')
-    return
-  }
-
-  const normalised = normaliseMermaidSource(source)
-  try {
-    const id = `mermaid-${Date.now()}`
-    const { svg } = await api.render(id, normalised)
-    container.className = 'my-2 overflow-auto max-h-[60vh]'
-    container.setAttribute('data-mermaid-source', normalised)
-    container.setAttribute('role', 'img')
-    const firstLine = normalised.split('\n', 1)[0]?.trim() ?? 'Diagram'
-    container.setAttribute('aria-label', `Diagram: ${firstLine.slice(0, 60)}`)
-    container.innerHTML = svg
-  } catch {
-    showRenderFallback(container, source, 'render-failed')
   }
 }
 

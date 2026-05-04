@@ -2,7 +2,7 @@
 
 **A multi-agent collaboration system.** Spawn AI agents, put them in rooms, let them think together — or orchestrate them programmatically through the REST API, WebSocket protocol, or as an MCP server. Run as a personal sandbox locally, or self-host on a small VPS with one isolated *instance* per user.
 
-> v0.9.2 — [Changelog](#changelog) · [Deploy runbook](deploy/RUNBOOK.md)
+> v0.10.0 — [Changelog](#changelog) · [Deploy runbook](deploy/RUNBOOK.md)
 
 ---
 
@@ -191,10 +191,7 @@ Bind GitHub-hosted [`llm-wiki-skills`](https://github.com/michaelhil/llm-wiki-sk
 
 ### Maps (OpenStreetMap)
 
-Agents can render interactive maps in two ways:
-
-- **Inline in a message** — fence with ` ```map ` (custom envelope) or ` ```geojson ` (raw FeatureCollection). Renders once into the message.
-- **As a persistent artifact** — `add_artifact { type: "map", body: { ... } }`. Lives in the workspace pane and re-renders on `update_artifact` — perfect for live tracking (VATSIM flights, vehicle positions).
+Agents render interactive maps inline in a message: fence with ` ```map ` (custom envelope) or ` ```geojson ` (raw FeatureCollection). Renders once into the message.
 
 **Custom envelope** (easier to teach to weaker agents):
 
@@ -221,8 +218,6 @@ Agents can render interactive maps in two ways:
 { "type": "FeatureCollection", "features": [ ... ] }
 ```
 ````
-
-**Live VATSIM tracking pattern**: configure a per-agent trigger that fires every 30 s, calls `vatsim_traffic`, then `update_artifact` with the new feature list. The map artifact re-renders in place — no new chat message per tick.
 
 **Tile policy**: Maps use OSM tiles (`*.tile.openstreetmap.org`). OSM's [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) limits heavy automated load — keep refresh intervals reasonable (≥10 s) for live feeds, or self-host tiles if you need higher volume.
 
@@ -511,7 +506,7 @@ The runner itself — spec-file loader, variant orchestrator, result aggregator 
 
 ## Observational logging
 
-For research on **live** sessions (control-room studies, usage audits, retrospective analysis of operator ↔ agent interactions), samsinn can write an append-only JSONL event stream capturing everything significant: messages with full telemetry and tool-call traces, room lifecycle, agent evaluation events, provider routing, artifact changes, summaries.
+For research on **live** sessions (control-room studies, usage audits, retrospective analysis of operator ↔ agent interactions), samsinn can write an append-only JSONL event stream capturing everything significant: messages with full telemetry and tool-call traces, room lifecycle, agent evaluation events, provider routing, summaries.
 
 Opt in at boot via `SAMSINN_LOG_ENABLED=1`, or at runtime via `PUT /api/logging` or the `configure_logging` MCP tool — no restart needed. Change session id, directory, or kind filter live.
 
@@ -665,7 +660,7 @@ Models with native function-calling (e.g. `qwen2.5`, `llama3.1`) use the OpenAI 
 
 ```
 src/
-  core/                   — House, Room, Team, snapshot, registry, paths, artifacts
+  core/                   — House, Room, Team, snapshot, registry, paths
   agents/                 — AI + human agents, spawn, evaluation, history, concurrency
   llm/                    — ProviderRouter, gateways (Ollama + OpenAI-compat cloud), errors
   tools/                  — Built-in tools + filesystem loader for drop-ins
@@ -679,7 +674,7 @@ src/
 
 tools/                    — External drop-in tools (auto-loaded at startup)
 deploy/                   — Caddyfile, samsinn.service, RUNBOOK.md
-docs/                     — User docs (tools, packs, logging, artifacts, getting-started)
+docs/                     — User docs (tools, packs, logging, getting-started)
 notes/research/           — Design exploration & research notes (not user-facing)
 ```
 
@@ -754,7 +749,7 @@ Tests cover: room logic, delivery modes, agent behaviour, tool execution, snapsh
 
 **Tool protocol** — agents using text-protocol models produce `::TOOL::` lines which are parsed and executed in a ReAct loop. Agents using native-capable models use structured tool calls. The `ToolCapabilityCache` detects capability once per model and caches the result. Tool results are truncated to 4,000 characters by default to prevent context overflow; this limit is configurable per agent via `maxToolResultChars` in `AIAgentConfig`.
 
-**LLM context structure** — every agent evaluation assembles: house rules → room prompt → agent system prompt → skills (scope-matched behavioral templates) → auto-generated context (room, participants, artifacts, tools) → response format → history (old + `[NEW]` tagged recent messages). The `context-builder.ts` is the single source of truth for what agents see.
+**LLM context structure** — every agent evaluation assembles: house rules → room prompt → agent system prompt → skills (scope-matched behavioral templates) → auto-generated context (room, participants, tools) → response format → history (old + `[NEW]` tagged recent messages). The `context-builder.ts` is the single source of truth for what agents see.
 
 **External tools** — the `loadExternalTools()` function scans `./tools/`, `~/.samsinn/tools/`, and `SAMSINN_TOOLS_DIR` for `.ts` files with a default Tool or Tool[] export. Loaded before snapshot restore so restored agents have access to them. Conflicts with built-in tool names are silently skipped.
 
@@ -768,6 +763,7 @@ Tests cover: room logic, delivery modes, agent behaviour, tool execution, snapsh
 
 | Version | Changes |
 |---|---|
+| v0.10.0 | **Artifact + workspace system removed.** Task lists, polls, documents, mermaid artifacts, and the Workspace UI pane are gone. Agents handle the same workflows conversationally or via the script engine. Mermaid + map render inline as fenced code blocks in chat (already supported). Removed surfaces: `add_artifact`/`update_artifact`/`remove_artifact`/`cast_vote`/`list_artifacts`/`list_artifact_types` (built-in + MCP); `write_document_section`; `GET/POST/PUT/DELETE /api/artifacts*`; `GET /api/rooms/:name/artifacts`; `add_artifact`/`update_artifact`/`remove_artifact`/`cast_vote` WS commands and `artifact_changed`/`artifact_created` WS events; `artifact.changed` JSONL kind; `ctx_artifacts` context section; `system.house.artifacts`/`artifactTypes`/`setOnArtifactChanged`. **Snapshot v17 → v18 (clean break)** — old snapshots are rejected at load. **Net: ~2700 LOC across 28 files deleted, ~20 edited.** **One fewer of everything**: `lateBinding` slot, `HouseCallbacks` callback, `System` setter, JSONL log kind, ContextSection, MCP tool group. |
 | v0.9.2 | **WS hardening sweep.** Closed the backpressure consistency gap left by v0.9.1 — command-handler responses (post_message, activation_result, artifact_created, all error paths) now route through `wsManager.safeSend` so the 8 MB cap covers ~50% more send traffic. `buildSnapshot` no longer fabricates an empty shell when the instance is evicted between WS upgrade and snapshot build — closes the socket with custom code 4001 ("instance unavailable") instead, client reconnects honestly. New TTL sweep (hourly) drops sessions whose WS has been closed >7d AND removes the inactive human agent — bounds the only previously-unbounded WS map; counted via `staleSessionsEvicted`. UI exponential reconnect backoff (1/2/4/8/16/30s, reset on onopen) replaces the fixed 2s retry. Dropped the `ollama_metrics` WS push entirely — dashboard now polls `GET /api/ollama/metrics` every 3s while open; net deletion + the WSInbound discriminated union becomes truly exhaustive (no more untyped escape hatch). |
 | v0.9.1 | **Caps & limits hardening.** Bound WS send queue per client (8 MB) — slow consumers are closed with 1009 instead of growing memory unbounded; reconnect path is unchanged. Replaced rate-limit GC sweep with a true LRU bound (4096 keys) — defends direct-exposure deploys from unique-IP map exhaustion. New `LimitMetrics` counter object on `SharedRuntime` tracks `sseBufferExceeded`, `evictionFlushRetries`, `evictionForceEvicts`, `wsBackpressureDropped`, `rateLimitEvicted` — surfaced via auth-gated `GET /api/system/limits`. Documented LRU bypass limitation (acceptable behind Caddy). |
 | v0.9.0 | **Script engine v2 + audit hardening.** Scripts are now markdown-source (`$SAMSINN_HOME/scripts/<name>/script.md`); reactive runner subscribed to `onMessagePosted`; two-LLM whisper classification; context-builder bypass for cast members; settings modal + room-header start/status chip; `write_script` tool. Safety: per-tick liveness check (auto-abort if cast leaves room); whisper consecutive-failure circuit breaker (5 fallbacks → stop with stage card); 256 KB cap on script source. **LLM hardening**: bounded SSE re-assembly buffer (10 MB); `Retry-After` past dates → undefined (was 0, collapsed cooldown); Ollama `toolChoice` warning surfaced once-per-pair (was silently dropped); `/api/providers/:name/test-model` truncates upstream 5xx body to 500 chars. **Persistence**: incompatible snapshot version logs at error (was warn); eviction flush retries 5/15/60s before force-evict with ERROR; per-type `validateBody` drops corrupt artifact bodies on snapshot load instead of crashing rehydrate. **Security**: regression test for global auth gate (covers shutdown + providers); defense-in-depth `assertValidInstanceId` inside `instancePaths()`/`trashPath()`. Snapshot v13. |

@@ -65,7 +65,6 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
 
   const includeContextShape = z.object({
     participants: z.boolean().optional(),
-    artifacts: z.boolean().optional(),
     activity: z.boolean().optional(),
     knownAgents: z.boolean().optional(),
   }).optional()
@@ -86,7 +85,7 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
       tags: z.array(z.string()).optional().describe('Capability/role tags enabling [[tag:X]] addressing.'),
       thinking: z.boolean().optional().describe('Enable model chain-of-thought (qwen3 thinking mode, etc.).'),
       includePrompts: includePromptsShape.describe('Per-section prompt inclusion gates. All default to true. See tool description for UI-label mapping.'),
-      includeContext: includeContextShape.describe('CONTEXT sub-section toggles (participants/artifacts/activity/knownAgents). All default to true.'),
+      includeContext: includeContextShape.describe('CONTEXT sub-section toggles (participants/activity/knownAgents). All default to true.'),
       includeTools: z.boolean().optional().describe('Master switch — send tool definitions to LLM at all (default: true).'),
       promptsEnabled: z.boolean().optional().describe('Master switch for all includePrompts sections (false = every section off, default: true).'),
       contextEnabled: z.boolean().optional().describe('Master switch for all includeContext sub-sections (default: true).'),
@@ -193,7 +192,6 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
       }).optional().describe('Prompt-section toggles. Partial — only provided keys change.'),
       includeContext: z.object({
         participants: z.boolean().optional(),
-        artifacts: z.boolean().optional(),
         activity: z.boolean().optional(),
         knownAgents: z.boolean().optional(),
       }).optional().describe('CONTEXT sub-section toggles. Partial.'),

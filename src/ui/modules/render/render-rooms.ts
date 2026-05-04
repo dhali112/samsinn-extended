@@ -1,13 +1,6 @@
-// Room list + artifact list rendering.
+// Room list rendering.
 
-import type { RoomProfile, ArtifactInfo, ArtifactAction } from '../render/render-types.ts'
-import {
-  renderTaskListArtifact,
-  renderPollArtifact,
-  renderDocumentArtifact,
-  renderMermaidArtifact,
-  renderGenericArtifact,
-} from '../artifact-renderers.ts'
+import type { RoomProfile } from '../render/render-types.ts'
 
 export interface RenderRoomsOptions {
   rooms: Record<string, RoomProfile>
@@ -67,28 +60,5 @@ export const renderRooms = (
 
     div.onclick = () => opts.onSelect(room.id)
     container.appendChild(div)
-  }
-}
-
-export const renderArtifacts = (
-  container: HTMLElement,
-  artifacts: ReadonlyArray<ArtifactInfo>,
-  myAgentId: string,
-  onAction: (action: ArtifactAction) => void,
-): void => {
-  container.innerHTML = ''
-  for (const artifact of artifacts) {
-    const wrap = document.createElement('div')
-    wrap.className = 'py-1 border-b border-border last:border-0'
-    let inner: HTMLElement
-    if (artifact.type === 'task_list') inner = renderTaskListArtifact(artifact, onAction)
-    else if (artifact.type === 'poll') inner = renderPollArtifact(artifact, myAgentId, onAction)
-    else if (artifact.type === 'document') inner = renderDocumentArtifact(artifact, onAction)
-    else if (artifact.type === 'mermaid') inner = renderMermaidArtifact(artifact, onAction)
-    // 'map' artifact type intentionally dropped — maps render inline.
-    // Any orphaned legacy map artifacts fall through to the generic renderer.
-    else inner = renderGenericArtifact(artifact, onAction)
-    wrap.appendChild(inner)
-    container.appendChild(wrap)
   }
 }

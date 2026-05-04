@@ -1,6 +1,6 @@
 // ============================================================================
-// Room-data fetchers — HTTP GET for the three per-room collections that
-// populate on room selection (messages, members, artifacts).
+// Room-data fetchers — HTTP GET for the per-room collections that populate
+// on room selection (messages, members).
 //
 // Each function writes into the appropriate nanostore. Failures log to
 // console.error via safeFetchJson — acceptable noise for room-data fetches
@@ -8,8 +8,8 @@
 // ============================================================================
 
 import { safeFetchJson } from './fetch-helpers.ts'
-import { $roomMessages, $roomMembers, $artifacts } from './stores.ts'
-import type { RoomProfile, UIMessage, ArtifactInfo } from './render/render-types.ts'
+import { $roomMessages, $roomMembers } from './stores.ts'
+import type { RoomProfile, UIMessage } from './render/render-types.ts'
 
 export const fetchRoomMessages = async (_roomId: string, roomName: string): Promise<void> => {
   const data = await safeFetchJson<{ profile: RoomProfile; messages: UIMessage[] }>(
@@ -25,12 +25,4 @@ export const fetchRoomMembers = async (roomId: string, roomName: string): Promis
   )
   if (!members) return
   $roomMembers.setKey(roomId, members.map(m => m.id))
-}
-
-export const fetchRoomArtifacts = async (_roomId: string, roomName: string): Promise<void> => {
-  const artifacts = await safeFetchJson<ArtifactInfo[]>(
-    `/api/rooms/${encodeURIComponent(roomName)}/artifacts`,
-  )
-  if (!artifacts) return
-  for (const a of artifacts) $artifacts.setKey(a.id, a)
 }

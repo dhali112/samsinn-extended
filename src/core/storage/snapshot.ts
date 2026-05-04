@@ -7,7 +7,12 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v17: current. Adds per-agent `triggers` (scheduled prompts) on AIAgentConfig
+// v18: current. Removes the artifact subsystem entirely (task_list, poll,
+// document, mermaid, map artifact types). Mermaid + map are now inline-only
+// via fenced code blocks in chat. The other types had no inline replacement
+// and are gone. Snapshots from v17 are rejected at load (clean break per
+// project policy).
+// v17: adds per-agent `triggers` (scheduled prompts) on AIAgentConfig
 // and HumanAgentSnapshot. Both AI and human agents support triggers. The
 // scheduler runs server-side; persisted state is the trigger list +
 // lastFiredAt timestamps so triggers resume across restart. Cascade-cleaned
@@ -30,7 +35,6 @@
 // ============================================================================
 
 import type { Agent, AIAgentConfig } from '../types/agent.ts'
-import type { Artifact } from '../types/artifact.ts'
 import type { DeliveryMode, Message, RoomProfile } from '../types/messaging.ts'
 import type { Bookmark, Room } from '../types/room.ts'
 import type { SummaryConfig } from '../types/summary.ts'
@@ -41,7 +45,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 17
+export const SNAPSHOT_VERSION = 18
 
 // --- Snapshot schema ---
 
@@ -74,12 +78,11 @@ export interface HumanAgentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '17'
+  readonly version: '18'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
   readonly humans: ReadonlyArray<HumanAgentSnapshot>        // human agents
-  readonly artifacts: ReadonlyArray<Artifact>
   readonly bookmarks?: ReadonlyArray<Bookmark>
   readonly ollamaUrls?: ReadonlyArray<string>
   readonly ollamaUrl?: string
@@ -94,9 +97,6 @@ interface SerializableSystem {
     readonly getRoomsForAgent: (agentId: string) => ReadonlyArray<Room>
     readonly getHousePrompt: () => string
     readonly getResponseFormat: () => string
-    readonly artifacts: {
-      readonly list: (filter?: { includeResolved?: boolean }) => ReadonlyArray<Artifact>
-    }
     readonly listBookmarks: () => ReadonlyArray<Bookmark>
   }
   readonly team: {
@@ -157,16 +157,12 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
     }
   }
 
-  // Include all artifacts (resolved and unresolved) for full state persistence
-  const artifacts = system.house.artifacts.list({ includeResolved: true })
-
   return {
-    version: '17',
+    version: '18',
     timestamp: Date.now(),
     rooms,
     agents,
     humans,
-    artifacts: [...artifacts],
     bookmarks: [...system.house.listBookmarks()],
     ...(system.ollamaUrls ? {
       ollamaUrls: system.ollamaUrls.list(),
@@ -186,9 +182,9 @@ const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
 // --- Save / Load ---
 
 // A snapshot is "skippable" iff persisting it adds no value the user would
-// notice — i.e. truly empty (no rooms, no agents, no artifacts, no
-// bookmarks). Used by createAutoSaver to skip persistence when seeding is
-// disabled (SAMSINN_SEED_EXAMPLE=0) and nothing was created.
+// notice — i.e. truly empty (no rooms, no agents, no bookmarks). Used by
+// createAutoSaver to skip persistence when seeding is disabled
+// (SAMSINN_SEED_EXAMPLE=0) and nothing was created.
 //
 // Previously this also recognized "seed-only" snapshots (1 Cafe + 1 AI + 1
 // Human + no chat) as skippable to avoid drive-by visitors leaving dirs on
@@ -199,7 +195,6 @@ const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
 // cleanup.ts: demote idle → trash after 48h, purge after 7d). The auth-
 // gated prod deploy bounds drive-by traffic; one snapshot file is ~5–20KB.
 export const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
-  if (snap.artifacts && snap.artifacts.length > 0) return false
   if (snap.bookmarks && snap.bookmarks.length > 0) return false
   return snap.rooms.length === 0 && snap.agents.length === 0
 }
@@ -243,12 +238,6 @@ interface RestorableSystem {
     readonly restoreRoom: (profile: RoomProfile) => Room
     readonly setHousePrompt: (prompt: string) => void
     readonly setResponseFormat: (format: string) => void
-    readonly artifacts: {
-      readonly restore: (artifacts: ReadonlyArray<Artifact>) => void
-    }
-    readonly artifactTypes?: {
-      readonly get: (type: string) => { readonly validateBody?: (body: unknown) => boolean } | undefined
-    }
     readonly restoreBookmarks: (entries: ReadonlyArray<Bookmark>) => void
   }
   readonly spawnAIAgent: (config: AIAgentConfig, options?: { overrideId?: string }) => Promise<unknown>
@@ -327,23 +316,7 @@ export const restoreFromSnapshot = async (
     }
   }
 
-  // 4. Restore artifacts. Drop any whose body fails the type-defined
-  // validateBody guard — a single corrupt entry shouldn't crash later
-  // rendering or break the whole rehydrate.
-  const incoming = snapshot.artifacts ?? []
-  const types = system.house.artifactTypes
-  const valid: Artifact[] = []
-  for (const a of incoming) {
-    const def = types?.get(a.type)
-    if (def?.validateBody && !def.validateBody(a.body)) {
-      console.error(`[snapshot] dropping artifact ${a.id} (${a.type}) "${a.title}": body failed validateBody`)
-      continue
-    }
-    valid.push(a)
-  }
-  system.house.artifacts.restore(valid)
-
-  // 4b. Restore bookmarks (system-wide)
+  // 4. Restore bookmarks (system-wide)
   system.house.restoreBookmarks(snapshot.bookmarks ?? [])
 
   // 5. Restore Ollama URLs

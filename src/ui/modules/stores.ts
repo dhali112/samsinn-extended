@@ -8,7 +8,7 @@
 
 import { atom, map, computed, batched } from '../lib/nanostores.ts'
 import type { ReadableAtom, MapStore } from '../lib/nanostores.ts'
-import type { UIMessage, AgentInfo, RoomProfile, ArtifactInfo } from './render/render-types.ts'
+import type { UIMessage, AgentInfo, RoomProfile } from './render/render-types.ts'
 
 // === Types ===
 
@@ -25,7 +25,7 @@ export interface AgentEntry {
 }
 
 // Re-export for convenience
-export type { UIMessage, AgentInfo, RoomProfile, ArtifactInfo }
+export type { UIMessage, AgentInfo, RoomProfile }
 
 // === Identity ===
 
@@ -166,19 +166,6 @@ export const $visibleThinkingIndicators: ReadableAtom<ReadonlyArray<IndicatorSta
 // === Messages (per room, lazily populated on selection) ===
 
 export const $roomMessages = map<Record<string, UIMessage[]>>({})
-
-// === Artifacts ===
-
-export const $artifacts = map<Record<string, ArtifactInfo>>({})
-
-/** Artifacts scoped to the currently selected room. */
-export const $selectedRoomArtifacts: ReadableAtom<ArtifactInfo[]> = computed(
-  [$artifacts, $selectedRoomId],
-  (artifacts: Record<string, ArtifactInfo>, roomId: string | null) => {
-    if (!roomId) return []
-    return Object.values(artifacts).filter(a => a.scope?.includes(roomId))
-  },
-)
 
 // === Thinking state (streaming preview) ===
 

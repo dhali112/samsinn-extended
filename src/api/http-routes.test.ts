@@ -8,7 +8,6 @@ import { createHouse } from '../core/house.ts'
 import { createTeam } from '../agents/team.ts'
 import { createToolRegistry } from '../core/tool-registry.ts'
 import { createLimitMetrics } from '../core/limit-metrics.ts'
-import { createTaskListArtifactType } from '../core/artifact-types/task-list.ts'
 import type { DeliverFn } from '../core/types/messaging.ts'
 import type { WSOutbound } from '../core/types/ws-protocol.ts'
 import type { System } from '../main.ts'
@@ -22,7 +21,6 @@ const TEST_INSTANCE_ID = 'test-instance'
 
 const makeSystem = (): System => {
   const house = createHouse({ deliver: noopDeliver })
-  house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
   const team = createTeam()
   const toolRegistry = createToolRegistry()
   const ollama = {
@@ -54,7 +52,6 @@ const makeSystem = (): System => {
     setOnTurnChanged: () => {},
     setOnDeliveryModeChanged: () => {},
     setOnModeAutoSwitched: () => {},
-    setOnArtifactChanged: () => {},
     setOnRoomCreated: () => {},
     setOnRoomDeleted: () => {},
     setOnMembershipChanged: () => {},
@@ -182,73 +179,6 @@ describe('HTTP Routes', () => {
   test('PUT /api/rooms/:name/mute with missing agentName returns 400', async () => {
     const res = await call(system, req('PUT', '/api/rooms/TestRoom/mute', { muted: true }), '/api/rooms/TestRoom/mute')
     expect(res?.status).toBe(400)
-  })
-
-  // --- Artifacts ---
-
-  test('GET /api/rooms/:name/artifacts returns empty array initially', async () => {
-    const res = await call(system, req('GET', '/api/rooms/TestRoom/artifacts'), '/api/rooms/TestRoom/artifacts')
-    expect(res?.status).toBe(200)
-    expect(await res!.json()).toHaveLength(0)
-  })
-
-  test('GET /api/artifacts returns all artifacts', async () => {
-    const room = system.house.getRoom('TestRoom')!
-    system.house.artifacts.add({ type: 'task_list', title: 'Tasks', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester' })
-    const res = await call(system, req('GET', '/api/artifacts'), '/api/artifacts')
-    expect(res?.status).toBe(200)
-    const data = await res!.json() as unknown[]
-    expect(data.length).toBeGreaterThanOrEqual(1)
-  })
-
-  test('POST /api/artifacts creates artifact', async () => {
-    const res = await call(system, req('POST', '/api/artifacts', {
-      artifactType: 'task_list',
-      title: 'Sprint',
-      body: { tasks: [] },
-      scope: ['TestRoom'],
-    }), '/api/artifacts')
-    expect(res?.status).toBe(201)
-    const data = await res!.json() as { title: string; type: string; id: string }
-    expect(data.title).toBe('Sprint')
-    expect(data.type).toBe('task_list')
-    expect(typeof data.id).toBe('string')
-  })
-
-  test('POST /api/artifacts missing artifactType returns 400', async () => {
-    const res = await call(system, req('POST', '/api/artifacts', { title: 'No Type', body: {} }), '/api/artifacts')
-    expect(res?.status).toBe(400)
-  })
-
-  test('PUT /api/artifacts/:id updates artifact', async () => {
-    const room = system.house.getRoom('TestRoom')!
-    const artifact = system.house.artifacts.add({ type: 'task_list', title: 'Old', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester' })
-    const path = `/api/artifacts/${artifact.id}`
-    const res = await call(system, req('PUT', path, { title: 'New Title' }), path)
-    expect(res?.status).toBe(200)
-    const data = await res!.json() as { title: string }
-    expect(data.title).toBe('New Title')
-  })
-
-  test('PUT /api/artifacts/:id unknown id returns 404', async () => {
-    const path = '/api/artifacts/no-such-id'
-    const res = await call(system, req('PUT', path, { title: 'X' }), path)
-    expect(res?.status).toBe(404)
-  })
-
-  test('DELETE /api/artifacts/:id removes artifact', async () => {
-    const room = system.house.getRoom('TestRoom')!
-    const artifact = system.house.artifacts.add({ type: 'task_list', title: 'Doomed', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester' })
-    const path = `/api/artifacts/${artifact.id}`
-    const res = await call(system, req('DELETE', path), path)
-    expect(res?.status).toBe(200)
-    expect(system.house.artifacts.get(artifact.id)).toBeUndefined()
-  })
-
-  test('DELETE /api/artifacts/:id unknown id returns 404', async () => {
-    const path = '/api/artifacts/no-such-id'
-    const res = await call(system, req('DELETE', path), path)
-    expect(res?.status).toBe(404)
   })
 
   // --- Members ---

@@ -272,8 +272,6 @@ export const spawnAIAgent = async (
     ...toolSupport,
     getHousePrompt: () => house.getHousePrompt(),
     getResponseFormat: () => house.getResponseFormat(),
-    getArtifactsForScope: (roomId: string) => house.artifacts.getForScope(roomId),
-    getArtifactTypeDef: (type: string) => house.artifactTypes.get(type),
     getCompressedIds: (roomId: string) => house.getRoom(roomId)?.getCompressedIds() ?? new Set(),
     getRoomMembers: (roomId: string) => {
       const room = house.getRoom(roomId)

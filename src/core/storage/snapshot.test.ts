@@ -31,7 +31,7 @@ describe('Snapshot', () => {
     test('rejects any non-current snapshot version', async () => {
       await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
       for (const v of ['3', '6', '7']) {
-        const stale = { version: v, timestamp: Date.now(), rooms: [], agents: [], artifacts: [] }
+        const stale = { version: v, timestamp: Date.now(), rooms: [], agents: [] }
         await Bun.write(TEST_SNAPSHOT_PATH, JSON.stringify(stale))
         const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
         expect(loaded).toBeNull()
@@ -79,7 +79,7 @@ describe('Snapshot', () => {
       const system = createTestSystem()
       const snapshot = serializeSystem(system)
 
-      expect(snapshot.version).toBe('17')
+      expect(snapshot.version).toBe('18')
       expect(snapshot.timestamp).toBeGreaterThan(0)
       expect(snapshot.rooms.length).toBe(1) // default Introductions room
       expect(snapshot.agents.length).toBe(0)
@@ -117,23 +117,6 @@ describe('Snapshot', () => {
       expect(roomSnap.members).toContain('agent-1')
     })
 
-    test('serializes artifacts at system level', () => {
-      const system = createTestSystem()
-      const room = system.house.getRoom('Introductions')!
-
-      system.house.artifacts.add({
-        type: 'task_list',
-        title: 'Sprint Tasks',
-        body: { tasks: [] },
-        scope: [room.profile.id],
-        createdBy: 'tester',
-      })
-
-      const snapshot = serializeSystem(system)
-      expect(snapshot.artifacts).toHaveLength(1)
-      expect(snapshot.artifacts[0]!.title).toBe('Sprint Tasks')
-      expect(snapshot.artifacts[0]!.type).toBe('task_list')
-    })
   })
 
   describe('saveSnapshot / loadSnapshot', () => {
@@ -147,7 +130,7 @@ describe('Snapshot', () => {
 
       const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
       expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('17')
+      expect(loaded!.version).toBe('18')
       expect(loaded!.rooms.length).toBe(snapshot.rooms.length)
 
       const chatMsgs = loaded!.rooms[0]!.messages.filter(m => m.type === 'chat')
@@ -220,30 +203,6 @@ describe('Snapshot', () => {
       const restoredRoom = fresh.house.getRoom(origRoomId)
       expect(restoredRoom).toBeTruthy()
       expect(restoredRoom!.profile.id).toBe(origRoomId)
-    })
-
-    test('restores artifacts', async () => {
-      const original = createTestSystem()
-      const origRoom = original.house.getRoom('Introductions')!
-      original.house.artifacts.add({
-        type: 'task_list',
-        title: 'Backlog',
-        body: { tasks: [] },
-        scope: [origRoom.profile.id],
-        createdBy: 'tester',
-      })
-
-      const snapshot = serializeSystem(original)
-
-      const fresh = createTestSystem()
-      const defaultIntro = fresh.house.getRoom('Introductions')
-      if (defaultIntro) fresh.house.removeRoom(defaultIntro.profile.id)
-
-      await restoreFromSnapshot({ house: fresh.house, spawnAIAgent: async () => {} }, snapshot)
-
-      const restoredArtifacts = fresh.house.artifacts.list()
-      expect(restoredArtifacts.length).toBe(1)
-      expect(restoredArtifacts[0]!.title).toBe('Backlog')
     })
 
   })

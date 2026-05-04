@@ -1,9 +1,9 @@
 // ============================================================================
 // System-scoped MCP tools.
 //
-// Currently exposes only `reset_system`, which clears all rooms, agents, and
-// artifacts from the running instance while leaving tool registry, skill
-// store, provider router, and snapshot wiring untouched. Intended for the
+// Currently exposes only `reset_system`, which clears all rooms and agents
+// from the running instance while leaving tool registry, skill store,
+// provider router, and snapshot wiring untouched. Intended for the
 // experiment runner's persistent-process mode — one subprocess serving many
 // independent runs, with cheap state reset between them.
 // ============================================================================
@@ -17,7 +17,7 @@ import { textResult, errorResult } from './helpers.ts'
 export const registerSystemTools = (mcpServer: McpServer, system: System): void => {
   mcpServer.tool(
     'reset_system',
-    'Clear all rooms, agents, and artifacts from the running samsinn instance. Preserves tool registry, skills, provider router state, and stored keys. Intended for experiment runners in persistent-process mode. Returns {reset: true, removed: {rooms, agents, artifacts}}.',
+    'Clear all rooms and agents from the running samsinn instance. Preserves tool registry, skills, provider router state, and stored keys. Intended for experiment runners in persistent-process mode. Returns {reset: true, removed: {rooms, agents}}.',
     {},
     async () => {
       try {

@@ -58,12 +58,6 @@ export const createRoomOperations = (deps: RoomOperationsDeps): RoomOperations =
     }
     const removed = house.removeRoom(roomId)
     if (removed) {
-      // Clean up artifacts exclusively scoped to the deleted room
-      for (const artifact of house.artifacts.list({ scope: roomId })) {
-        if (artifact.scope.length === 1 && artifact.scope[0] === roomId) {
-          house.artifacts.remove(artifact.id)
-        }
-      }
       // Cascade-clean triggers pinned to the deleted room. Without this,
       // triggers become orphans — the scheduler skips them silently
       // (room.getRoom returns undefined) but they pile up in storage and

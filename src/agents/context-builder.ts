@@ -10,7 +10,6 @@
 // window is passed to the LLM on each context build.
 // ============================================================================
 
-import type { Artifact, ArtifactTypeDefinition } from '../core/types/artifact.ts'
 import type { AgentHistory, AgentProfile, Message } from '../core/types/messaging.ts'
 import type { ChatRequest } from '../core/types/llm.ts'
 import type { IncludeContext, IncludePrompts } from '../core/types/agent.ts'
@@ -134,8 +133,6 @@ export interface BuildContextDeps {
     | undefined
   readonly historyLimit: number
   readonly resolveName: (senderId: string) => string
-  readonly getArtifactsForScope?: (roomId: string) => ReadonlyArray<Artifact>
-  readonly getArtifactTypeDef?: (type: string) => ArtifactTypeDefinition | undefined
   readonly getCompressedIds?: (roomId: string) => ReadonlySet<string>
   // Current room membership resolver. When provided, the Participants
   // context section lists every member of the room — not only those whose
@@ -159,7 +156,6 @@ const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePromp
 
 const resolveIncludeContext = (inc: IncludeContext | undefined): Required<IncludeContext> => ({
   participants: inc?.participants ?? true,
-  artifacts: inc?.artifacts ?? true,
   activity: inc?.activity ?? true,
   knownAgents: inc?.knownAgents ?? true,
 })
@@ -175,22 +171,6 @@ const buildParticipantsSection = (
     return `- ${p.name} (${p.kind})${tagStr}`
   })
   return `Other participants:\n${lines.join('\n')}`
-}
-
-const formatArtifact = (artifact: Artifact, getTypeDef?: (type: string) => ArtifactTypeDefinition | undefined): string => {
-  const typeDef = getTypeDef?.(artifact.type)
-  if (typeDef?.formatForContext) return typeDef.formatForContext(artifact)
-  // Generic fallback
-  return `- ${artifact.type}: ${artifact.title} [id: ${artifact.id}]`
-}
-
-const buildArtifactsSection = (
-  artifacts: ReadonlyArray<Artifact>,
-  getTypeDef?: (type: string) => ArtifactTypeDefinition | undefined,
-): string => {
-  if (artifacts.length === 0) return ''
-  const lines = artifacts.map(a => formatArtifact(a, getTypeDef))
-  return `Room artifacts:\n${lines.join('\n\n')}`
 }
 
 const buildActivitySection = (
@@ -229,7 +209,6 @@ export type SystemSectionKey =
   | 'ctx_intro'           // "You are in room X" — always emitted
   | 'ctx_flow'
   | 'ctx_participants'
-  | 'ctx_artifacts'
   | 'ctx_activity'
   | 'ctx_knownAgents'
 
@@ -252,7 +231,7 @@ export const buildSystemSections = (
     : { persona: false, room: false, house: false, responseFormat: false, skills: false, wikis: false }
   const ctxIncludes = contextEnabled
     ? resolveIncludeContext(deps.includeContext)
-    : { participants: false, artifacts: false, activity: false, knownAgents: false }
+    : { participants: false, activity: false, knownAgents: false }
   const roomCtx = deps.history.rooms.get(triggerRoomId)
   const out: SystemSection[] = []
 
@@ -320,16 +299,6 @@ export const buildSystemSections = (
     optional: true,
   })
 
-  const artifacts = deps.getArtifactsForScope ? deps.getArtifactsForScope(triggerRoomId) : []
-  const artifactsText = artifacts.length > 0 ? buildArtifactsSection(artifacts, deps.getArtifactTypeDef) : ''
-  out.push({
-    key: 'ctx_artifacts',
-    label: 'Artifacts',
-    text: artifactsText,
-    enabled: ctxIncludes.artifacts && !!artifactsText,
-    optional: true,
-  })
-
   const activityEligible = deps.history.rooms.size > 1
   out.push({
     key: 'ctx_activity',
@@ -374,7 +343,7 @@ const CTX_STABLE_KEYS: ReadonlyArray<SystemSectionKey> = [
   'ctx_intro', 'ctx_activity',
 ]
 const CTX_VARIABLE_KEYS: ReadonlyArray<SystemSectionKey> = [
-  'ctx_knownAgents', 'ctx_participants', 'ctx_artifacts', 'ctx_flow',
+  'ctx_knownAgents', 'ctx_participants', 'ctx_flow',
 ]
 
 // Map a SystemSection to the XML tag used to fence it. Tag names are

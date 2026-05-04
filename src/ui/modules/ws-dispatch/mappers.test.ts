@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { toUIMessage, toUIRoomProfile, toAgentEntry, toUIArtifact } from './mappers.ts'
+import { toUIMessage, toUIRoomProfile, toAgentEntry } from './mappers.ts'
 import type { Message, AgentProfile, RoomProfile as ServerRoomProfile } from '../../../core/types/messaging.ts'
-import type { Artifact } from '../../../core/types/artifact.ts'
 
 // These mappers are the only translation layer between the WS wire format
 // (server types) and the UI's view types. If they silently drop or mistype
@@ -101,32 +100,3 @@ describe('toAgentEntry', () => {
   })
 })
 
-describe('toUIArtifact', () => {
-  test('passes through every artifact field verbatim', () => {
-    const server: Artifact = {
-      id: 'art-1',
-      type: 'task_list',
-      title: 'My Tasks',
-      description: 'testing',
-      body: { tasks: [] },
-      scope: ['room-1'],
-      createdBy: 'agent-1',
-      createdAt: 100,
-      updatedAt: 200,
-      resolution: 'completed',
-      resolvedAt: 300,
-    } as Artifact
-    const ui = toUIArtifact(server)
-    expect(ui.id).toBe('art-1')
-    expect(ui.type).toBe('task_list')
-    expect(ui.title).toBe('My Tasks')
-    expect(ui.description).toBe('testing')
-    expect(ui.body).toEqual({ tasks: [] })
-    expect(ui.scope).toEqual(['room-1'])
-    expect(ui.createdBy).toBe('agent-1')
-    expect(ui.createdAt).toBe(100)
-    expect(ui.updatedAt).toBe(200)
-    expect(ui.resolution).toBe('completed')
-    expect(ui.resolvedAt).toBe(300)
-  })
-})

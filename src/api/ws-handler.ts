@@ -4,7 +4,7 @@
 // Handles upgrade, message dispatch, reconnection, and inactive agent reclaim.
 // Commands mirror REST endpoints but use a simpler JSON message protocol.
 //
-// Command modules live in ws-commands/: room, agent, artifact, message.
+// Command modules live in ws-commands/: room, agent, message.
 // The dispatch loop tries each handler in order; first match wins.
 // ============================================================================
 
@@ -17,7 +17,6 @@ import type { WSInbound, WSOutbound } from '../core/types/ws-protocol.ts'
 import { asAIAgent } from '../agents/shared.ts'
 import { handleRoomCommand } from './ws-commands/room-commands.ts'
 import { handleAgentCommand } from './ws-commands/agent-commands.ts'
-import { handleArtifactCommand } from './ws-commands/artifact-commands.ts'
 import { handleMessageCommand } from './ws-commands/message-commands.ts'
 import { sendError } from './ws-commands/types.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
@@ -262,7 +261,6 @@ const commandHandlers = [
   handleMessageCommand,
   handleRoomCommand,
   handleAgentCommand,
-  handleArtifactCommand,
 ]
 
 // === Message Handler ===

@@ -64,11 +64,6 @@ export const wireSystemEvents = (
     sched()
   })
 
-  system.setOnArtifactChanged((action, artifact) => {
-    broadcast({ type: 'artifact_changed', action, artifact })
-    sched()
-  })
-
   system.scriptStore.onChange(() => {
     broadcast({ type: 'script_catalog_changed' })
     sched()

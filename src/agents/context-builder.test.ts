@@ -100,9 +100,9 @@ describe('context-builder includePrompts', () => {
     expect(sys).not.toContain('<samsinn:response_format>')
   })
 
-  test('contextEnabled: false suppresses participants/artifacts/activity/knownAgents', () => {
+  test('contextEnabled: false suppresses participants/activity/knownAgents', () => {
     const sections = buildSystemSections(mkDeps({ contextEnabled: false }), 'room-1')
-    const toggleableKeys = ['ctx_participants', 'ctx_artifacts', 'ctx_activity', 'ctx_knownAgents']
+    const toggleableKeys = ['ctx_participants', 'ctx_activity', 'ctx_knownAgents']
     for (const key of toggleableKeys) {
       const sec = sections.find(s => s.key === key)
       expect(sec?.enabled).toBe(false)

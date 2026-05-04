@@ -23,8 +23,6 @@ export const domRefs = {
   roomStatusDot: $('#room-status-dot') as HTMLButtonElement,
   // Mode toggle (single button — swaps icon between broadcast and manual)
   btnModeToggle: $('#btn-mode-toggle') as HTMLButtonElement,
-  // Workspace toolbar button (opens workspace modal)
-  btnWorkspace: $('#btn-workspace') as HTMLButtonElement,
   // Summary & compression group
   summaryGroup: $('#summary-group') as HTMLElement,
   btnSummaryToggle: $('#btn-summary-toggle') as HTMLButtonElement,

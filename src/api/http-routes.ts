@@ -4,7 +4,7 @@
 // Pure request→response functions. No WebSocket or server lifecycle concerns.
 // All routes delegate to System methods — no business logic here.
 //
-// Route modules live in routes/: rooms, agents, artifacts, messages, house.
+// Route modules live in routes/: rooms, agents, messages, house.
 // The dispatcher iterates the route table, matches method+pattern, calls handler.
 // ============================================================================
 
@@ -14,7 +14,6 @@ import { authEnabled, isValidSession, sessionFromRequest } from './auth.ts'
 import { houseRoutes } from './routes/house.ts'
 import { skillRoutes } from './routes/skills.ts'
 import { roomRoutes } from './routes/rooms.ts'
-import { artifactRoutes } from './routes/artifacts.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { agentMemoryRoutes } from './routes/agents-memory.ts'
 import { messageRoutes } from './routes/messages.ts'
@@ -64,8 +63,6 @@ const allRoutes = [
   ...scriptRoutes,
   // Geodata routes — process-wide, no instance binding.
   ...geodataRoutes,
-  // Artifacts before rooms (avoids /rooms/:name/artifacts being shadowed)
-  ...artifactRoutes,
   ...roomRoutes,
   // Agent-memory routes BEFORE agentRoutes so /api/agents/:name/memory
   // matches before /api/agents/:name (which would shadow it).

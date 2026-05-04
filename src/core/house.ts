@@ -1,19 +1,16 @@
 // ============================================================================
-// House — Room collection + Artifact system.
+// House — Room collection.
 //
-// Creates, stores, and retrieves rooms.
-// Hosts the ArtifactStore and ArtifactTypeRegistry for the system.
+// Creates, stores, and retrieves rooms. Holds the system-wide bookmark list,
+// the house prompt, and the response format.
 //
 // Names are unique (case-insensitive). createRoom throws on collision.
 // createRoomSafe auto-renames on collision and returns CreateResult.
 // ============================================================================
 
-import type { Artifact, ArtifactStore, ArtifactTypeRegistry, OnArtifactChanged } from './types/artifact.ts'
 import type { Bookmark, CreateResult, House, HouseCallbacks, Room, RoomConfig } from './types/room.ts'
 import type { RoomProfile } from './types/messaging.ts'
 import { createRoom, type RoomCallbacks } from './rooms/room.ts'
-import { createArtifactStore } from './storage/artifact-store.ts'
-import { createArtifactTypeRegistry } from './artifact-types/registry.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
 const DEFAULT_HOUSE_PROMPT = `You are part of samsinn, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use the pass tool when the conversation genuinely does not need your input.`
@@ -39,47 +36,6 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
   const nameIndex = new Map<string, string>()  // lowercase name → room ID
   let housePrompt = DEFAULT_HOUSE_PROMPT
   let responseFormat = DEFAULT_RESPONSE_FORMAT
-
-  // --- Artifact system ---
-
-  const artifactTypeRegistry = createArtifactTypeRegistry()
-
-  // Classify a raw artifact action into the event key used for postSystemMessageOn checks.
-  // A plain update that also resolves is classified as 'resolved', not 'updated'.
-  const classifyArtifactEvent = (
-    action: 'added' | 'updated' | 'removed' | 'resolved',
-    artifact: Artifact,
-  ): 'added' | 'updated' | 'removed' | 'resolved' => {
-    if (action === 'resolved') return 'resolved'
-    if (action === 'updated' && artifact.resolvedAt !== undefined) return 'resolved'
-    return action
-  }
-
-  // Wire onArtifactChanged to post system messages in scoped rooms on significant events.
-  const artifactChangedHandler: OnArtifactChanged = (action: 'added' | 'updated' | 'removed' | 'resolved', artifact: Artifact) => {
-    const typeDef = artifactTypeRegistry.get(artifact.type)
-    const postOn = typeDef?.postSystemMessageOn ?? ['added', 'removed', 'resolved']
-    const eventKey = classifyArtifactEvent(action, artifact)
-
-    if ((postOn as ReadonlyArray<string>).includes(eventKey) && artifact.scope.length > 0) {
-      let content: string
-      if (eventKey === 'updated') {
-        // Prefer type-specific message; fall back to generic
-        const custom = typeDef?.formatUpdateMessage?.(artifact)
-        content = custom ?? `${artifact.type} "${artifact.title}" was updated`
-      } else {
-        const verb = eventKey === 'added' ? 'created' : eventKey === 'removed' ? 'deleted' : 'resolved'
-        content = `${artifact.type} "${artifact.title}" was ${verb}`
-      }
-      for (const roomId of artifact.scope) {
-        const room = rooms.get(roomId)
-        room?.post({ senderId: 'system', content, type: 'system' })
-      }
-    }
-    callbacks.onArtifactChanged?.(action, artifact)
-  }
-
-  const artifactStore = createArtifactStore(artifactTypeRegistry, artifactChangedHandler)
 
   // --- Rooms ---
 
@@ -202,8 +158,6 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
       return room
     },
 
-    artifacts: artifactStore as ArtifactStore,
-    artifactTypes: artifactTypeRegistry as ArtifactTypeRegistry,
     listBookmarks,
     addBookmark,
     updateBookmark,

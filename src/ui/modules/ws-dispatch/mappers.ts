@@ -1,10 +1,9 @@
-// Wire-format mappers: server types (Message, AgentProfile, RoomProfile,
-// Artifact) → UI types. Kept pure so ws-dispatch stays focused on routing,
-// and so these can be unit-tested in isolation.
+// Wire-format mappers: server types (Message, AgentProfile, RoomProfile)
+// → UI types. Kept pure so ws-dispatch stays focused on routing, and so
+// these can be unit-tested in isolation.
 
-import type { UIMessage, RoomProfile, ArtifactInfo } from '../render/render-types.ts'
+import type { UIMessage, RoomProfile } from '../render/render-types.ts'
 import type { Message, AgentProfile, RoomProfile as ServerRoomProfile } from '../../../core/types/messaging.ts'
-import type { Artifact } from '../../../core/types/artifact.ts'
 import type { AgentEntry } from '../stores.ts'
 
 export const toUIMessage = (m: Message): UIMessage => ({
@@ -43,16 +42,3 @@ export const toAgentEntry = (a: AgentProfile): AgentEntry => ({
   ...(a.generationStarted !== undefined ? { generationStarted: a.generationStarted } : {}),
 })
 
-export const toUIArtifact = (a: Artifact): ArtifactInfo => ({
-  id: a.id,
-  type: a.type,
-  title: a.title,
-  description: a.description,
-  body: a.body,
-  scope: a.scope,
-  createdBy: a.createdBy,
-  createdAt: a.createdAt,
-  updatedAt: a.updatedAt,
-  resolution: a.resolution,
-  resolvedAt: a.resolvedAt,
-})

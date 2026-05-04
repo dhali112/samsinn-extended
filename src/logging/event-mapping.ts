@@ -8,7 +8,7 @@
 //
 // Choice of which callbacks to log:
 //   INCLUDED — messagePosted, deliveryModeChanged, modeAutoSwitched,
-//              artifactChanged, roomCreated, roomDeleted, membershipChanged,
+//              roomCreated, roomDeleted, membershipChanged,
 //              evalEvent, providerBound, providerAllFailed, providerStreamFailed,
 //              summaryConfigChanged, summaryUpdated, summaryRunStarted,
 //              summaryRunCompleted, summaryRunFailed
@@ -18,7 +18,6 @@
 //   OUTSIDE this module, in the bootstrap wiring.
 // ============================================================================
 
-import type { Artifact } from '../core/types/artifact.ts'
 import type { DeliveryMode, Message, RoomProfile } from '../core/types/messaging.ts'
 import type { EvalEvent } from '../core/types/agent-eval.ts'
 import type { SummaryTarget } from '../core/types/room.ts'
@@ -94,17 +93,6 @@ export const mkMembershipChanged = (
   roomId,
   actor: { kind: 'unknown', id: agentId, name: agentName },
   payload: { roomName, agentId, agentName, action },
-})
-
-export const mkArtifactChanged = (
-  sessionId: string,
-  action: 'added' | 'updated' | 'removed' | 'resolved', artifact: Artifact,
-): LogEvent => ({
-  ts: Date.now(),
-  kind: 'artifact.changed',
-  session: sessionId,
-  ...(artifact.scope.length > 0 ? { roomId: artifact.scope[0] } : {}),
-  payload: { action, artifact },
 })
 
 export const mkEvalEvent = (sessionId: string, agentName: string, event: EvalEvent): LogEvent => ({

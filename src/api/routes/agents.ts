@@ -26,7 +26,7 @@ const resolveModelStatus = async (system: System, requestedModel: string): Promi
 }
 
 const PROMPT_SECTIONS: ReadonlyArray<PromptSection> = ['persona', 'room', 'house', 'responseFormat', 'skills']
-const CONTEXT_SECTIONS: ReadonlyArray<ContextSection> = ['participants', 'artifacts', 'activity', 'knownAgents']
+const CONTEXT_SECTIONS: ReadonlyArray<ContextSection> = ['participants', 'activity', 'knownAgents']
 
 // Compute approximate token cost of each registered tool's definition.
 // Uses the standard 4-chars-per-token heuristic across JSON-serialised defs.

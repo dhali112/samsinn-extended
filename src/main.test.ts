@@ -2,10 +2,10 @@
 // System.resetState tests.
 //
 // resetState is the Phase 3 primitive that backs the `reset_system` MCP tool.
-// It clears rooms, agents, artifacts; preserves tool registry + skills +
-// provider state. Covered by a positive path + name-reuse path; the
-// subprocess-level integration is exercised end-to-end by
-// experiments/batch-reset.test.ts under SOAK=1.
+// It clears rooms and agents; preserves tool registry + skills + provider
+// state. Covered by a positive path + name-reuse path; the subprocess-level
+// integration is exercised end-to-end by experiments/batch-reset.test.ts
+// under SOAK=1.
 // ============================================================================
 
 import { describe, test, expect } from 'bun:test'
@@ -39,21 +39,6 @@ describe('System.resetState', () => {
 
     // Infrastructure preserved
     expect(system.toolRegistry.list().length).toBe(toolCountBefore)
-  })
-
-  test('artifact clear is called and artifacts collection is empty after reset', async () => {
-    const system = createSystem()
-
-    // Directly exercise the artifact-store clear API. We avoid registering an
-    // artifact type (test setup overhead); the clear path is what resetState
-    // depends on and that's what we verify here.
-    expect(typeof system.house.artifacts.clear).toBe('function')
-    system.house.artifacts.clear()
-    expect(system.house.artifacts.list()).toHaveLength(0)
-
-    // resetState on an empty house returns zero counts for all three buckets.
-    const result = await system.resetState()
-    expect(result.artifacts).toBe(0)
   })
 
   test('name re-use after reset — re-create agents/rooms with the same names', async () => {

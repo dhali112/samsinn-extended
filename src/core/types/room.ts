@@ -1,5 +1,5 @@
 // Room + House — message delivery, membership, mode, and system-level
-// collection. House also owns the artifact store and system-level LLM access.
+// collection. House also owns system-level LLM access and bookmarks.
 
 import type {
   Message,
@@ -10,7 +10,6 @@ import type {
   ResolveAgentName,
   ResolveTagFn,
 } from './messaging.ts'
-import type { ArtifactStore, ArtifactTypeRegistry, OnArtifactChanged } from './artifact.ts'
 import type { LLMCallOptions } from './llm.ts'
 import type { SummaryConfig } from './summary.ts'
 
@@ -147,7 +146,6 @@ export interface HouseCallbacks {
   readonly onMessagePosted?: OnMessagePosted
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
-  readonly onArtifactChanged?: OnArtifactChanged
   readonly onRoomCreated?: OnRoomCreated
   readonly onRoomDeleted?: OnRoomDeleted
   readonly onBookmarksChanged?: OnBookmarksChanged
@@ -158,7 +156,7 @@ export interface HouseCallbacks {
   readonly callSystemLLM?: (options: LLMCallOptions) => Promise<string>
 }
 
-// === House — room collection + artifact system ===
+// === House — room collection + bookmarks + system-level LLM ===
 
 export interface House {
   readonly createRoom: (config: RoomConfig) => Room
@@ -172,9 +170,6 @@ export interface House {
   readonly getResponseFormat: () => string
   readonly setResponseFormat: (format: string) => void
   readonly restoreRoom: (profile: RoomProfile) => Room
-  // Artifact system
-  readonly artifacts: ArtifactStore
-  readonly artifactTypes: ArtifactTypeRegistry
   // System-wide message bookmarks. New entries at index 0 (top).
   readonly listBookmarks: () => ReadonlyArray<Bookmark>
   readonly addBookmark: (content: string) => Bookmark

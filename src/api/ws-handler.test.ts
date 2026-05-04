@@ -8,7 +8,6 @@ import { createHouse } from '../core/house.ts'
 import { createTeam } from '../agents/team.ts'
 import { createAIAgent } from '../agents/ai-agent.ts'
 import { createHumanAgent } from '../agents/human-agent.ts'
-import { createTaskListArtifactType } from '../core/artifact-types/task-list.ts'
 import type { DeliverFn, Message } from '../core/types/messaging.ts'
 import type { RouteMessage } from '../core/types/agent.ts'
 import type { WSOutbound } from '../core/types/ws-protocol.ts'
@@ -35,7 +34,6 @@ const makeLLMProvider = () => ({
 
 const makeSystem = (): System => {
   const house = createHouse({ deliver: noopDeliver })
-  house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
   const team = createTeam()
   house.createRoom({ name: 'TestRoom', createdBy: 'system' })
 
@@ -65,7 +63,6 @@ const makeSystem = (): System => {
     setOnTurnChanged: () => {},
     setOnDeliveryModeChanged: () => {},
     setOnModeAutoSwitched: () => {},
-    setOnArtifactChanged: () => {},
     setOnRoomCreated: () => {},
     setOnRoomDeleted: () => {},
     setOnMembershipChanged: () => {},
@@ -203,68 +200,6 @@ describe('WS Handler', () => {
     const { ws, errors } = makeWS()
     await dispatch(ws, session, system, wsManager, { type: 'set_paused', roomName: 'NoSuchRoom', paused: true })
     expect(errors()).toHaveLength(1)
-  })
-
-  // --- Artifacts ---
-
-  test('add_artifact creates artifact and triggers artifact_changed', async () => {
-    const broadcasts: WSOutbound[] = []
-    ;(wsManager as unknown as Record<string, unknown>).broadcast = (msg: WSOutbound) => { broadcasts.push(msg) }
-    const { ws } = makeWS()
-    await dispatch(ws, session, system, wsManager, {
-      type: 'add_artifact', artifactType: 'task_list', title: 'Sprint', body: { tasks: [] }, scope: ['TestRoom'],
-    })
-    expect(system.house.artifacts.list({ type: 'task_list' })).toHaveLength(1)
-  })
-
-  test('add_artifact with unknown type sends error', async () => {
-    const { ws, errors } = makeWS()
-    await dispatch(ws, session, system, wsManager, {
-      type: 'add_artifact', artifactType: 'nonexistent_type', title: 'X', body: {},
-    })
-    expect(errors()).toHaveLength(1)
-  })
-
-  test('update_artifact with unknown id sends error', async () => {
-    const { ws, errors } = makeWS()
-    await dispatch(ws, session, system, wsManager, {
-      type: 'update_artifact', artifactId: 'no-such-id', title: 'New',
-    })
-    expect(errors()).toHaveLength(1)
-    expect(String(errors()[0]!.message)).toContain('not found')
-  })
-
-  test('update_artifact updates artifact', async () => {
-    const room = system.house.getRoom('TestRoom')!
-    const artifact = system.house.artifacts.add({
-      type: 'task_list', title: 'Old', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester',
-    })
-    const { ws } = makeWS()
-    await dispatch(ws, session, system, wsManager, {
-      type: 'update_artifact', artifactId: artifact.id, title: 'Updated',
-    })
-    expect(system.house.artifacts.get(artifact.id)?.title).toBe('Updated')
-  })
-
-  test('remove_artifact with unknown id sends error', async () => {
-    const { ws, errors } = makeWS()
-    await dispatch(ws, session, system, wsManager, {
-      type: 'remove_artifact', artifactId: 'no-such-id',
-    })
-    expect(errors()).toHaveLength(1)
-    expect(String(errors()[0]!.message)).toContain('not found')
-  })
-
-  test('remove_artifact removes artifact', async () => {
-    const room = system.house.getRoom('TestRoom')!
-    const artifact = system.house.artifacts.add({
-      type: 'task_list', title: 'Doomed', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester',
-    })
-    const { ws } = makeWS()
-    await dispatch(ws, session, system, wsManager, {
-      type: 'remove_artifact', artifactId: artifact.id,
-    })
-    expect(system.house.artifacts.get(artifact.id)).toBeUndefined()
   })
 
   // --- add_to_room / remove_from_room ---

@@ -75,7 +75,7 @@ export type IncludePrompts = Partial<Record<PromptSection, boolean>>
 // preserves current behavior. Unlike `PromptSection`, these are fixed-purpose
 // informational (not author-written text), so the magnifier shows the text
 // that would be injected at request time.
-export type ContextSection = 'participants' | 'artifacts' | 'activity' | 'knownAgents'
+export type ContextSection = 'participants' | 'activity' | 'knownAgents'
 export type IncludeContext = Partial<Record<ContextSection, boolean>>
 
 export interface AIAgent extends Agent {
@@ -221,7 +221,7 @@ export interface AIAgentConfig {
   readonly thinking?: boolean                    // enable model CoT (qwen3 thinking mode)
   // Context & Prompts toggles — all default true; undefined preserves current behavior
   readonly includePrompts?: IncludePrompts      // per-section prompt inclusion (persona/room/house/responseFormat/skills)
-  readonly includeContext?: IncludeContext      // CONTEXT sub-sections (participants/artifacts/activity/knownAgents)
+  readonly includeContext?: IncludeContext      // CONTEXT sub-sections (participants/activity/knownAgents)
   readonly includeTools?: boolean               // master: send tool definitions to LLM (default: true)
   readonly promptsEnabled?: boolean             // master for all per-section prompt toggles (default: true)
   readonly contextEnabled?: boolean             // master for all context sub-section toggles (default: true)

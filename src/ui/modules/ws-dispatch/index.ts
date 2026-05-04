@@ -22,7 +22,6 @@ import {
   $turnInfo,
   $scriptCatalog,
   $activeScriptByRoom,
-  $artifacts,
   $thinkingPreviews,
   $thinkingTools,
   $agentContexts,
@@ -44,15 +43,8 @@ import {
   handleSummaryRunCompleted,
   handleSummaryRunFailed,
 } from '../panels/summary-panel.ts'
-import { toUIMessage, toUIRoomProfile, toAgentEntry, toUIArtifact } from './mappers.ts'
+import { toUIMessage, toUIRoomProfile, toAgentEntry } from './mappers.ts'
 import { shouldEmitBound, shouldEmitAllFailed } from './dedup.ts'
-
-// --- Pending create hooks ---
-// Callers register a hook keyed by requestId before sending add_artifact.
-// When the matching artifact_created arrives, the hook fires and is
-// removed. Single-fire; lives only in memory.
-export type PendingCreateHook = (artifactId: string, artifactType: string) => void
-export const pendingCreateHooks = new Map<string, PendingCreateHook>()
 
 // === Typed dispatch map ===
 
@@ -99,7 +91,6 @@ const handlers: Handlers = {
 
     // Clear transient state
     $unreadCounts.set({})
-    $artifacts.set({})
     $thinkingPreviews.set({})
     $thinkingTools.set({})
     $agentContexts.set({})
@@ -352,15 +343,6 @@ const handlers: Handlers = {
     $turnInfo.set({ roomName: msg.roomName, agentName: msg.agentName, waitingForHuman: msg.waitingForHuman })
   },
 
-  artifact_created(msg) {
-    // Route to anyone listening on this requestId (see pendingCreateHooks below).
-    const hook = pendingCreateHooks.get(msg.requestId)
-    if (hook) {
-      pendingCreateHooks.delete(msg.requestId)
-      hook(msg.artifactId, msg.artifactType)
-    }
-  },
-
   mode_auto_switched(msg) {
     showToast(
       document.body,
@@ -463,18 +445,6 @@ const handlers: Handlers = {
       .catch(() => { /* ignore */ })
   },
 
-
-  // --- Artifacts ---
-
-  artifact_changed(msg) {
-    if (msg.action === 'removed') {
-      const artifacts = { ...$artifacts.get() }
-      delete artifacts[msg.artifact.id]
-      $artifacts.set(artifacts)
-    } else {
-      $artifacts.setKey(msg.artifact.id, toUIArtifact(msg.artifact))
-    }
-  },
 
   // --- Membership ---
 

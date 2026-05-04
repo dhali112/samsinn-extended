@@ -8,8 +8,8 @@
 import { createWSClient, type WSClient } from './ws-client.ts'
 import { send, setWSClient } from './ws-send.ts'
 import { initThinkingDisplay } from './thinking-display.ts'
-import { fetchRoomMessages, fetchRoomMembers, fetchRoomArtifacts } from './room-fetchers.ts'
-import { renderRooms, renderArtifacts } from './render/render-rooms.ts'
+import { fetchRoomMessages, fetchRoomMembers } from './room-fetchers.ts'
+import { renderRooms } from './render/render-rooms.ts'
 import { renderAgents } from './render/render-agents.ts'
 import { mountRoomMembers, consumeAutoAddRoom, registerPendingCreateAdd, clearAutoAddRoom } from './render/render-room-members.ts'
 import { mountRoomSwitcher } from './render/render-room-switcher.ts'
@@ -20,15 +20,12 @@ import type {
   UIMessage,
   RoomProfile,
   AgentInfo,
-  ArtifactInfo,
-  ArtifactAction,
 } from './render/render-types.ts'
 import { derivePhase, phaseLabel, THINKING_MARKER } from './thinking-phase.ts'
 import { openTextEditorModal } from './modals/detail-modal.ts'
-import { createWorkspace } from './workspace.ts'
 import { openSendAsPicker } from './send-as-picker.ts'
 import { reconcileSelectionForRoom } from './agent-selection.ts'
-import { wsDispatch, pendingCreateHooks } from './ws-dispatch/index.ts'
+import { wsDispatch } from './ws-dispatch/index.ts'
 import { batched } from '../lib/nanostores.ts'
 import { showToast } from './toast.ts'
 import { roomNameToId, roomIdToName, agentIdToName } from './identity-lookups.ts'
@@ -65,8 +62,6 @@ import {
   $generatingRoomIds,
   $visibleThinkingIndicators,
   $roomMessages,
-  $artifacts,
-  $selectedRoomArtifacts,
   $thinkingPreviews,
   $thinkingTools,
   $currentDeliveryMode,
@@ -92,7 +87,7 @@ const {
   roomList, roomHeader, roomNameEl, roomInfoBar, roomsToggle, roomsHeader,
   agentList, roomMembers, noRoomState, chatArea,
   messagesDiv, chatForm, chatInput,
-  roomStatusDot, btnModeToggle, btnWorkspace,
+  roomStatusDot, btnModeToggle,
   btnSummaryToggle, btnSummarySettings, btnSummaryInspect, btnSummaryRegenerate,
   roomModeInfo,
   nameModal, nameForm, roomModal, roomForm, agentModal, agentForm,
@@ -105,10 +100,6 @@ const {
 // Previously broken — callers assumed a global `$` that didn't exist, silently
 // throwing ReferenceError at module load and halting handler wiring.
 const $ = (sel: string) => document.querySelector(sel)!
-
-// Workspace is wired later (below handleArtifactAction).
-// eslint-disable-next-line prefer-const
-let workspace: ReturnType<typeof createWorkspace>
 
 // === WS client ===
 // The `client` reference is held in ws-send.ts so any UI module can call
@@ -150,35 +141,8 @@ const handleDeleteMessage = (msgId: string): void => {
   messagesDiv.querySelector(`[data-msg-id="${msgId}"]`)?.remove()
 }
 
-const handleArtifactAction = (action: ArtifactAction): void => {
-  if (action.kind === 'add_task') {
-    send({ type: 'update_artifact', artifactId: action.artifactId, body: { op: 'add_task', taskContent: action.content } })
-  } else if (action.kind === 'complete_task') {
-    send({ type: 'update_artifact', artifactId: action.artifactId, body: { op: action.completed ? 'complete_task' : 'update_task', taskId: action.taskId, status: action.completed ? 'completed' : 'pending' } })
-  } else if (action.kind === 'cast_vote') {
-    send({ type: 'cast_vote', artifactId: action.artifactId, optionId: action.optionId })
-  } else if (action.kind === 'remove') {
-    send({ type: 'remove_artifact', artifactId: action.artifactId })
-  } else if (action.kind === 'edit_document') {
-    void (async () => {
-      const { openDocumentEditor } = await import('./document-editor.ts')
-      openDocumentEditor(action.artifactId, action.title, action.blocks, send)
-    })()
-  }
-}
-
 // Prompt-context modal + per-message view-context handler live in context-modal.ts.
 import { showContextModal, handleViewContext } from './modals/context-modal.ts'
-
-// Workspace wired here, after handleArtifactAction is in scope. Subscribers
-// to $selectedRoomArtifacts and the btn-workspace click handler use this.
-workspace = createWorkspace({
-  button: btnWorkspace,
-  send,
-  roomIdToName,
-  onAction: handleArtifactAction,
-})
-btnWorkspace.onclick = () => workspace.open()
 
 // === Data fetching (triggered by subscriptions) ===
 // Lives in room-fetchers.ts — imported above.
@@ -357,9 +321,6 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
       fetchRoomMembers(roomId, room.name)
     }
 
-    // Fetch artifacts
-    fetchRoomArtifacts(roomId, room.name)
-
     // Render messages — stamp roomId on the container for defensive checks
     messagesDiv.innerHTML = ''
     messagesDiv.setAttribute('data-room-id', roomId)
@@ -387,7 +348,6 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
 
     // Apply room-specific state
     refreshRoomControls()
-    workspace.show()
   } else {
     // No room selected — show the empty-state. Agent inspector is now a
     // modal, so it doesn't compete with chat-area visibility anymore.
@@ -395,7 +355,6 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
     roomHeader.classList.add('hidden')
     roomInfoBar.classList.add('hidden')
     chatArea.classList.add('hidden')
-    workspace.hide()
   }
 })
 
@@ -486,15 +445,6 @@ $agents.listen((_agents, _old, _changedId) => {
 // --- Thinking-indicator subscriptions live in thinking-display.ts.
 //     Preview / tools / contexts / warnings listeners wired by initThinkingDisplay. ---
 initThinkingDisplay({ messagesDiv, showContextModal })
-
-// --- Artifacts → workspace badge ---
-$selectedRoomArtifacts.subscribe((artifacts) => {
-  const roomId = $selectedRoomId.get()
-  if (!roomId) return
-  const active = artifacts.filter(a => !a.resolvedAt)
-  workspace.setCount(active.length)
-  refreshRoomControls()
-})
 
 // --- Mode / turn info (batched: mode + pause feed mode selector) ---
 const $modeView = batched(
@@ -744,9 +694,6 @@ agentModal.addEventListener('close', () => {
   clearAutoAddRoom()
   setAgentModalKind('ai')
 })
-
-// Artifact submit + input handlers now live inside the workspace modal
-// (workspace.ts), so app.ts no longer wires them.
 
 // Sidebar section toggles
 // Section toggles: click the dedicated toggle button (with aria-expanded)

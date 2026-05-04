@@ -4,7 +4,6 @@
 import type { Message, MessageTarget, RoomProfile, AgentProfile, DeliveryMode } from './messaging.ts'
 import type { AIAgentConfig, IncludeContext, IncludePrompts, StateValue } from './agent.ts'
 import type { RoomState, SummaryTarget } from './room.ts'
-import type { Artifact } from './artifact.ts'
 import type { EvalEvent } from './agent-eval.ts'
 import type { OllamaHealth } from './llm.ts'
 import type { SummaryConfig } from './summary.ts'
@@ -36,11 +35,6 @@ export type WSInbound =
   // Muting
   | { readonly type: 'set_muted'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
   | { readonly type: 'cancel_generation'; readonly name: string }
-  // Artifact management
-  | { readonly type: 'add_artifact'; readonly artifactType: string; readonly title: string; readonly description?: string; readonly body: Record<string, unknown>; readonly scope?: ReadonlyArray<string>; readonly requestId?: string }
-  | { readonly type: 'update_artifact'; readonly artifactId: string; readonly title?: string; readonly body?: Record<string, unknown>; readonly resolution?: string }
-  | { readonly type: 'remove_artifact'; readonly artifactId: string }
-  | { readonly type: 'cast_vote'; readonly artifactId: string; readonly optionId: string }
   // Room/message deletion
   | { readonly type: 'delete_room'; readonly roomName: string }
   | { readonly type: 'delete_message'; readonly roomName: string; readonly messageId: string }
@@ -61,7 +55,6 @@ export type WSOutbound =
   | { readonly type: 'delivery_mode_changed'; readonly roomName: string; readonly mode: DeliveryMode; readonly paused: boolean }
   | { readonly type: 'mute_changed'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
   | { readonly type: 'turn_changed'; readonly roomName: string; readonly agentName?: string; readonly waitingForHuman?: boolean }
-  | { readonly type: 'artifact_changed'; readonly action: 'added' | 'updated' | 'removed' | 'resolved'; readonly artifact: Artifact }
   | { readonly type: 'membership_changed'; readonly roomId: string; readonly roomName: string; readonly agentId: string; readonly agentName: string; readonly action: 'added' | 'removed' }
   | { readonly type: 'room_deleted'; readonly roomName: string }
   | { readonly type: 'message_deleted'; readonly roomName: string; readonly messageId: string }
@@ -75,8 +68,6 @@ export type WSOutbound =
   | { readonly type: 'script_dialogue_appended'; readonly roomName: string; readonly scriptId: string; readonly stepIndex: number; readonly entry: { readonly speaker: string; readonly content: string; readonly messageId: string; readonly whispersByCast: Readonly<Record<string, { readonly turn: number; readonly whisper: { readonly ready_to_advance: boolean; readonly notes?: string; readonly addressing?: string; readonly role_update?: string }; readonly usedFallback: boolean; readonly rawResponse?: string; readonly errorReason?: string }>> } }
   | { readonly type: 'script_completed'; readonly roomName: string; readonly scriptId: string }
   | { readonly type: 'script_catalog_changed' }
-  // Directed reply to the client that sent add_artifact with a requestId.
-  | { readonly type: 'artifact_created'; readonly requestId: string; readonly artifactId: string; readonly artifactType: string }
   | { readonly type: 'ollama_health'; readonly health: OllamaHealth }
   | { readonly type: 'agent_activity'; readonly agentName: string; readonly event: EvalEvent }
   // Provider routing events (from src/llm/router.ts)

@@ -21,7 +21,6 @@
 import type { AIAgent, AIAgentConfig, IncludeContext, IncludePrompts, PromptSection, ContextSection } from '../core/types/agent.ts'
 import { resolveModelFallback, FALLBACKABLE_CODES } from './model-fallback.ts'
 import type { AgentHistory, Message } from '../core/types/messaging.ts'
-import type { Artifact, ArtifactTypeDefinition } from '../core/types/artifact.ts'
 import type { EvalEvent } from '../core/types/agent-eval.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
 import type { Room } from '../core/types/room.ts'
@@ -67,8 +66,6 @@ export interface AIAgentOptions {
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
   readonly getHousePrompt?: () => string
   readonly getResponseFormat?: () => string
-  readonly getArtifactsForScope?: (roomId: string) => ReadonlyArray<Artifact>
-  readonly getArtifactTypeDef?: (type: string) => ArtifactTypeDefinition | undefined
   readonly getCompressedIds?: (roomId: string) => ReadonlySet<string>
   // Current room membership, resolved to profiles. Used by the Participants
   // context section so an agent sees every peer in its room — not only those
@@ -136,7 +133,6 @@ export const createAIAgent = (
   }
   const includeContextState: Required<IncludeContext> = {
     participants: config.includeContext?.participants ?? true,
-    artifacts: config.includeContext?.artifacts ?? true,
     activity: config.includeContext?.activity ?? true,
     knownAgents: config.includeContext?.knownAgents ?? true,
   }
@@ -163,8 +159,6 @@ export const createAIAgent = (
   }
   const getHousePrompt = options?.getHousePrompt
   const getResponseFormat = options?.getResponseFormat
-  const getArtifactsForScope = options?.getArtifactsForScope
-  const getArtifactTypeDef = options?.getArtifactTypeDef
   const getCompressedIds = options?.getCompressedIds
   const getRoomMembers = options?.getRoomMembers
   const getSkills = options?.getSkills
@@ -204,8 +198,6 @@ export const createAIAgent = (
     history: agentHistory,
     historyLimit,
     resolveName,
-    getArtifactsForScope,
-    getArtifactTypeDef,
     getSkills,
     getWikisCatalog: getWikisCatalogOpt ? (roomId: string) => getWikisCatalogOpt(roomId, agentId) : undefined,
     getScriptContext,

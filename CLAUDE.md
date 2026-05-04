@@ -43,6 +43,8 @@ These have been evaluated and rejected as motion-without-progress. Do NOT includ
 
 - **MCP-vs-REST tool-surface "parity".** They serve different audiences and intentionally diverge. REST/built-in is the **agent-facing** surface (what an in-process AI agent uses during eval — `list_rooms`, `pass`, `geo_lookup`, `wiki_search`, `install_pack`, `write_skill`, etc.). MCP is the **host-facing** surface (what an external Claude Code or other MCP client uses to inspect/control the system from outside — `create_agent`, `update_agent_persona`, `wait_for_idle`, `export_room`, `reset_system`, `configure_logging`). Each side has tools the other doesn't, and that's the design — agents don't need `reset_system`; external hosts don't need `pass`. When adding a new capability, decide whether it belongs to the agent loop, the external-host workflow, or both — and register only on the surfaces it serves. Auditing the two as if one is missing tools the other has produces noise. Revisit only when a specific external-host workflow concretely needs a tool that exists agent-side (or vice versa).
 
+- **Reviving the artifact / workspace system.** Removed in v18. Task lists, polls, documents, and the workspace UI pane were torn out — agents handle the same workflows conversationally or via the script engine. Mermaid + map render inline as fenced code blocks in chat. Two prior teardowns of similar abstractions (macros → artifacts → removal) demonstrate the cost: maintenance overhead, a registry/plugin pattern with one consumer, prompt-context noise, and a UI surface that competed with chat. Do not re-propose an "artifact"-shaped persistent-object subsystem. If a new workflow genuinely needs one (e.g. shared whiteboarding across many agents over time), name the specific second consumer and run it past the owner before scaffolding.
+
 When in doubt: the `lateBinding` pattern is working. Ugly ≠ broken. Move on.
 
 ## Commands
@@ -70,15 +72,14 @@ Samsinn is a multi-agent room-based chat system with two delivery modes (`broadc
 - `house.ts` — the root singleton owning all rooms and agents; every request goes through it
 - `rooms/` — `room.ts` (membership, messages, mute/pause state), `addressing.ts` (`[[AgentName]]`/`[[tag:X]]`), `delivery-modes.ts` (broadcast helper), `room-export.ts`
 - `delivery.ts` — message router (`createMessageRouter`). Modes: `broadcast` (all eligible) and `manual` (humans + sender only; AI peers activated explicitly). `[[AgentName]]` / `[[tag:X]]` addressing overrides in non-manual modes; inert in manual
-- `storage/` — `snapshot.ts` (load/save to `data/snapshot.json`, current `SNAPSHOT_VERSION = 17`, clean-break), `artifact-store.ts`, `instance-cleanup.ts` lives in `instances/` (not here)
+- `storage/` — `snapshot.ts` (load/save to `data/snapshot.json`, current `SNAPSHOT_VERSION = 18`, clean-break); `instance-cleanup.ts` lives in `instances/` (not here)
 - `summaries/` — `summary-engine.ts` + `summary-scheduler.ts`. Per-room running summary + compression. Two independent schedules (time and message-count) per target (`summary` vs `compression`). Compression keeps last X fresh and folds older Y into a single evolving `room_summary` at the top of history; IDs tracked in `room.compressedIds`. Surfaced via 🗜 room-header control, `/api/rooms/:name/summary-config|summary|summary/regenerate`, and `summary_run_*` WS events. Replaced the earlier message-cap pruning and per-agent history compression
 - `scripts/` — `script-runner.ts` (reactive listener, queue-per-room), `script-md-parser.ts`, `script-render.ts`, `script-store.ts`, `script-whisper.ts`. See `docs/scripts.md`
 - `instances/` — `system-registry.ts` (per-tenant House lifecycle, lazy-load, idle-evict), `instance-cleanup.ts` (janitor: trash + purge), `seed-example.ts` (first-run Cafe + AI + Human)
-- `artifact-types/` — pluggable per-room artifact type definitions (task-list, document, poll, mermaid, map). Register via `registry.ts`; `artifact-store.ts` lives in `storage/`
 - `triggers/` — per-agent scheduled prompts (`scheduler.ts` + `types.ts`). Pinned to a `roomId`; cascade-cleaned on room/agent delete
 - `room-operations.ts` — system-level membership ops (`addAgentToRoom`, `removeAgentFromRoom`, `removeRoom`, `cancelGenerationsInRoom`)
 - `fetch-utils.ts` — shared `fetchWithTimeout` (used by LLM adapters AND web tools)
-- `types/` — split into domain modules (`agent.ts`, `room.ts`, `artifact.ts`, `llm.ts`, `ws-protocol.ts`, `summary.ts`, `messaging.ts`, `script.ts`, etc). **Import from the specific submodule**, not a barrel
+- `types/` — split into domain modules (`agent.ts`, `room.ts`, `llm.ts`, `ws-protocol.ts`, `summary.ts`, `messaging.ts`, `script.ts`, etc). **Import from the specific submodule**, not a barrel
 
 ### Agents (`src/agents/`)
 
@@ -145,6 +146,5 @@ Wraps the same `House` object for external Claude Code / MCP clients. Tool handl
 
 - `README.md` — user-facing feature surface, tool reference, REST + WS + MCP protocols
 - `docs/tools.md` — tool authoring, parameter schemas, external tool loading
-- `docs/artifact-modules.md` — how to add a new artifact type
 - `docs/scripts.md` — multi-agent improv script engine (replaces macros)
 - `docs/causality-tracking.md` — how message causality is recorded

@@ -39,36 +39,3 @@ export interface AgentInfo {
   tags?: ReadonlyArray<string>
 }
 
-export interface TaskItem {
-  id: string
-  content: string
-  status: 'pending' | 'in_progress' | 'completed' | 'blocked'
-  assignee?: string
-}
-
-export interface PollOption {
-  id: string
-  text: string
-  votes: ReadonlyArray<string>
-}
-
-export interface ArtifactInfo {
-  id: string
-  type: string
-  title: string
-  description?: string
-  body: unknown
-  scope: ReadonlyArray<string>
-  createdBy: string
-  createdAt: number
-  updatedAt: number
-  resolution?: string
-  resolvedAt?: number
-}
-
-export type ArtifactAction =
-  | { kind: 'add_task'; artifactId: string; content: string }
-  | { kind: 'complete_task'; artifactId: string; taskId: string; completed: boolean }
-  | { kind: 'cast_vote'; artifactId: string; optionId: string }
-  | { kind: 'remove'; artifactId: string }
-  | { kind: 'edit_document'; artifactId: string; title: string; blocks: ReadonlyArray<{ id: string; type: string; content: string }> }

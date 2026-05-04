@@ -17,7 +17,6 @@ import type { SummaryScheduler, SummaryTarget } from './core/summaries/summary-s
 import { createSummaryEngine } from './core/summaries/summary-engine.ts'
 import { createSummaryScheduler } from './core/summaries/summary-scheduler.ts'
 import { createTriggerScheduler, type TriggerScheduler } from './core/triggers/scheduler.ts'
-import type { OnArtifactChanged } from './core/types/artifact.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
 import type { ToolRegistry } from './core/types/tool.ts'
 import type { OnProviderBound, OnProviderAllFailed, OnProviderStreamFailed } from './core/types/llm.ts'
@@ -53,18 +52,7 @@ import {
   createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool,
   createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool,
   createPostToRoomTool, createGetRoomHistoryTool,
-  createListArtifactTypesTool, createListArtifactsTool, createAddArtifactTool,
-  createUpdateArtifactTool, createRemoveArtifactTool, createCastVoteTool,
-  createWriteDocumentSectionTool,
 } from './tools/built-in/index.ts'
-import { createTaskListArtifactType } from './core/artifact-types/task-list.ts'
-import { pollArtifactType } from './core/artifact-types/poll.ts'
-import { documentArtifactType } from './core/artifact-types/document.ts'
-import { mermaidArtifactType } from './core/artifact-types/mermaid.ts'
-// mapArtifactType removed: maps render inline via ```map fences only.
-// add_artifact { type: 'map' } returns a structured guidance error
-// pointing the agent at the inline path. Decision: maps in chat are the
-// priority; artifact-vs-inline duality was producing no-show artifacts.
 // Native-only tool calling — no capability probing needed
 import { type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/scripts/script-store.ts'
@@ -79,7 +67,7 @@ import type { LogConfig, LogConfigState, LogEvent, LogSink } from './logging/typ
 import { createJsonlFileSink } from './logging/jsonl-sink.ts'
 import { matchesKindFilter, validateLogConfig, defaultLogDir, defaultSessionId } from './logging/config.ts'
 import {
-  mkArtifactChanged, mkDeliveryModeChanged, mkEvalEvent,
+  mkDeliveryModeChanged, mkEvalEvent,
   mkMembershipChanged, mkMessagePosted, mkModeAutoSwitched,
   mkProviderAllFailed, mkProviderBound, mkProviderStreamFailed,
   mkRoomCreated, mkRoomDeleted, mkSessionEnd, mkSessionStart,
@@ -136,14 +124,14 @@ export interface System {
   readonly ollamaUrls: OllamaUrlRegistry
   readonly removeAgent: (id: string) => boolean
   readonly removeRoom: (roomId: string) => boolean
-  // Clear every room, agent, and artifact from the running instance. Used by
-  // the `reset_system` MCP tool in the experiment runner's persistent-process
+  // Clear every room and agent from the running instance. Used by the
+  // `reset_system` MCP tool in the experiment runner's persistent-process
   // mode so a single subprocess can serve many independent runs. Leaves the
   // tool registry, skill store, provider router, and snapshot wiring alone —
   // only the per-conversation state is reset. In-flight AI generations get a
   // bounded `whenIdle(5000)` + `cancelGeneration()` before the agent is
   // removed so results from cancelled runs don't post into the next run.
-  readonly resetState: () => Promise<{ readonly rooms: number; readonly agents: number; readonly artifacts: number }>
+  readonly resetState: () => Promise<{ readonly rooms: number; readonly agents: number }>
   readonly addAgentToRoom: (agentId: string, roomId: string, invitedBy?: string) => Promise<void>
   readonly removeAgentFromRoom: (agentId: string, roomId: string, removedBy?: string) => void
   readonly spawnAIAgent: (config: AIAgentConfig, options?: SpawnOptions) => Promise<Agent>
@@ -154,7 +142,6 @@ export interface System {
   readonly setOnTurnChanged: (callback: OnTurnChanged) => void
   readonly setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => void
   readonly setOnModeAutoSwitched: (callback: OnModeAutoSwitched) => void
-  readonly setOnArtifactChanged: (callback: OnArtifactChanged) => void
   readonly setOnRoomCreated: (callback: OnRoomCreated) => void
   readonly setOnRoomDeleted: (callback: OnRoomDeleted) => void
   readonly setOnMembershipChanged: (callback: OnMembershipChanged) => void
@@ -290,7 +277,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const messagePosted = lateBinding<OnMessagePosted>('messagePosted')
   const turnChanged = lateBinding<OnTurnChanged>('turnChanged')
   const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>('deliveryModeChanged')
-  const artifactChanged = lateBinding<OnArtifactChanged>('artifactChanged')
   const roomCreated = lateBinding<OnRoomCreated>('roomCreated')
   const roomDeleted = lateBinding<OnRoomDeleted>('roomDeleted')
   const membershipChanged = lateBinding<OnMembershipChanged>('membershipChanged')
@@ -333,7 +319,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     },
     onTurnChanged: turnChanged.proxy,
     onDeliveryModeChanged: deliveryModeChanged.proxy,
-    onArtifactChanged: artifactChanged.proxy,
     onRoomCreated: roomCreated.proxy,
     onRoomDeleted: (roomId, roomName) => {
       roomDeleted.proxy(roomId, roomName)
@@ -354,8 +339,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // Per-instance overlay over the process-shared tool registry. Pack tools,
   // skill-bundled tools, external tools, MCP tools and the codegen suite
   // live in shared (registered once at boot). Only house-bound built-ins
-  // (room ops, artifacts, post_to_room, write_document_section, write_script)
-  // register into the overlay below.
+  // (room ops, post_to_room, write_script) register into the overlay below.
   const toolRegistry = createOverlayToolRegistry(shared.sharedToolRegistry)
 
   // Summary engine + scheduler — default model is the first AI agent's model,
@@ -382,16 +366,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     team,
     house,
   })
-
-  // Register built-in artifact types — task_list needs store reference for checkAutoResolve
-  house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
-  house.artifactTypes.register(pollArtifactType)
-  house.artifactTypes.register(documentArtifactType)
-  house.artifactTypes.register(mermaidArtifactType)
-  // map artifact type intentionally not registered — maps render inline
-  // via ```map fences. add_artifact { type: 'map' } returns a guidance
-  // error from the tool layer (artifact-tools.ts).
-
 
   // System-level membership operations — extracted to core/room-operations.ts.
   const roomOps = createRoomOperations({
@@ -444,7 +418,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // For each AI agent: bounded whenIdle(5000) + cancelGeneration so in-flight
   // tool loops or streams don't later post into a freshly-reset room. Human
   // agents have no generation loop so they're removed directly.
-  const resetState = async (): Promise<{ rooms: number; agents: number; artifacts: number }> => {
+  const resetState = async (): Promise<{ rooms: number; agents: number }> => {
     const agents = team.listAgents()
     let agentCount = 0
     for (const agent of agents) {
@@ -464,9 +438,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     for (const profile of rooms) {
       if (systemRemoveRoom(profile.id)) roomCount++
     }
-    const artifactCount = house.artifacts.list().length
-    house.artifacts.clear()
-    return { rooms: roomCount, agents: agentCount, artifacts: artifactCount }
+    return { rooms: roomCount, agents: agentCount }
   }
 
   const removeAgent = (id: string): boolean => {
@@ -512,19 +484,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     createListAgentsTool(team),
     createMuteAgentTool(team, house),
     createGetMyContextTool(team, house),
-    // Artifact tools
-    createListArtifactTypesTool(house),
-    createListArtifactsTool(house),
-    createAddArtifactTool(house),
-    createUpdateArtifactTool(house),
-    createRemoveArtifactTool(house),
-    createCastVoteTool(house),
     // Utility tools — bound to per-instance house
     createGetRoomHistoryTool(house),
     createPostToRoomTool(house),
   ])
-  // Document tool — collaborative structured writing into per-room artifacts.
-  toolRegistry.register(createWriteDocumentSectionTool(house.artifacts))
 
   // Skill system — file-based behavioral templates with bundled tools.
   // skillStore is process-shared (populated by bootstrap). scriptStore is
@@ -692,7 +655,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       messagePosted.add((roomId, message) => safe(() => mkMessagePosted(sid(), roomId, message))),
       deliveryModeChanged.add((roomId, mode) => safe(() => mkDeliveryModeChanged(sid(), roomId, mode))),
       modeAutoSwitched.add((roomId, toMode, reason) => safe(() => mkModeAutoSwitched(sid(), roomId, toMode, reason))),
-      artifactChanged.add((action, artifact) => safe(() => mkArtifactChanged(sid(), action, artifact))),
       roomCreated.add((profile) => safe(() => mkRoomCreated(sid(), profile))),
       roomDeleted.add((roomId, roomName) => safe(() => mkRoomDeleted(sid(), roomId, roomName))),
       membershipChanged.add((roomId, roomName, agentId, agentName, action) =>
@@ -808,7 +770,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     setOnTurnChanged: turnChanged.set,
     setOnDeliveryModeChanged: deliveryModeChanged.set,
     setOnModeAutoSwitched: modeAutoSwitched.set,
-    setOnArtifactChanged: artifactChanged.set,
     setOnRoomCreated: roomCreated.set,
     setOnRoomDeleted: roomDeleted.set,
     setOnMembershipChanged: membershipChanged.set,

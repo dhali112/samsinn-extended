@@ -16,7 +16,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { System } from '../../main.ts'
-import type { Artifact, OnArtifactChanged } from '../../core/types/artifact.ts'
 import type { OnDeliveryModeChanged, OnTurnChanged } from '../../core/types/room.ts'
 import { registerAllMCPTools } from './tools/index.ts'
 import { registerMCPResources } from './resources.ts'
@@ -55,13 +54,8 @@ export const wireEventNotifications = (system: System, mcpServer: McpServer): vo
     sendNotification({ type: 'delivery_mode_changed', roomName: room?.profile.name, mode })
   }
 
-  const onArtifactChanged: OnArtifactChanged = (action: string, artifact: Artifact) => {
-    sendNotification({ type: 'artifact_changed', action, artifact })
-  }
-
   system.setOnTurnChanged(onTurnChanged)
   system.setOnDeliveryModeChanged(onDeliveryModeChanged)
-  system.setOnArtifactChanged(onArtifactChanged)
 }
 
 // === Start MCP server on stdio ===
