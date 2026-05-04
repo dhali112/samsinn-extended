@@ -255,11 +255,21 @@ const handlers: Handlers = {
       const existing = $agentWarnings.get()[id] ?? []
       $agentWarnings.setKey(id, [...existing, event.message])
     } else if (event.kind === 'model_fallback') {
-      // Non-blocking notice that the agent's preferred model is unavailable
-      // and the call fell through. Surface as a warning string so existing
-      // warnings UI picks it up — distinct text makes the cause obvious.
+      // Non-blocking notice that the agent's preferred model resolved to
+      // a different effective model. Reason determines the copy:
+      //   preferred_unavailable — provider down, fell over to a different model
+      //   preferred_blank — agent had no model set
+      //   preferred_available — same model, different specific version (e.g.
+      //     dated Anthropic ID); informational, not an error
       const existing = $agentWarnings.get()[id] ?? []
-      const note = `Falling back from "${event.preferred}" to "${event.effective}" (preferred unavailable)`
+      let note: string
+      if (event.reason === 'preferred_unavailable') {
+        note = `Falling back from "${event.preferred}" to "${event.effective}" (preferred unavailable)`
+      } else if (event.reason === 'preferred_blank') {
+        note = `No model configured; using "${event.effective}"`
+      } else {
+        note = `Resolved "${event.preferred}" to specific version "${event.effective}"`
+      }
       $agentWarnings.setKey(id, [...existing, note])
     }
   },

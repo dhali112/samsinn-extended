@@ -641,19 +641,37 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   //      `anthropic:claude-haiku-4-5-20251001` (provider reports dated ID).
   //      Return the cached prefixed form; router pins to the provider and
   //      sends the dated ID, which the gateway recognises in availableModels.
-  const findInCache = (preferred: string): string | undefined => {
-    if (availableModelsCache.includes(preferred)) return preferred
+  // Cache lookup with two distinct outcomes:
+  //   'present-bare' — bare preferred matches a `<provider>:<preferred>`
+  //     entry exactly (no version suffix). Same model, same provider; the
+  //     router can resolve the bare form via candidate-walk. Returning the
+  //     bare form here PRESERVES failover (router walks all providers that
+  //     list the model) — rewriting to prefixed would silently re-pin and
+  //     emit a spurious "fallback" event on every call.
+  //   'versioned' — bare preferred matches a `<provider>:<preferred>-<ver>`
+  //     entry (Anthropic dated IDs). Different model identity; the router
+  //     needs the dated form to send to the gateway. This IS a meaningful
+  //     fallback for telemetry + UI surfaces.
+  const findInCache = (preferred: string): { match: string; kind: 'direct' | 'present-bare' | 'versioned' } | undefined => {
+    if (availableModelsCache.includes(preferred)) return { match: preferred, kind: 'direct' }
     if (preferred.includes(':')) return undefined
     const suffixHit = availableModelsCache.find(c => c.endsWith(`:${preferred}`))
-    if (suffixHit) return suffixHit
-    return availableModelsCache.find(c => c.includes(`:${preferred}-`))
+    if (suffixHit) return { match: preferred, kind: 'present-bare' }
+    const versionedHit = availableModelsCache.find(c => c.includes(`:${preferred}-`))
+    if (versionedHit) return { match: versionedHit, kind: 'versioned' }
+    return undefined
   }
   const resolveEffectiveModel: SpawnOptions['resolveEffectiveModel'] = (preferred) => {
-    const match = findInCache(preferred)
-    if (match) {
+    const hit = findInCache(preferred)
+    if (hit) {
       return {
-        model: match,
-        fallback: match !== preferred,  // versioned-variant counts as fallback for telemetry
+        model: hit.match,
+        // Only the versioned-variant case is a real fallback (different
+        // model identity). The present-bare and direct cases are the
+        // SAME model, just naming differences in the cache; reporting
+        // them as fallbacks creates UI noise on every eval and hides
+        // genuine fallbacks behind the spam.
+        fallback: hit.kind === 'versioned',
         reason: 'preferred_available',
       }
     }
