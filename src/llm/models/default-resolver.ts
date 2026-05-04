@@ -27,10 +27,18 @@ export interface ProviderSnapshot {
   readonly models: ReadonlyArray<{ readonly id: string }>
 }
 
-// Format a model reference. Ollama is unprefixed (legacy); cloud uses
-// `provider:model`. Matches the convention used everywhere else in the app.
-const formatModelRef = (providerName: string, modelId: string): string =>
-  providerName === 'ollama' ? modelId : `${providerName}:${modelId}`
+// Format a model reference. Returns the BARE model id (no `provider:`
+// prefix) regardless of provider. Rationale: an auto-added prefix
+// PINS the model to that provider in the router, disabling failover —
+// when the upstream throttles (gemini Pro 503, anthropic 529, etc.)
+// the request fails hard with no recovery. Bare ids let the router
+// walk candidates and pick whichever is healthy.
+//
+// Users who genuinely WANT pinning (e.g. a model the router can't
+// disambiguate by id alone) can still type the prefix manually in the
+// agent inspector — the router honors explicit pins, it just doesn't
+// add them automatically anymore.
+const formatModelRef = (_providerName: string, modelId: string): string => modelId
 
 export const resolveDefaultModel = (providers: ReadonlyArray<ProviderSnapshot>): string => {
   // First pass: walk the curated preference order, pick the first ok provider

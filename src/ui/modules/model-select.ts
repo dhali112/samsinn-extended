@@ -41,8 +41,11 @@ const formatContext = (n: number): string => {
   return String(n)
 }
 
-const fullModelId = (providerName: string, modelId: string): string =>
-  providerName === 'ollama' ? modelId : `${providerName}:${modelId}`
+// Returns the BARE model id (no `provider:` prefix). Auto-prefixing pins
+// the model to one provider and disables router failover, which causes
+// hard failures during routine upstream throttling. Users can still type
+// a `provider:model` prefix manually if they want explicit pinning.
+const fullModelId = (_providerName: string, modelId: string): string => modelId
 
 // Brief inline tag shown next to the optgroup label. Falls back to the
 // status word; uses the monitor's reason when available so a rate-limited
