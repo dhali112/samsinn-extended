@@ -21,6 +21,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { sharedPaths } from '../core/paths.ts'
 import { canonical } from './canonical.ts'
+import { getDiscoveredFeatures } from './discovered-cache.ts'
 import type { GeoCategory, GeoFeature, GeoFeatureCollection, GeoSource } from './types.ts'
 
 // ============================================================================
@@ -107,9 +108,40 @@ const buildIndex = (features: ReadonlyArray<GeoFeature>): GeoIndex => {
   return { byCanonicalName, byAlias, byId, all: features }
 }
 
-// Read all features in a category. Returns an empty index if the file
-// doesn't exist.
+// Merge discovered + local features for a category. Precedence:
+//   - On (canonical(name)) collision, DISCOVERED wins. Discovered features
+//     are org-curated (verified:true); local agent-added entries are
+//     unverified by default. Operator overrides via the import panel can
+//     still set verified:true and shadow a discovered entry — handled by
+//     the user-facing import flow, not here.
+//   - Each feature retains its own properties.source ('local' | 'discovered'
+//     | 'overpass' | 'nominatim') so the agent and UI can attribute
+//     correctly.
+const mergeFeatures = (
+  local: ReadonlyArray<GeoFeature>,
+  discovered: ReadonlyArray<GeoFeature>,
+): ReadonlyArray<GeoFeature> => {
+  const byCanonicalName = new Map<string, GeoFeature>()
+  // Local first so discovered can overwrite on collision.
+  for (const f of local) byCanonicalName.set(canonical(f.properties.name), f)
+  for (const f of discovered) byCanonicalName.set(canonical(f.properties.name), f)
+  return [...byCanonicalName.values()]
+}
+
+// Read all features in a category. Merges local file + discovered (GitHub)
+// sources at read-time. Returns an empty index if neither has features.
 export const loadCategory = async (category: GeoCategory): Promise<GeoIndex> => {
+  const fc = await readCategoryFile(category)
+  const discovered = await getDiscoveredFeatures(category)
+  const merged = mergeFeatures(fc.features, discovered)
+  return buildIndex(merged)
+}
+
+// Local-only read — used by code paths that must NOT include discovered
+// data (e.g. removeFeature in the per-file mutation path, where touching
+// discovered features makes no sense). Public callers should prefer
+// loadCategory.
+export const loadCategoryLocalOnly = async (category: GeoCategory): Promise<GeoIndex> => {
   const fc = await readCategoryFile(category)
   return buildIndex(fc.features)
 }
@@ -184,29 +216,49 @@ export const removeFeature = async (
   })
 }
 
-// Counts for the UI panel. Never throws — missing file → zeros.
+// Counts for the UI panel. Includes discovered features so the surfaced
+// total matches what loadCategory / lookups actually see. Never throws —
+// missing file → zeros (discovered alone still counted).
 export const categoryStats = async (category: GeoCategory): Promise<{
   total: number
   verified: number
   unverified: number
+  local: number
+  discovered: number
 }> => {
+  let localFeatures: ReadonlyArray<GeoFeature> = []
   try {
     const fc = await readCategoryFile(category)
-    let verified = 0
-    let unverified = 0
-    for (const f of fc.features) {
-      if (f.properties.verified) verified++
-      else unverified++
-    }
-    return { total: fc.features.length, verified, unverified }
+    localFeatures = fc.features
   } catch {
-    return { total: 0, verified: 0, unverified: 0 }
+    // Missing or corrupt file — count only discovered.
   }
+  const discoveredFeatures = await getDiscoveredFeatures(category)
+  const merged = mergeFeatures(localFeatures, discoveredFeatures)
+  let verified = 0
+  let unverified = 0
+  let local = 0
+  let discovered = 0
+  for (const f of merged) {
+    if (f.properties.verified) verified++
+    else unverified++
+    if (f.properties.source === 'discovered') discovered++
+    else if (f.properties.source === 'local') local++
+  }
+  return { total: merged.length, verified, unverified, local, discovered }
 }
 
 // Used by tests + the panel's "list all" view. Returns features in stored
-// order — no implicit sorting.
+// order — no implicit sorting. Includes discovered features merged in
+// (discovered wins on canonical-name collision; see mergeFeatures).
 export const listCategory = async (category: GeoCategory): Promise<ReadonlyArray<GeoFeature>> => {
-  const fc = await readCategoryFile(category)
-  return fc.features
+  let localFeatures: ReadonlyArray<GeoFeature> = []
+  try {
+    const fc = await readCategoryFile(category)
+    localFeatures = fc.features
+  } catch {
+    // Missing or corrupt file — fall through to discovered-only.
+  }
+  const discoveredFeatures = await getDiscoveredFeatures(category)
+  return mergeFeatures(localFeatures, discoveredFeatures)
 }

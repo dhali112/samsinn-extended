@@ -109,14 +109,22 @@ cat > /etc/samsinn/env <<'EOF'
 # OPENROUTER_API_KEY=...
 
 # GitHub registry tokens — lift the unauthenticated 60/hr rate limit on the
-# public-repo discovery calls used by pack and wiki browsing. Without these,
-# the Packs and Wikis panels show empty lists whenever the host's IP hits the
-# anonymous cap. Use a classic PAT with NO scopes — public repo read works
-# for unscoped tokens and a no-scope token can do nothing destructive if it
-# leaks. Both can be the same token.
+# public-repo discovery calls used by pack, wiki, and geodata browsing.
+# Without these, the Packs / Wikis / Geodata panels show empty lists whenever
+# the host's IP hits the anonymous cap. Use a classic PAT with NO scopes —
+# public repo read works for unscoped tokens and a no-scope token can do
+# nothing destructive if it leaks. All three can be the same token.
 # Generate at https://github.com/settings/tokens.
 # SAMSINN_PACK_REGISTRY_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxx
 # SAMSINN_WIKI_REGISTRY_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxx
+# SAMSINN_GEO_REGISTRY_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxx
+
+# Geo discovery sources (csv of `<owner>` or `<owner>/<repo>`).
+# - `<owner>` ending in `-geodata` (e.g. `samsinn-geodata`) → every
+#   non-archived / non-fork repo in the org is treated as a geo source.
+# - Other owners → repo basename must start with `samsinn-geo-`.
+# Default: `samsinn-geodata` (the canonical org).
+# SAMSINN_GEO_SOURCES=samsinn-geodata,my-org/samsinn-geo-private
 EOF
 chmod 0600 /etc/samsinn/env
 ```

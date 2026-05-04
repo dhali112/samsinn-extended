@@ -20,9 +20,9 @@
 // ============================================================================
 
 import { resolveLocation } from '../../geo/resolver.ts'
-import { categoryStats, lookupInCategory, removeFeature, upsertFeature } from '../../geo/store.ts'
+import { categoryStats, listCategory, lookupInCategory, removeFeature, upsertFeature } from '../../geo/store.ts'
 import { getCategory, listCategories } from '../../geo/categories.ts'
-import type { GeoFeature, GeoSource, MapEnvelopeFromGeo, MarkerIcon } from '../../geo/types.ts'
+import type { CategoryMeta, GeoFeature, GeoSource, MapEnvelopeFromGeo, MarkerIcon } from '../../geo/types.ts'
 import type { Tool } from '../../core/types/tool.ts'
 
 const featureToEnvelope = (f: GeoFeature, icon: MarkerIcon | undefined): MapEnvelopeFromGeo['features'][number] => {
@@ -218,5 +218,175 @@ export const createGeoListCategoriesTool = (): Tool => ({
       }
     }))
     return { success: true, data: rows }
+  },
+})
+
+// ============================================================================
+// geo_list_features
+//
+// Bulk-list all features in a category (or a filtered subset). Folds the
+// "discover the category id, then list all features, then filter, then
+// build a map envelope" sequence into a single tool call so prompts like
+// "show all Norwegian oil platforms on a map" succeed without N round-trips.
+//
+// Category resolution is forgiving: pass either `category` (exact id) or
+// `categoryHint` (case-insensitive substring against displayName + id).
+// On ambiguous hint, returns an error listing the candidates so the agent
+// can clarify with the user — never silently guesses.
+// ============================================================================
+
+const fuzzyMatchCategory = (
+  hint: string,
+  cats: ReadonlyArray<CategoryMeta>,
+): { match: CategoryMeta | null; candidates: ReadonlyArray<CategoryMeta> } => {
+  const needle = hint.toLowerCase().trim()
+  if (!needle) return { match: null, candidates: [] }
+  // Exact id wins.
+  const exact = cats.find((c) => c.id === needle)
+  if (exact) return { match: exact, candidates: [] }
+  // Substring match against id OR displayName.
+  const matches = cats.filter((c) => {
+    const dn = c.displayName.toLowerCase()
+    return c.id.includes(needle) || dn.includes(needle)
+  })
+  if (matches.length === 1) return { match: matches[0]!, candidates: [] }
+  return { match: null, candidates: matches }
+}
+
+const filterFeatures = (
+  features: ReadonlyArray<GeoFeature>,
+  filters: { country?: string; operator?: string; nameContains?: string; tag?: string },
+): ReadonlyArray<GeoFeature> => {
+  const country = filters.country?.toUpperCase()
+  const operator = filters.operator?.toLowerCase()
+  const nameContains = filters.nameContains?.toLowerCase()
+  const tag = filters.tag?.toLowerCase()
+  return features.filter((f) => {
+    const p = f.properties
+    if (country && p.country?.toUpperCase() !== country) return false
+    if (operator && (p.operator?.toLowerCase() ?? '').indexOf(operator) === -1) return false
+    if (nameContains) {
+      const inName = p.name.toLowerCase().includes(nameContains)
+      const inAlias = p.aliases?.some((a) => a.toLowerCase().includes(nameContains)) ?? false
+      if (!inName && !inAlias) return false
+    }
+    if (tag && !(p.tags?.map((t) => t.toLowerCase()).includes(tag) ?? false)) return false
+    return true
+  })
+}
+
+// Compute a center+zoom that fits all points roughly. Single point: zoom 9.
+// Multi-point: pick center as midpoint of bbox; zoom from longitudinal span
+// (rough — Leaflet auto-fit on the client is the authoritative version, this
+// is a hint).
+const fitView = (features: ReadonlyArray<GeoFeature>): MapEnvelopeFromGeo['view'] | undefined => {
+  if (features.length === 0) return undefined
+  if (features.length === 1) {
+    const [lng, lat] = features[0]!.geometry.coordinates
+    return { center: [lat, lng], zoom: 9 }
+  }
+  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180
+  for (const f of features) {
+    const [lng, lat] = f.geometry.coordinates
+    if (lat < minLat) minLat = lat
+    if (lat > maxLat) maxLat = lat
+    if (lng < minLng) minLng = lng
+    if (lng > maxLng) maxLng = lng
+  }
+  const center: [number, number] = [(minLat + maxLat) / 2, (minLng + maxLng) / 2]
+  // Crude zoom estimate from longitudinal span.
+  const span = Math.max(maxLat - minLat, (maxLng - minLng) / 2)
+  let zoom = 9
+  if (span > 0.5) zoom = 7
+  if (span > 2) zoom = 6
+  if (span > 8) zoom = 4
+  if (span > 30) zoom = 3
+  return { center, zoom }
+}
+
+const DEFAULT_LIMIT = 200
+const MAX_LIMIT = 1000
+
+export const createGeoListFeaturesTool = (): Tool => ({
+  name: 'geo_list_features',
+  description: 'Returns all features in a category, optionally filtered by country / operator / name-substring / tag. Use this when the user wants to see many features at once on a map (e.g. "show all Norwegian oil platforms"). One call replaces the lookup-each-name dance.',
+  usage: 'Pass `category` (exact id) OR `categoryHint` (e.g. "oil platforms"). On ambiguous hint, the call errors with the candidate ids so you can clarify with the user. Filters compose (AND): country=ISO-3166-1-alpha-2, operator=substring, nameContains=substring on name+aliases, tag=exact match. Result `data` is a map envelope ready to drop into a ```map fence or add_artifact body.',
+  returns: '{ features: [{type:"marker", lat, lng, label, icon}], view?: {center, zoom}, count, source: "merged" }, or { success:false, error, candidates? } on ambiguity.',
+  parameters: {
+    type: 'object',
+    properties: {
+      category:      { type: 'string', description: 'Exact registered category id.' },
+      categoryHint:  { type: 'string', description: 'Substring against id or displayName when you don\'t know the exact id. Errors with candidates on ambiguity.' },
+      country:       { type: 'string', description: 'ISO-3166-1 alpha-2 country code (e.g. "NO" for Norway).' },
+      operator:      { type: 'string', description: 'Operator substring (case-insensitive).' },
+      nameContains:  { type: 'string', description: 'Substring against feature name + aliases.' },
+      tag:           { type: 'string', description: 'Exact tag match (case-insensitive).' },
+      limit:         { type: 'number', description: `Default ${DEFAULT_LIMIT}, hard cap ${MAX_LIMIT}.` },
+    },
+    required: [],
+  },
+  execute: async (params: Record<string, unknown>) => {
+    const categoryParam = typeof params.category === 'string' ? params.category : ''
+    const hint = typeof params.categoryHint === 'string' ? params.categoryHint : ''
+    if (!categoryParam && !hint) {
+      return { success: false, error: 'either `category` or `categoryHint` is required' }
+    }
+
+    const allCats = await listCategories()
+    if (allCats.length === 0) {
+      return { success: false, error: 'no geo categories registered yet — the user must import one first via Settings → Geodata → Import.' }
+    }
+
+    let meta: CategoryMeta | null = null
+    if (categoryParam) {
+      meta = allCats.find((c) => c.id === categoryParam) ?? null
+      if (!meta) return unknownCategoryError(categoryParam)
+    } else {
+      const r = fuzzyMatchCategory(hint, allCats)
+      if (!r.match) {
+        if (r.candidates.length === 0) {
+          return {
+            success: false,
+            error: `no category matched hint '${hint}'. Available: ${allCats.map((c) => c.id).join(', ')}`,
+          }
+        }
+        return {
+          success: false,
+          error: `categoryHint '${hint}' is ambiguous`,
+          candidates: r.candidates.map((c) => ({ id: c.id, displayName: c.displayName })),
+        }
+      }
+      meta = r.match
+    }
+
+    const filters = {
+      ...(typeof params.country === 'string' ? { country: params.country } : {}),
+      ...(typeof params.operator === 'string' ? { operator: params.operator } : {}),
+      ...(typeof params.nameContains === 'string' ? { nameContains: params.nameContains } : {}),
+      ...(typeof params.tag === 'string' ? { tag: params.tag } : {}),
+    }
+
+    const all = await listCategory(meta.id)
+    const filtered = filterFeatures(all, filters)
+
+    const requestedLimit = typeof params.limit === 'number' && params.limit > 0
+      ? Math.min(params.limit, MAX_LIMIT)
+      : DEFAULT_LIMIT
+    const truncated = filtered.length > requestedLimit
+    const slice = truncated ? filtered.slice(0, requestedLimit) : filtered
+
+    const view = fitView(slice)
+    return {
+      success: true,
+      data: {
+        features: slice.map((f) => featureToEnvelope(f, meta!.icon)),
+        ...(view ? { view } : {}),
+        count: slice.length,
+        totalMatched: filtered.length,
+        truncated,
+        category: meta.id,
+        source: 'merged' as const,
+      },
+    }
   },
 })

@@ -63,7 +63,7 @@ import { createWSManager } from './api/ws-handler.ts'
 import {
   createPassTool, createGetTimeTool, createTestToolTool, createListSkillsTool,
   createWebTools, createWriteSkillTool, createWriteToolTool, createPackTools,
-  createGeoLookupTool, createGeoAddTool, createGeoRemoveTool, createGeoListCategoriesTool,
+  createGeoLookupTool, createGeoAddTool, createGeoRemoveTool, createGeoListCategoriesTool, createGeoListFeaturesTool,
 } from './tools/built-in/index.ts'
 import { runGeodataMigrationOnce } from './geo/migrate.ts'
 
@@ -159,6 +159,7 @@ export const bootstrap = async (): Promise<void> => {
   shared.sharedToolRegistry.register(createGeoAddTool())
   shared.sharedToolRegistry.register(createGeoRemoveTool())
   shared.sharedToolRegistry.register(createGeoListCategoriesTool())
+  shared.sharedToolRegistry.register(createGeoListFeaturesTool())
   for (const tool of createWikiTools(shared.wikiRegistry)) {
     shared.sharedToolRegistry.register(tool)
   }
@@ -187,6 +188,15 @@ export const bootstrap = async (): Promise<void> => {
   } catch (err) {
     console.warn(`[wiki] initial reconcile failed: ${err instanceof Error ? err.message : String(err)}`)
   }
+
+  // Geodata: kick off discovery + cache warm-up in the background. Mirrors
+  // the wiki pattern — fire-and-forget so a slow GitHub doesn't block boot.
+  // The cache TTL handles refresh; no separate timer needed. Loads of
+  // listCategories / categoryStats / loadCategory transparently merge in
+  // discovered data once the cache is populated.
+  const { warmDiscoveredCache } = await import('./geo/discovered-cache.ts')
+  warmDiscoveredCache()
+
   if (networkToolsEnabled) {
     shared.sharedToolRegistry.registerAll(createWebTools({
       tavilyApiKey: process.env.TAVILY_API_KEY,

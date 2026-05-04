@@ -18,6 +18,7 @@ import { categoryStats, listCategory, removeFeature } from '../../geo/store.ts'
 import { deleteCategory, getCategory, listCategories } from '../../geo/categories.ts'
 import { resolveLocation } from '../../geo/resolver.ts'
 import { applyImport } from '../../geo/import.ts'
+import { getDiscoveryStatus, warmDiscoveredCache } from '../../geo/discovered-cache.ts'
 import type { GeoSource } from '../../geo/types.ts'
 
 const isSource = (s: string): s is GeoSource =>
@@ -41,9 +42,25 @@ export const geodataRoutes: RouteEntry[] = [
           total: stats.total,
           verified: stats.verified,
           unverified: stats.unverified,
+          local: stats.local,
+          discovered: stats.discovered,
         }
       }))
       return json({ categories: rows })
+    },
+  },
+
+  // --- Discovery status: per-source counts + last-fetch state. Powers the
+  //     Settings → Geodata "Discovered sources" panel and the discovery
+  //     health badge. Triggers a warm refresh when fetchedAt is 0 (first
+  //     request after boot) so the UI doesn't sit empty. ---
+  {
+    method: 'GET',
+    pattern: /^\/api\/geodata\/sources$/,
+    handler: async () => {
+      const status = getDiscoveryStatus()
+      if (status.fetchedAt === 0) warmDiscoveredCache()  // fire and forget
+      return json(status)
     },
   },
 

@@ -23,6 +23,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { sharedPaths } from '../core/paths.ts'
+import { getDiscoveredCategories } from './discovered-cache.ts'
 import { isMarkerIcon, type CategoryMeta, type CategoryRegistryFile } from './types.ts'
 
 const REGISTRY_VERSION: 1 = 1
@@ -125,10 +126,31 @@ export const validateCategoryMeta = (raw: unknown): { ok: true; meta: CategoryMe
 // Public API — registry operations.
 // ============================================================================
 
+// Merge local registry + discovered categories. Precedence:
+//   - On id collision, LOCAL wins. Operator preference (displayName, icon)
+//     takes priority over the org-curated default for that id. The data
+//     under the category (features) follows a different rule — see
+//     mergeFeatures in store.ts where discovered wins on name collision.
+const mergeCategories = (
+  local: ReadonlyArray<CategoryMeta>,
+  discovered: ReadonlyArray<CategoryMeta>,
+): ReadonlyArray<CategoryMeta> => {
+  const byId = new Map<string, CategoryMeta>()
+  // Discovered first so local can overwrite on collision.
+  for (const c of discovered) byId.set(c.id, c)
+  for (const c of local) byId.set(c.id, c)
+  return [...byId.values()]
+}
+
 export const loadRegistry = async (): Promise<ReadonlyArray<CategoryMeta>> => {
   const file = await readRegistryFile()
-  return file.categories
+  const discovered = await getDiscoveredCategories()
+  return mergeCategories(file.categories, discovered)
 }
+
+// upsertCategory + deleteCategory use readRegistryFile directly (inside
+// withRegistryMutex). That's deliberate — mutations operate on the local
+// store only; discovered categories are read-only at runtime.
 
 export const getCategory = async (id: string): Promise<CategoryMeta | null> => {
   const all = await loadRegistry()

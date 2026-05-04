@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createGeoAddTool, createGeoListCategoriesTool, createGeoLookupTool, createGeoRemoveTool } from './geo-tools.ts'
+import { createGeoAddTool, createGeoListCategoriesTool, createGeoListFeaturesTool, createGeoLookupTool, createGeoRemoveTool } from './geo-tools.ts'
 import { upsertCategory, validateCategoryMeta, __resetCategoryRegistryState } from '../../geo/categories.ts'
 import { upsertFeature } from '../../geo/store.ts'
 import type { GeoFeature } from '../../geo/types.ts'
@@ -133,6 +133,120 @@ describe('geo_list_categories', () => {
       expect(rows.length).toBe(1)
       expect(rows[0]?.id).toBe('wind-farm')
       expect(rows[0]?.featureCount).toBe(1)
+    }
+  })
+})
+
+describe('geo_list_features', () => {
+  const tool = createGeoListFeaturesTool()
+
+  const seedFeature = async (name: string, lat: number, lng: number, props: Partial<GeoFeature['properties']> = {}): Promise<void> => {
+    await upsertFeature({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+      properties: {
+        id: `local-${name.toLowerCase().replace(/\s+/g, '-')}`,
+        name,
+        category: 'oil-platforms',
+        verified: true,
+        source: 'local',
+        ...props,
+      },
+    })
+  }
+
+  test('errors when no categories registered', async () => {
+    const r = await tool.execute({ category: 'oil-platforms' }, fakeContext as never)
+    expect(r.success).toBe(false)
+    if (!r.success) expect(r.error).toMatch(/no geo categories/)
+  })
+
+  test('errors when neither category nor categoryHint given', async () => {
+    await seedCategory('oil-platforms')
+    const r = await tool.execute({}, fakeContext as never)
+    expect(r.success).toBe(false)
+    if (!r.success) expect(r.error).toMatch(/category.*or.*categoryHint/i)
+  })
+
+  test('exact category id returns all features as map envelope', async () => {
+    await seedCategory('oil-platforms')
+    await seedFeature('Statfjord A', 61.25, 1.85, { country: 'NO', operator: 'Equinor' })
+    await seedFeature('Snorre B', 61.45, 2.16, { country: 'NO', operator: 'Equinor' })
+    const r = await tool.execute({ category: 'oil-platforms' }, fakeContext as never)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      const d = r.data as { features: unknown[]; count: number; source: string }
+      expect(d.count).toBe(2)
+      expect(d.features.length).toBe(2)
+      expect(d.source).toBe('merged')
+    }
+  })
+
+  test('country filter narrows results', async () => {
+    await seedCategory('oil-platforms')
+    await seedFeature('Statfjord A', 61.25, 1.85, { country: 'NO' })
+    await seedFeature('Brent C', 61.0, 1.7, { country: 'GB' })
+    const r = await tool.execute({ category: 'oil-platforms', country: 'NO' }, fakeContext as never)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      const d = r.data as { count: number }
+      expect(d.count).toBe(1)
+    }
+  })
+
+  test('categoryHint matches by displayName substring', async () => {
+    const v = validateCategoryMeta({ id: 'oil-platforms', displayName: 'Oil Platforms', icon: 'pin' })
+    if (v.ok) await upsertCategory(v.meta)
+    await seedFeature('Statfjord A', 61.25, 1.85, { country: 'NO' })
+    const r = await tool.execute({ categoryHint: 'oil platform' }, fakeContext as never)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      const d = r.data as { category: string }
+      expect(d.category).toBe('oil-platforms')
+    }
+  })
+
+  test('categoryHint surfaces ambiguity with candidates', async () => {
+    const v1 = validateCategoryMeta({ id: 'oil-platforms', displayName: 'Oil Platforms', icon: 'pin' })
+    const v2 = validateCategoryMeta({ id: 'oil-rigs', displayName: 'Oil Rigs (legacy)', icon: 'pin' })
+    if (v1.ok) await upsertCategory(v1.meta)
+    if (v2.ok) await upsertCategory(v2.meta)
+    const r = await tool.execute({ categoryHint: 'oil' }, fakeContext as never)
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.error).toMatch(/ambiguous/)
+      // candidates is on the error result
+      const e = r as unknown as { candidates: Array<{ id: string }> }
+      expect(e.candidates.length).toBe(2)
+    }
+  })
+
+  test('limit caps results and reports truncation', async () => {
+    await seedCategory('oil-platforms')
+    for (let i = 0; i < 5; i++) {
+      await seedFeature(`Platform ${i}`, 60 + i * 0.1, 1 + i * 0.1)
+    }
+    const r = await tool.execute({ category: 'oil-platforms', limit: 3 }, fakeContext as never)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      const d = r.data as { count: number; truncated: boolean; totalMatched: number }
+      expect(d.count).toBe(3)
+      expect(d.truncated).toBe(true)
+      expect(d.totalMatched).toBe(5)
+    }
+  })
+
+  test('view fits multi-point bbox', async () => {
+    await seedCategory('oil-platforms')
+    await seedFeature('A', 60, 1)
+    await seedFeature('B', 62, 3)
+    const r = await tool.execute({ category: 'oil-platforms' }, fakeContext as never)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      const d = r.data as { view?: { center: [number, number]; zoom: number } }
+      expect(d.view).toBeDefined()
+      expect(d.view!.center[0]).toBeCloseTo(61, 0)
+      expect(d.view!.center[1]).toBeCloseTo(2, 0)
     }
   })
 })
