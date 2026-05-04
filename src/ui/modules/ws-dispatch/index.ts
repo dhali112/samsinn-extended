@@ -542,9 +542,18 @@ const handlers: Handlers = {
     // user can see what happened even after the toast fades.
     if (msg.agentId) {
       const existing = $agentWarnings.get()[msg.agentId] ?? []
-      const note = msg.remediation
+      // Two-tier note: headline (primary + remediation) + per-attempt
+      // detail. The detail tier preserves what each upstream actually
+      // said — HTTP status, retry-after, body snippet — so the user can
+      // tell "gemini 503 capacity, anthropic no key" at a glance instead
+      // of just "all providers failed".
+      const headline = msg.remediation
         ? `${msg.primaryReason || 'all providers failed'} — ${msg.remediation}`
         : (msg.primaryReason || 'all providers failed')
+      const attemptLines = msg.attempts && msg.attempts.length > 0
+        ? msg.attempts.map(a => `  · ${a.provider}: ${a.reason}`).join('\n')
+        : ''
+      const note = attemptLines ? `${headline}\n${attemptLines}` : headline
       $agentWarnings.setKey(msg.agentId, [...existing, note])
     }
     if (!shouldEmitAllFailed(msg.agentId, msg.model, msg.primaryCode, now)) return

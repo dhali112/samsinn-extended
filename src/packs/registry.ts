@@ -95,13 +95,23 @@ const repoToPack = (r: GHRepo): RegistryPack => ({
 const isPackOnlyOwner = (owner: string): boolean =>
   /-packs$/.test(owner) || owner === 'samsinn-packs'
 
+// Read up to 200 chars of an error body so journal lines carry the
+// upstream's actual reason instead of just "HTTP 4xx".
+const readErrorSnippet = async (res: Response): Promise<string> => {
+  try {
+    const t = await res.text()
+    return t.slice(0, 200).replace(/\s+/g, ' ').trim()
+  } catch { return '' }
+}
+
 const fetchOwnerRepos = async (owner: string): Promise<ReadonlyArray<RegistryPack>> => {
   // /users/{owner}/repos works for both users and orgs.
   const res = await fetch(`https://api.github.com/users/${encodeURIComponent(owner)}/repos?per_page=100&sort=updated`, {
     headers: ghHeaders(),
   })
   if (!res.ok) {
-    console.warn(`[packs/registry] fetch ${owner} failed: HTTP ${res.status}`)
+    const snip = await readErrorSnippet(res)
+    console.warn(`[packs/registry] fetch ${owner} failed: HTTP ${res.status}${snip ? ` body=${snip}` : ''}`)
     return []
   }
   const repos = await res.json() as ReadonlyArray<GHRepo>
@@ -116,7 +126,8 @@ const fetchOneRepo = async (ownerRepo: string): Promise<RegistryPack | null> => 
     headers: ghHeaders(),
   })
   if (!res.ok) {
-    console.warn(`[packs/registry] fetch ${ownerRepo} failed: HTTP ${res.status}`)
+    const snip = await readErrorSnippet(res)
+    console.warn(`[packs/registry] fetch ${ownerRepo} failed: HTTP ${res.status}${snip ? ` body=${snip}` : ''}`)
     return null
   }
   return repoToPack(await res.json() as GHRepo)

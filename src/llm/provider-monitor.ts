@@ -191,8 +191,16 @@ export const createProviderMonitor = (
     })
   }
 
-  const transitionToBackoff = (cooldownMs: number, reason: string): void => {
+  const transitionToBackoff = (cooldownMs: number, reason: string, code?: string): void => {
     unhealthyStep = 0
+    // Log every backoff entry. The previous behavior was silent — the
+    // monitor stored the reason in state.lastError but no journal line
+    // was written, so investigating "why is gemini cooling down" required
+    // grepping for the wrapping `[llm]` event after the fact. Now ops can
+    // see the trigger directly: code (rate_limit / quota / provider_down /
+    // network), cooldown, reason (with upstream HTTP status + body
+    // snippet from the CloudProviderError), and the retryAt deadline.
+    console.log(`[llm:${config.name}] backoff for ${cooldownMs}ms (code=${code ?? '?'}, reason=${reason})`)
     setState({
       sub: 'backoff',
       reason,
@@ -310,7 +318,7 @@ export const createProviderMonitor = (
       })
     }
     if (decision.kind === 'backoff') {
-      transitionToBackoff(decision.cooldownMs, decision.reason)
+      transitionToBackoff(decision.cooldownMs, decision.reason, decision.code)
     } else {
       // 'unhealthy' kind: bump streak; flip sub-state once threshold reached.
       const newStreak = state.consecutiveFailures + 1
@@ -334,7 +342,7 @@ export const createProviderMonitor = (
       if (decision.kind === 'permanent' || decision.kind === 'gateway') return
       state = { ...state, lastError: { code: decision.code, message: decision.reason }, lastErrorAt: now() }
       if (decision.kind === 'backoff') {
-        transitionToBackoff(decision.cooldownMs, decision.reason)
+        transitionToBackoff(decision.cooldownMs, decision.reason, decision.code)
       } else {
         const newStreak = state.consecutiveFailures + 1
         if (state.sub !== 'unhealthy' && newStreak >= unhealthyThreshold) {

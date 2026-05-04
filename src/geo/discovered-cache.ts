@@ -107,7 +107,11 @@ const fetchFile = async (src: DiscoveredGeoSource, path: string): Promise<string
   if (res.status === 304) return cached?.body ?? null
   if (res.status === 404) return null
   if (!res.ok) {
-    console.warn(`[geo/discovered] ${src.source} ${path} HTTP ${res.status}`)
+    // Read up to 200 chars of body so journal records the actual reason
+    // (rate-limit / scope / something else) rather than just the status.
+    let snip = ''
+    try { snip = (await res.text()).slice(0, 200).replace(/\s+/g, ' ').trim() } catch { /* ignore */ }
+    console.warn(`[geo/discovered] ${src.source} ${path} HTTP ${res.status}${snip ? ` body=${snip}` : ''}`)
     return cached?.body ?? null
   }
 

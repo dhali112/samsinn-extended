@@ -94,13 +94,24 @@ const repoToSource = (r: GHRepo): DiscoveredGeoSource => {
   }
 }
 
+// Read up to 200 chars of an error body so journal lines carry the
+// upstream's actual reason (e.g. rate-limit message vs not-found vs
+// auth-scope error) instead of just "HTTP 4xx".
+const readErrorSnippet = async (res: Response): Promise<string> => {
+  try {
+    const t = await res.text()
+    return t.slice(0, 200).replace(/\s+/g, ' ').trim()
+  } catch { return '' }
+}
+
 const fetchOwnerRepos = async (owner: string): Promise<ReadonlyArray<GHRepo>> => {
   const res = await fetch(
     `https://api.github.com/users/${encodeURIComponent(owner)}/repos?per_page=100&sort=updated`,
     { headers: ghHeaders() },
   )
   if (!res.ok) {
-    console.warn(`[geo/discovery] fetch ${owner} failed: HTTP ${res.status}`)
+    const snip = await readErrorSnippet(res)
+    console.warn(`[geo/discovery] fetch ${owner} failed: HTTP ${res.status}${snip ? ` body=${snip}` : ''}`)
     return []
   }
   const repos = await res.json() as ReadonlyArray<GHRepo>
@@ -110,7 +121,8 @@ const fetchOwnerRepos = async (owner: string): Promise<ReadonlyArray<GHRepo>> =>
 const fetchOneRepo = async (ownerRepo: string): Promise<GHRepo | null> => {
   const res = await fetch(`https://api.github.com/repos/${ownerRepo}`, { headers: ghHeaders() })
   if (!res.ok) {
-    console.warn(`[geo/discovery] fetch ${ownerRepo} failed: HTTP ${res.status}`)
+    const snip = await readErrorSnippet(res)
+    console.warn(`[geo/discovery] fetch ${ownerRepo} failed: HTTP ${res.status}${snip ? ` body=${snip}` : ''}`)
     return null
   }
   return await res.json() as GHRepo

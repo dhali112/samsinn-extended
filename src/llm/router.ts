@@ -320,35 +320,63 @@ export const createProviderRouter = (
     agentId: string | null,
   ): 'fallthrough' | 'rethrow' => {
     if (isCloudProviderError(err)) {
-      if (!isFallbackable(err)) return 'rethrow'
+      if (!isFallbackable(err)) {
+        // Permanent error (auth, bad_request) — logged once before throw so
+        // the journal records the upstream cause when the request bubbles
+        // up as a hard failure to the agent.
+        console.warn(`[llm:${name}] attempt failed (rethrow) code=${err.code} status=${err.status ?? '?'} model=${request.model}: ${err.message}`)
+        return 'rethrow'
+      }
       monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
-      attempts.push({ provider: name, ...errorAttempt(err) })
+      const attempt = errorAttempt(err)
+      attempts.push({ provider: name, ...attempt })
+      console.warn(`[llm:${name}] attempt failed (fallthrough) code=${err.code} status=${err.status ?? '?'} retry_after_ms=${err.retryAfterMs ?? 'none'} model=${request.model}: ${err.message}`)
       return 'fallthrough'
     }
     if (isGatewayError(err) && (err.code === 'queue_full' || err.code === 'circuit_open' || err.code === 'queue_timeout')) {
-      // Local shed — does NOT count against monitor health.
+      // Local shed — does NOT count against monitor health. Logged so the
+      // journal shows queue/circuit pressure even though the upstream
+      // provider isn't to blame.
       attempts.push({ provider: name, reason: err.code, code: err.code })
+      console.warn(`[llm:${name}] attempt failed (local shed) code=${err.code} model=${request.model}`)
       return 'fallthrough'
     }
     // Unknown / network error — let monitor count it toward unhealthy streak.
     monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
-    attempts.push({
-      provider: name,
-      reason: err instanceof Error ? err.message : String(err),
-      code: 'network',
-    })
+    const message = err instanceof Error ? err.message : String(err)
+    attempts.push({ provider: name, reason: message, code: 'network' })
+    console.warn(`[llm:${name}] attempt failed (network/unknown) model=${request.model}: ${message}`)
     return 'fallthrough'
   }
 
   const errorAttempt = (err: import('./errors.ts').CloudProviderError): { reason: string; code: ProviderAttemptCode } => {
+    // Preserve upstream detail in the human-readable reason. The original
+    // error message from openai-compatible.ts already contains the HTTP
+    // status + first 300 chars of the upstream body — surfacing it here
+    // means logs, the per-attempt detail in WS events, and the eventual
+    // user-facing toast all see what the provider actually said. Falling
+    // back to a generic phrase ("provider unavailable") was the visibility
+    // hole the user called out.
+    const status = err.status !== undefined ? ` (HTTP ${err.status})` : ''
+    const retry = err.retryAfterMs ? ` (retry in ${Math.round(err.retryAfterMs / 1000)}s)` : ''
     if (err.code === 'rate_limit') {
       return {
-        reason: `rate-limited${err.retryAfterMs ? ` (retry in ${Math.round(err.retryAfterMs / 1000)}s)` : ''}`,
+        reason: `rate-limited${status}${retry}: ${err.message}`,
         code: 'rate_limit',
       }
     }
-    if (err.code === 'quota') return { reason: 'quota exceeded', code: 'quota' }
-    if (err.code === 'provider_down') return { reason: 'provider unavailable', code: 'provider_down' }
+    if (err.code === 'quota') {
+      return {
+        reason: `quota exceeded${status}${retry}: ${err.message}`,
+        code: 'quota',
+      }
+    }
+    if (err.code === 'provider_down') {
+      return {
+        reason: `provider unavailable${status}${retry}: ${err.message}`,
+        code: 'provider_down',
+      }
+    }
     return { reason: err.message, code: 'unknown' }
   }
 
@@ -622,6 +650,13 @@ export const createProviderRouter = (
         // Mid-stream failure — surface as event, no retry. Record with
         // monitor so it counts toward health (could be a flaky upstream).
         const reason = err instanceof Error ? err.message : String(err)
+        const httpStatus = isCloudProviderError(err) ? err.status : undefined
+        const code = isCloudProviderError(err) ? err.code : 'unknown'
+        // Log every mid-stream failure with full detail. Previously this
+        // path emitted an event but didn't write to journal — debugging
+        // a flaky upstream meant catching it in the WS feed at the moment
+        // it happened. Now journalctl carries the trail.
+        console.warn(`[llm:${name}] stream failed mid-response code=${code} status=${httpStatus ?? '?'} model=${request.model}: ${reason}`)
         emit({
           type: 'provider_stream_failed',
           agentId, model: request.model, provider: name, reason,
