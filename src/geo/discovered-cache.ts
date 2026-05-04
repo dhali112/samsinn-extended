@@ -1,31 +1,34 @@
 // ============================================================================
-// Discovered geo cache — fetches categories.json + *.geojson from each
-// discovered source's repo, validates, and serves the result merged into
-// loadCategory / loadRegistry via mergeWithDiscovered helpers in store.ts /
-// categories.ts.
+// Discovered geo cache — fetches `geodata.geojson` from each discovered
+// source repo and serves the result merged into store.ts at read time.
 //
 // Layout assumed in each source repo (raw.githubusercontent.com):
-//   /categories.json                              ← CategoryRegistryFile shape
-//   /<category-id>.geojson                        ← per-category FeatureCollection
-//   /README.md (etc — ignored by discovery)
+//   /geodata.geojson   ← single FeatureCollection covering all categories
+//   /README.md         ← optional, ignored
+//
+// Categories are derived from feature properties (no separate registry).
+// See projection.ts:extractCategoryMetaFromFeatures.
 //
 // Validation:
-//   - categories.json: validateCategoryMeta on each entry; bad entries
-//     dropped with a logged warning.
-//   - *.geojson: must be FeatureCollection. Per-feature validation:
-//     properties.id MUST exist (stable id requirement) — features without
-//     it are dropped + logged. properties.source/verified are coerced to
-//     'discovered'/true.
+//   - Top-level must be FeatureCollection.
+//   - Each feature must satisfy isValidGeoFeature: Point geometry, valid
+//     numeric coords, properties.{id, name, category} all present.
+//     properties.id MUST be stable across re-fetches (the contributor's
+//     responsibility); features without it are dropped + logged.
+//   - Embedded category metadata fields (category_display, category_icon,
+//     category_osm_query) are validated by validateEmbeddedCategoryMeta;
+//     malformed metadata gets logged but the feature itself is kept (just
+//     without the bad field).
+//   - properties.source/verified are coerced to 'discovered'/true.
 //
 // Caching:
 //   - 5-min TTL aligned with discovery's TTL.
 //   - ETag per file. On refetch, send If-None-Match. 304 = keep last value.
-//
-// Per-file 5 MB cap. Anything larger is rejected with a warning.
+//   - Per-file 5 MB cap. Anything larger is rejected with a warning.
 // ============================================================================
 
-import { validateCategoryMeta } from './categories.ts'
-import type { CategoryMeta, GeoFeature, GeoFeatureCollection } from './types.ts'
+import { extractCategoryMetaFromFeatures, validateEmbeddedCategoryMeta } from './projection.ts'
+import type { CategoryMeta, GeoFeature } from './types.ts'
 import { getAvailableGeoSources, type DiscoveredGeoSource } from './discovery.ts'
 
 const CACHE_TTL_MS = 5 * 60_000
@@ -48,32 +51,30 @@ interface FileCache {
   fetchedAt: number
 }
 
-// Per-(source, file) cache for ETag-aware refetches.
 const fileCache = new Map<string, FileCache>()
-
-interface CategoryEntry {
-  readonly meta: CategoryMeta
-  readonly source: string  // owner/repo
-}
 
 interface CacheState {
   readonly fetchedAt: number
-  readonly categories: ReadonlyArray<CategoryEntry>
   readonly featuresByCategory: ReadonlyMap<string, ReadonlyArray<GeoFeature>>
-  readonly perSourceFeatureCounts: ReadonlyMap<string, number>  // source → total features
+  readonly categoriesById: ReadonlyMap<string, CategoryMeta>
+  readonly perSourceFeatureCounts: ReadonlyMap<string, number>
   readonly errors: ReadonlyArray<{ source: string; reason: string }>
 }
 
 const EMPTY_STATE: CacheState = {
   fetchedAt: 0,
-  categories: [],
   featuresByCategory: new Map(),
+  categoriesById: new Map(),
   perSourceFeatureCounts: new Map(),
   errors: [],
 }
 
 let state: CacheState = EMPTY_STATE
 let inFlight: Promise<CacheState> | null = null
+
+// ============================================================================
+// Fetch
+// ============================================================================
 
 const fetchWithTimeout = async (url: string, headers: Record<string, string>): Promise<Response> => {
   const ctrl = new AbortController()
@@ -85,8 +86,8 @@ const fetchWithTimeout = async (url: string, headers: Record<string, string>): P
   }
 }
 
-// Fetch a file from a repo with ETag awareness. Returns null on 404 or
-// permanent error. On 304 returns the cached body. On 200 records ETag.
+// Fetch a file from a repo with ETag awareness. Returns null on 404. On 304
+// returns the cached body. On 200 records ETag.
 const fetchFile = async (src: DiscoveredGeoSource, path: string): Promise<string | null> => {
   const key = `${src.source}::${path}`
   const cached = fileCache.get(key)
@@ -100,7 +101,7 @@ const fetchFile = async (src: DiscoveredGeoSource, path: string): Promise<string
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     console.warn(`[geo/discovered] ${src.source} ${path} fetch failed: ${reason}`)
-    return cached?.body ?? null  // last-known-good if any, else null
+    return cached?.body ?? null
   }
 
   if (res.status === 304) return cached?.body ?? null
@@ -110,45 +111,24 @@ const fetchFile = async (src: DiscoveredGeoSource, path: string): Promise<string
     return cached?.body ?? null
   }
 
-  // Bound the body. Read with a size check; we don't trust Content-Length.
   const cl = res.headers.get('content-length')
   if (cl && Number(cl) > MAX_FILE_BYTES) {
     console.warn(`[geo/discovered] ${src.source} ${path} too large (${cl} bytes, cap ${MAX_FILE_BYTES})`)
     return null
   }
-
   const body = await res.text()
   if (body.length > MAX_FILE_BYTES) {
     console.warn(`[geo/discovered] ${src.source} ${path} body exceeded ${MAX_FILE_BYTES} bytes after read`)
     return null
   }
-
   const etag = res.headers.get('etag') ?? undefined
   fileCache.set(key, { etag, body, fetchedAt: Date.now() })
   return body
 }
 
-const parseCategoriesFile = (raw: string, sourceLabel: string): ReadonlyArray<CategoryMeta> => {
-  let parsed: unknown
-  try { parsed = JSON.parse(raw) } catch (err) {
-    console.warn(`[geo/discovered] ${sourceLabel} categories.json parse failed: ${err instanceof Error ? err.message : String(err)}`)
-    return []
-  }
-  if (!parsed || typeof parsed !== 'object') return []
-  const obj = parsed as { categories?: unknown }
-  if (!Array.isArray(obj.categories)) return []
-  const out: CategoryMeta[] = []
-  for (const entry of obj.categories) {
-    const v = validateCategoryMeta(entry)
-    if (v.ok) {
-      out.push(v.meta)
-    } else {
-      const errs = v.errors.map(e => `${e.field}: ${e.message}`).join('; ')
-      console.warn(`[geo/discovered] ${sourceLabel} category invalid (skipped): ${errs}`)
-    }
-  }
-  return out
-}
+// ============================================================================
+// Parse
+// ============================================================================
 
 const isValidGeoFeature = (raw: unknown): raw is GeoFeature => {
   if (!raw || typeof raw !== 'object') return false
@@ -166,74 +146,74 @@ const isValidGeoFeature = (raw: unknown): raw is GeoFeature => {
   return true
 }
 
-const parseGeojsonFile = (raw: string, sourceLabel: string, categoryId: string): ReadonlyArray<GeoFeature> => {
+const parseGeojsonFile = (raw: string, sourceLabel: string): ReadonlyArray<GeoFeature> => {
   let parsed: unknown
   try { parsed = JSON.parse(raw) } catch (err) {
-    console.warn(`[geo/discovered] ${sourceLabel} ${categoryId}.geojson parse failed: ${err instanceof Error ? err.message : String(err)}`)
+    console.warn(`[geo/discovered] ${sourceLabel} geodata.geojson parse failed: ${err instanceof Error ? err.message : String(err)}`)
     return []
   }
   if (!parsed || typeof parsed !== 'object') return []
-  const fc = parsed as Partial<GeoFeatureCollection>
+  const fc = parsed as { type?: unknown; features?: unknown }
   if (fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
-    console.warn(`[geo/discovered] ${sourceLabel} ${categoryId}.geojson not a FeatureCollection`)
+    console.warn(`[geo/discovered] ${sourceLabel} geodata.geojson is not a FeatureCollection`)
     return []
   }
   const out: GeoFeature[] = []
   let skippedNoId = 0
-  for (const raw of fc.features) {
-    if (!isValidGeoFeature(raw)) {
-      // Distinguish missing id vs other shape failure for better logs.
-      const p = (raw as { properties?: { id?: unknown } } | undefined)?.properties
+  for (const r of fc.features) {
+    if (!isValidGeoFeature(r)) {
+      const p = (r as { properties?: { id?: unknown } } | undefined)?.properties
       if (p && typeof p.id !== 'string') skippedNoId++
       continue
     }
-    // Coerce source + verified — discovered features are curated.
-    const coerced: GeoFeature = {
-      ...raw,
-      properties: {
-        ...raw.properties,
-        category: categoryId,    // override file-declared category with filename-derived id
-        source: 'discovered',
-        verified: true,
-      },
+    // Strip out any malformed embedded category metadata, but keep the
+    // feature. Bad metadata shouldn't drop the feature itself.
+    const metaErr = validateEmbeddedCategoryMeta({
+      category: r.properties.category,
+      category_display: r.properties.category_display,
+      category_icon: r.properties.category_icon,
+      category_osm_query: r.properties.category_osm_query,
+    })
+    if (metaErr) {
+      console.warn(`[geo/discovered] ${sourceLabel} feature ${r.properties.id} category metadata invalid (kept, metadata stripped): ${metaErr}`)
     }
-    out.push(coerced)
+    const properties = {
+      ...r.properties,
+      source: 'discovered' as const,
+      verified: true,
+      ...(metaErr
+        ? { category_display: undefined, category_icon: undefined, category_osm_query: undefined }
+        : {}),
+    }
+    out.push({ ...r, properties })
   }
   if (skippedNoId > 0) {
-    console.warn(`[geo/discovered] ${sourceLabel} ${categoryId}.geojson skipped ${skippedNoId} feature(s) without stable properties.id`)
+    console.warn(`[geo/discovered] ${sourceLabel} geodata.geojson skipped ${skippedNoId} feature(s) without stable properties.id`)
   }
   return out
 }
 
-// Refresh state. Single-flight guard prevents thundering herd.
+// ============================================================================
+// Refresh
+// ============================================================================
+
 const refresh = async (): Promise<CacheState> => {
   const sources = await getAvailableGeoSources()
-  const allCategories: CategoryEntry[] = []
-  const allFeatures = new Map<string, GeoFeature[]>()
+  const allFeatures: GeoFeature[] = []
   const perSourceCounts = new Map<string, number>()
   const errors: { source: string; reason: string }[] = []
 
   for (const src of sources) {
-    let srcFeatureCount = 0
     try {
-      const catsRaw = await fetchFile(src, 'categories.json')
-      if (!catsRaw) {
-        // No categories.json — source is empty or removed. Skip silently.
+      const raw = await fetchFile(src, 'geodata.geojson')
+      if (!raw) {
         perSourceCounts.set(src.source, 0)
         continue
       }
-      const cats = parseCategoriesFile(catsRaw, src.source)
-      for (const meta of cats) {
-        allCategories.push({ meta, source: src.source })
-        const geojsonRaw = await fetchFile(src, `${meta.id}.geojson`)
-        if (!geojsonRaw) continue
-        const features = parseGeojsonFile(geojsonRaw, src.source, meta.id)
-        const existing = allFeatures.get(meta.id) ?? []
-        allFeatures.set(meta.id, [...existing, ...features])
-        srcFeatureCount += features.length
-      }
-      perSourceCounts.set(src.source, srcFeatureCount)
-      console.log(`[geo/discovered] ${src.source} fetched ${cats.length} categories, ${srcFeatureCount} features`)
+      const features = parseGeojsonFile(raw, src.source)
+      allFeatures.push(...features)
+      perSourceCounts.set(src.source, features.length)
+      console.log(`[geo/discovered] ${src.source} fetched ${features.length} features`)
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       errors.push({ source: src.source, reason })
@@ -241,10 +221,18 @@ const refresh = async (): Promise<CacheState> => {
     }
   }
 
+  const featuresByCategory = new Map<string, GeoFeature[]>()
+  for (const f of allFeatures) {
+    const slot = featuresByCategory.get(f.properties.category) ?? []
+    slot.push(f)
+    featuresByCategory.set(f.properties.category, slot)
+  }
+  const categoriesById = extractCategoryMetaFromFeatures(allFeatures)
+
   return {
     fetchedAt: Date.now(),
-    categories: allCategories,
-    featuresByCategory: allFeatures,
+    featuresByCategory,
+    categoriesById,
     perSourceFeatureCounts: perSourceCounts,
     errors,
   }
@@ -265,33 +253,33 @@ const ensureFresh = async (): Promise<CacheState> => {
   return inFlight
 }
 
-// === Public API ===
+// ============================================================================
+// Public API
+// ============================================================================
 
-// All discovered category metas (deduped by id — first source wins).
 export const getDiscoveredCategories = async (): Promise<ReadonlyArray<CategoryMeta>> => {
   const s = await ensureFresh()
-  const seen = new Set<string>()
-  const out: CategoryMeta[] = []
-  for (const { meta } of s.categories) {
-    if (seen.has(meta.id)) continue
-    seen.add(meta.id)
-    out.push(meta)
-  }
-  return out
+  return [...s.categoriesById.values()]
 }
 
-// All discovered features for a category. Empty array if unknown.
 export const getDiscoveredFeatures = async (categoryId: string): Promise<ReadonlyArray<GeoFeature>> => {
   const s = await ensureFresh()
   return s.featuresByCategory.get(categoryId) ?? []
 }
 
-// Diagnostic snapshot for the Settings panel + /api/geodata/sources endpoint.
-// Cheap; reads cache, doesn't trigger refetch.
+// All discovered features across all categories. Used by store.ts when
+// projecting categories from the merged feature space.
+export const getAllDiscoveredFeatures = async (): Promise<ReadonlyArray<GeoFeature>> => {
+  const s = await ensureFresh()
+  const out: GeoFeature[] = []
+  for (const arr of s.featuresByCategory.values()) out.push(...arr)
+  return out
+}
+
 export interface DiscoveryStatus {
-  readonly fetchedAt: number          // 0 if never fetched
+  readonly fetchedAt: number
   readonly sources: ReadonlyArray<{
-    readonly source: string           // owner/repo
+    readonly source: string
     readonly featureCount: number
     readonly error: string | null
   }>
@@ -311,15 +299,12 @@ export const getDiscoveryStatus = (): DiscoveryStatus => {
   return { fetchedAt: state.fetchedAt, sources }
 }
 
-// Trigger a refresh in the background. Used by bootstrap warm-up.
-// Returns immediately; refresh logs progress.
 export const warmDiscoveredCache = (): void => {
   void ensureFresh().catch((err) => {
     console.warn(`[geo/discovered] warm-up failed: ${err instanceof Error ? err.message : String(err)}`)
   })
 }
 
-// Test helper.
 export const __resetDiscoveredCacheState = (): void => {
   state = EMPTY_STATE
   inFlight = null

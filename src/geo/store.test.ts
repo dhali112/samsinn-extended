@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { categoryStats, listCategory, lookupInCategory, removeFeature, upsertFeature } from './store.ts'
+import { categoryStats, listCategory, lookupInCategory, removeCategory, removeFeature, upsertFeature } from './store.ts'
+import { __resetDiscoveredCacheState } from './discovered-cache.ts'
+import { invalidateDiscoveryCache } from './discovery.ts'
 import type { GeoFeature } from './types.ts'
 
 let prevHome: string | undefined
+let prevGeoSources: string | undefined
 let testDir: string
 
 const makeFeature = (overrides: Partial<GeoFeature['properties']> & {
@@ -22,19 +25,30 @@ const makeFeature = (overrides: Partial<GeoFeature['properties']> & {
     verified: overrides.verified ?? false,
     source: overrides.source ?? 'local',
     ...(overrides.aliases ? { aliases: overrides.aliases } : {}),
+    ...(overrides.category_display ? { category_display: overrides.category_display } : {}),
+    ...(overrides.category_icon ? { category_icon: overrides.category_icon } : {}),
   },
 })
 
 beforeEach(() => {
   prevHome = process.env.SAMSINN_HOME
+  prevGeoSources = process.env.SAMSINN_GEO_SOURCES
   testDir = mkdtempSync(join(tmpdir(), 'samsinn-geo-test-'))
   process.env.SAMSINN_HOME = testDir
+  // Isolate from real GitHub discovery — point at a guaranteed-empty owner.
+  process.env.SAMSINN_GEO_SOURCES = '__test-isolated-no-geo-org__'
+  __resetDiscoveredCacheState()
+  invalidateDiscoveryCache()
 })
 
 afterEach(() => {
   if (prevHome === undefined) delete process.env.SAMSINN_HOME
   else process.env.SAMSINN_HOME = prevHome
+  if (prevGeoSources === undefined) delete process.env.SAMSINN_GEO_SOURCES
+  else process.env.SAMSINN_GEO_SOURCES = prevGeoSources
   rmSync(testDir, { recursive: true, force: true })
+  __resetDiscoveredCacheState()
+  invalidateDiscoveryCache()
 })
 
 describe('store — basic CRUD', () => {
@@ -107,7 +121,7 @@ describe('store — verified protection', () => {
 })
 
 describe('store — remove', () => {
-  test('remove by (source, id)', async () => {
+  test('remove by (category, source, id)', async () => {
     const f = makeFeature({ name: 'Bergen', lat: 60.39, lng: 5.32, verified: false })
     await upsertFeature(f)
     const r = await removeFeature('city', 'local', f.properties.id)
@@ -120,6 +134,44 @@ describe('store — remove', () => {
     await upsertFeature(f)
     const r = await removeFeature('city', 'overpass', f.properties.id)
     expect(r.removed).toBe(false)
+  })
+
+  test('removeCategory cascades all features in that category', async () => {
+    await upsertFeature(makeFeature({ name: 'Bergen', lat: 60.39, lng: 5.32, verified: true, category: 'city' }))
+    await upsertFeature(makeFeature({ name: 'Oslo', lat: 59.91, lng: 10.74, verified: true, category: 'city' }))
+    await upsertFeature(makeFeature({ name: 'Statfjord A', lat: 61.25, lng: 1.85, verified: true, category: 'oil-platforms' }))
+    const r = await removeCategory('city')
+    expect(r.removed).toBe(2)
+    expect(await listCategory('city')).toEqual([])
+    // Other categories unaffected.
+    const oil = await listCategory('oil-platforms')
+    expect(oil.length).toBe(1)
+  })
+
+  test('removeCategory on unknown category returns 0 (no error)', async () => {
+    const r = await removeCategory('nonexistent')
+    expect(r.removed).toBe(0)
+  })
+})
+
+describe('store — multi-category single-file', () => {
+  test('two categories share the same file without interfering', async () => {
+    await upsertFeature(makeFeature({ name: 'Bergen', lat: 60.39, lng: 5.32, verified: true, category: 'city' }))
+    await upsertFeature(makeFeature({ name: 'Statfjord A', lat: 61.25, lng: 1.85, verified: true, category: 'oil-platforms' }))
+    const cities = await listCategory('city')
+    const platforms = await listCategory('oil-platforms')
+    expect(cities.length).toBe(1)
+    expect(platforms.length).toBe(1)
+    expect(cities[0]?.properties.name).toBe('Bergen')
+    expect(platforms[0]?.properties.name).toBe('Statfjord A')
+  })
+
+  test('removing all features in a category leaves other categories intact', async () => {
+    await upsertFeature(makeFeature({ name: 'Bergen', lat: 60.39, lng: 5.32, verified: true, category: 'city' }))
+    await upsertFeature(makeFeature({ name: 'Statfjord A', lat: 61.25, lng: 1.85, verified: true, category: 'oil-platforms' }))
+    await removeCategory('city')
+    const platforms = await listCategory('oil-platforms')
+    expect(platforms.length).toBe(1)
   })
 })
 
@@ -157,5 +209,12 @@ describe('store — stats', () => {
   test('missing file → zeros, no throw', async () => {
     const stats = await categoryStats('airport')
     expect(stats.total).toBe(0)
+  })
+
+  test('local + discovered counts are split out', async () => {
+    await upsertFeature(makeFeature({ name: 'Bergen', lat: 60.39, lng: 5.32, verified: true }))
+    const stats = await categoryStats('city')
+    expect(stats.local).toBe(1)
+    expect(stats.discovered).toBe(0)
   })
 })

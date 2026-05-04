@@ -3,78 +3,109 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applyImport } from './import.ts'
-import { getCategory, __resetCategoryRegistryState } from './categories.ts'
+import { getCategory } from './categories.ts'
 import { listCategory } from './store.ts'
+import { __resetDiscoveredCacheState } from './discovered-cache.ts'
+import { invalidateDiscoveryCache } from './discovery.ts'
 
 let prevHome: string | undefined
+let prevGeoSources: string | undefined
 let testDir: string
 
 beforeEach(() => {
   prevHome = process.env.SAMSINN_HOME
+  prevGeoSources = process.env.SAMSINN_GEO_SOURCES
   testDir = mkdtempSync(join(tmpdir(), 'samsinn-import-test-'))
   process.env.SAMSINN_HOME = testDir
-  __resetCategoryRegistryState()
+  process.env.SAMSINN_GEO_SOURCES = '__test-isolated-no-geo-org__'
+  __resetDiscoveredCacheState()
+  invalidateDiscoveryCache()
 })
 
 afterEach(() => {
   if (prevHome === undefined) delete process.env.SAMSINN_HOME
   else process.env.SAMSINN_HOME = prevHome
+  if (prevGeoSources === undefined) delete process.env.SAMSINN_GEO_SOURCES
+  else process.env.SAMSINN_GEO_SOURCES = prevGeoSources
   rmSync(testDir, { recursive: true, force: true })
-})
-
-const cat = (overrides: Record<string, unknown> = {}) => ({
-  id: 'wind-farm', displayName: 'Wind Farm', icon: 'pin', ...overrides,
+  __resetDiscoveredCacheState()
+  invalidateDiscoveryCache()
 })
 
 const f = (id: string, lat = 60, lng = 5) => ({ id, name: id, lat, lng })
 
 describe('applyImport — happy paths', () => {
-  test('object form on new id creates category + writes features', async () => {
-    const r = await applyImport({ category: cat(), features: [f('horns-rev-1')] })
+  test('full metadata creates category + writes features', async () => {
+    const r = await applyImport({
+      categoryId: 'wind-farm',
+      categoryDisplay: 'Wind Farm',
+      categoryIcon: 'pin',
+      features: [f('horns-rev-1')],
+    })
     expect(r.ok).toBe(true)
-    expect(r.categoryAction).toBe('created')
+    expect(r.categoryId).toBe('wind-farm')
     expect(r.featuresAdded).toBe(1)
     expect(await getCategory('wind-farm')).not.toBeNull()
     const stored = await listCategory('wind-farm')
     expect(stored.length).toBe(1)
     expect(stored[0]?.properties.verified).toBe(true)
     expect(stored[0]?.properties.source).toBe('local')
+    expect(stored[0]?.properties.category_display).toBe('Wind Farm')
+    expect(stored[0]?.properties.category_icon).toBe('pin')
   })
 
-  test('object form on existing id replaces metadata', async () => {
-    await applyImport({ category: cat({ icon: 'pin' }), features: [f('a')] })
-    const r = await applyImport({ category: cat({ icon: 'platform' }), features: [f('b')] })
-    expect(r.categoryAction).toBe('metadata-replaced')
-    expect((await getCategory('wind-farm'))?.icon).toBe('platform')
-    expect((await listCategory('wind-farm')).length).toBe(2)
-  })
-
-  test('shorthand string appends to existing', async () => {
-    await applyImport({ category: cat(), features: [f('a')] })
-    const r = await applyImport({ category: 'wind-farm', features: [f('b'), f('c')] })
-    expect(r.categoryAction).toBe('append-only')
+  test('append: existing category accepts more features', async () => {
+    await applyImport({ categoryId: 'wind-farm', categoryDisplay: 'Wind Farm', categoryIcon: 'pin', features: [f('a')] })
+    const r = await applyImport({ categoryId: 'wind-farm', features: [f('b'), f('c')] })
+    expect(r.ok).toBe(true)
     expect(r.featuresAdded).toBe(2)
     expect((await listCategory('wind-farm')).length).toBe(3)
+  })
+
+  test('only first feature carries category metadata', async () => {
+    const r = await applyImport({
+      categoryId: 'wind-farm',
+      categoryDisplay: 'Wind Farm',
+      categoryIcon: 'pin',
+      features: [f('a'), f('b'), f('c')],
+    })
+    expect(r.ok).toBe(true)
+    const stored = await listCategory('wind-farm')
+    const withMeta = stored.filter(s => s.properties.category_display)
+    expect(withMeta.length).toBe(1)
   })
 })
 
 describe('applyImport — failure modes', () => {
-  test('shorthand on unknown id is fatal', async () => {
-    const r = await applyImport({ category: 'unknown-cat', features: [f('a')] })
+  test('missing categoryId fails', async () => {
+    const r = await applyImport({ features: [f('a')] })
     expect(r.ok).toBe(false)
-    expect(r.categoryAction).toBe('aborted')
-    expect(r.errors[0]?.message).toMatch(/not registered/)
+    expect(r.errors[0]?.message).toMatch(/categoryId/)
   })
 
-  test('invalid category metadata aborts', async () => {
-    const r = await applyImport({ category: { id: 'BAD ID', displayName: 'X', icon: 'pin' }, features: [f('a')] })
+  test('invalid categoryId pattern fails', async () => {
+    const r = await applyImport({ categoryId: 'BAD ID', features: [f('a')] })
     expect(r.ok).toBe(false)
-    expect(r.categoryAction).toBe('aborted')
+    expect(r.errors[0]?.message).toMatch(/category must match/)
   })
 
-  test('zero surviving features aborts; registry untouched', async () => {
+  test('invalid icon fails', async () => {
+    const r = await applyImport({ categoryId: 'wind-farm', categoryIcon: 'rocket', features: [f('a')] })
+    expect(r.ok).toBe(false)
+  })
+
+  test('invalid osm query fails', async () => {
     const r = await applyImport({
-      category: cat(),
+      categoryId: 'wind-farm',
+      categoryOsmQuery: 'no placeholder here',
+      features: [f('a')],
+    })
+    expect(r.ok).toBe(false)
+  })
+
+  test('zero surviving features aborts; nothing written', async () => {
+    const r = await applyImport({
+      categoryId: 'wind-farm',
       features: [{ id: 'bad', name: '', lat: 200, lng: 0 }, { id: 'also-bad', name: 'X', lat: 0 }],
     })
     expect(r.ok).toBe(false)
@@ -83,16 +114,15 @@ describe('applyImport — failure modes', () => {
   })
 
   test('duplicate id within paste is fatal', async () => {
-    const r = await applyImport({ category: cat(), features: [f('a'), f('a', 50, 10)] })
+    const r = await applyImport({ categoryId: 'wind-farm', features: [f('a'), f('a', 50, 10)] })
     expect(r.ok).toBe(false)
     expect(r.errors[0]?.message).toMatch(/duplicate/)
-    // No partial writes.
     expect(await getCategory('wind-farm')).toBeNull()
   })
 
   test('partial-success: bad rows reported, good rows imported', async () => {
     const r = await applyImport({
-      category: cat(),
+      categoryId: 'wind-farm',
       features: [f('a'), { id: 'b', name: 'B', lat: 999, lng: 0 }, f('c')],
     })
     expect(r.ok).toBe(true)

@@ -40,6 +40,15 @@ export interface GeoProperties {
   readonly source: GeoSource
   readonly added_by?: 'user' | 'agent'
   readonly added_at?: string        // ISO 8601
+  // === Embedded category metadata (optional) ===
+  // Categories are derived from features rather than declared in a separate
+  // registry. Any feature can carry these properties; on read, the first
+  // feature found with each property defines the category's metadata. If no
+  // feature carries them, fallbacks apply: display = title-case(id), icon =
+  // 'pin', osmQuery = undefined (Overpass cascade step skipped).
+  readonly category_display?: string
+  readonly category_icon?: MarkerIcon
+  readonly category_osm_query?: string  // Overpass template, must contain `{name}` exactly once
 }
 
 export interface GeoPoint {
@@ -58,18 +67,15 @@ export interface GeoFeatureCollection {
   readonly features: ReadonlyArray<GeoFeature>
 }
 
-// Category metadata as stored in ~/.samsinn/geodata/categories.json.
+// Category metadata — derived from feature properties at read time.
+// No persisted registry file; categories exist iff at least one feature
+// carries that category id. Metadata fields project from any feature
+// carrying category_display / category_icon / category_osm_query.
 export interface CategoryMeta {
   readonly id: string                       // kebab-case, /^[a-z][a-z0-9-]{0,62}$/
   readonly displayName: string
   readonly icon: MarkerIcon
   readonly osmQuery?: string                // Overpass template with `{name}` placeholder
-  readonly addedAt?: string                 // ISO 8601 — when first registered
-}
-
-export interface CategoryRegistryFile {
-  readonly version: 1
-  readonly categories: ReadonlyArray<CategoryMeta>
 }
 
 // Resolver result. Single-source short-circuit: the first cascade source to

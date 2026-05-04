@@ -125,6 +125,15 @@ cat > /etc/samsinn/env <<'EOF'
 # - Other owners → repo basename must start with `samsinn-geo-`.
 # Default: `samsinn-geodata` (the canonical org).
 # SAMSINN_GEO_SOURCES=samsinn-geodata,my-org/samsinn-geo-private
+#
+# Each source repo must contain a single `geodata.geojson` at the root —
+# a standard FeatureCollection. Categories are derived from features
+# (no separate registry file). Each feature requires properties.{id, name,
+# category}. Optional category metadata travels on any feature for that
+# category (first wins, defaults if absent):
+#   properties.category_display      → display name (default: title-case id)
+#   properties.category_icon         → marker icon name (default: 'pin')
+#   properties.category_osm_query    → Overpass template with `{name}`
 EOF
 chmod 0600 /etc/samsinn/env
 ```

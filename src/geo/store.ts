@@ -1,20 +1,16 @@
-// User-local geodata store — one GeoJSON file per category at
-// $SAMSINN_HOME/geodata/<category>.geojson.
+// ============================================================================
+// User-local geodata store — one file at $SAMSINN_HOME/geodata/geodata.geojson.
 //
-// Concurrency: a single in-process async-mutex map keyed by file path
-// serializes writes. We only support a single Samsinn process per
-// SAMSINN_HOME (matches the rest of the codebase — snapshots, providers,
-// wikis), so cross-process locking is out of scope.
+// Layout: a single GeoJSON FeatureCollection covering ALL categories. Each
+// feature carries `properties.category` (id). Categories are derived from
+// features via projection.ts; there is no separate registry file.
 //
-// Atomic writes: write to <file>.tmp, fsync via Bun.write, then rename. A
-// crash mid-write leaves either the prior content or the new content,
-// never a partial file.
+// Concurrency: one process-wide async-mutex on the file path. Single
+// process per SAMSINN_HOME (matches snapshots / providers / wikis).
 //
-// Index: every load builds a (canonical(name) → feature) map and an
-// (alias → feature) map, both used by the resolver's strict-match check.
-// The index is rebuilt on every read; v1 doesn't keep it in memory across
-// calls because the file watcher / hot-reload path isn't built yet.
-// Callers that need fast repeated lookups should cache the index.
+// Atomic writes: write to <file>.tmp, then rename. A crash mid-write
+// leaves either the prior content or the new content — never partial.
+// ============================================================================
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -22,26 +18,27 @@ import { dirname, join } from 'node:path'
 import { sharedPaths } from '../core/paths.ts'
 import { canonical } from './canonical.ts'
 import { getDiscoveredFeatures } from './discovered-cache.ts'
-import type { GeoCategory, GeoFeature, GeoFeatureCollection, GeoSource } from './types.ts'
+import { extractCategoryMetaFromFeatures } from './projection.ts'
+import type { CategoryMeta, GeoCategory, GeoFeature, GeoFeatureCollection, GeoSource } from './types.ts'
 
 // ============================================================================
-// Per-file mutex map. Map<path, Promise<void>> chains async writers.
+// File path + mutex
 // ============================================================================
 
-const mutexes: Map<string, Promise<void>> = new Map()
+const filePath = (): string => join(sharedPaths.geodata(), 'geodata.geojson')
 
-const withFileMutex = async <T>(filePath: string, fn: () => Promise<T>): Promise<T> => {
-  const prev = mutexes.get(filePath) ?? Promise.resolve()
+let mutex: Promise<void> = Promise.resolve()
+
+const withMutex = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const prev = mutex
   let release!: () => void
   const next = new Promise<void>((resolve) => { release = resolve })
-  mutexes.set(filePath, prev.then(() => next))
+  mutex = prev.then(() => next)
   await prev
   try {
     return await fn()
   } finally {
     release()
-    // Clean up the map entry once we're the tail.
-    if (mutexes.get(filePath) === next) mutexes.delete(filePath)
   }
 }
 
@@ -49,15 +46,12 @@ const withFileMutex = async <T>(filePath: string, fn: () => Promise<T>): Promise
 // File I/O
 // ============================================================================
 
-const categoryFilePath = (category: GeoCategory): string =>
-  join(sharedPaths.geodata(), `${category}.geojson`)
-
 const ensureDir = async (dir: string): Promise<void> => {
   if (!existsSync(dir)) await mkdir(dir, { recursive: true, mode: 0o700 })
 }
 
-const readCategoryFile = async (category: GeoCategory): Promise<GeoFeatureCollection> => {
-  const path = categoryFilePath(category)
+const readFile_ = async (): Promise<GeoFeatureCollection> => {
+  const path = filePath()
   if (!existsSync(path)) {
     return { type: 'FeatureCollection', features: [] }
   }
@@ -69,21 +63,17 @@ const readCategoryFile = async (category: GeoCategory): Promise<GeoFeatureCollec
   return parsed
 }
 
-const writeCategoryFile = async (
-  category: GeoCategory,
-  fc: GeoFeatureCollection,
-): Promise<void> => {
-  const path = categoryFilePath(category)
+const writeFile_ = async (fc: GeoFeatureCollection): Promise<void> => {
+  const path = filePath()
   await ensureDir(dirname(path))
   const tmp = `${path}.tmp`
-  // Pretty-print for diff-friendliness — files are small (hundreds, not
-  // millions of features) and this is user-visible state.
+  // Pretty-print for diff-friendliness.
   await writeFile(tmp, `${JSON.stringify(fc, null, 2)}\n`, { mode: 0o600 })
   await rename(tmp, path)
 }
 
 // ============================================================================
-// Public API
+// Index
 // ============================================================================
 
 export interface GeoIndex {
@@ -108,46 +98,83 @@ const buildIndex = (features: ReadonlyArray<GeoFeature>): GeoIndex => {
   return { byCanonicalName, byAlias, byId, all: features }
 }
 
-// Merge discovered + local features for a category. Precedence:
-//   - On (canonical(name)) collision, DISCOVERED wins. Discovered features
-//     are org-curated (verified:true); local agent-added entries are
-//     unverified by default. Operator overrides via the import panel can
-//     still set verified:true and shadow a discovered entry — handled by
-//     the user-facing import flow, not here.
-//   - Each feature retains its own properties.source ('local' | 'discovered'
-//     | 'overpass' | 'nominatim') so the agent and UI can attribute
-//     correctly.
+// ============================================================================
+// Merge — discovered + local. Discovered wins on (category, canonical name).
+// Local features keep their `properties.source = 'local'`; discovered keep
+// `'discovered'`. Cascade reporters can attribute from `properties.source`.
+// ============================================================================
+
 const mergeFeatures = (
   local: ReadonlyArray<GeoFeature>,
   discovered: ReadonlyArray<GeoFeature>,
 ): ReadonlyArray<GeoFeature> => {
-  const byCanonicalName = new Map<string, GeoFeature>()
-  // Local first so discovered can overwrite on collision.
-  for (const f of local) byCanonicalName.set(canonical(f.properties.name), f)
-  for (const f of discovered) byCanonicalName.set(canonical(f.properties.name), f)
-  return [...byCanonicalName.values()]
+  const byKey = new Map<string, GeoFeature>()
+  // Local first; discovered wins on collision (curated > unverified).
+  for (const f of local) byKey.set(`${f.properties.category}:${canonical(f.properties.name)}`, f)
+  for (const f of discovered) byKey.set(`${f.properties.category}:${canonical(f.properties.name)}`, f)
+  return [...byKey.values()]
 }
 
-// Read all features in a category. Merges local file + discovered (GitHub)
-// sources at read-time. Returns an empty index if neither has features.
-export const loadCategory = async (category: GeoCategory): Promise<GeoIndex> => {
-  const fc = await readCategoryFile(category)
+// ============================================================================
+// Public API — feature reads
+// ============================================================================
+
+// All features (local + discovered, merged) in a category.
+export const listCategory = async (category: GeoCategory): Promise<ReadonlyArray<GeoFeature>> => {
+  let local: ReadonlyArray<GeoFeature> = []
+  try {
+    const fc = await readFile_()
+    local = fc.features.filter((f) => f.properties.category === category)
+  } catch {
+    // Missing or corrupt file — fall through to discovered-only.
+  }
   const discovered = await getDiscoveredFeatures(category)
-  const merged = mergeFeatures(fc.features, discovered)
+  return mergeFeatures(local, discovered)
+}
+
+// Indexed view of a category's merged features. Used by lookupInCategory.
+export const loadCategory = async (category: GeoCategory): Promise<GeoIndex> => {
+  const merged = await listCategory(category)
   return buildIndex(merged)
 }
 
-// Local-only read — used by code paths that must NOT include discovered
-// data (e.g. removeFeature in the per-file mutation path, where touching
-// discovered features makes no sense). Public callers should prefer
-// loadCategory.
-export const loadCategoryLocalOnly = async (category: GeoCategory): Promise<GeoIndex> => {
-  const fc = await readCategoryFile(category)
-  return buildIndex(fc.features)
+// All features across all categories — used by the registry projection.
+export const listAllFeatures = async (): Promise<ReadonlyArray<GeoFeature>> => {
+  let local: ReadonlyArray<GeoFeature> = []
+  try {
+    const fc = await readFile_()
+    local = fc.features
+  } catch {
+    // ignore
+  }
+  // Discovered features for categories the local file doesn't know about
+  // still need to be visible. Fetch all known category ids from local +
+  // discovered registry projection and merge each category individually.
+  // To avoid a circular import, we project from the in-memory cache state
+  // via getAllDiscoveredFeatures.
+  const { getAllDiscoveredFeatures } = await import('./discovered-cache.ts')
+  const discovered = await getAllDiscoveredFeatures()
+  // Merge per-category to keep collision semantics consistent.
+  const byCategory = new Map<string, { local: GeoFeature[]; discovered: GeoFeature[] }>()
+  for (const f of local) {
+    const slot = byCategory.get(f.properties.category) ?? { local: [], discovered: [] }
+    slot.local.push(f)
+    byCategory.set(f.properties.category, slot)
+  }
+  for (const f of discovered) {
+    const slot = byCategory.get(f.properties.category) ?? { local: [], discovered: [] }
+    slot.discovered.push(f)
+    byCategory.set(f.properties.category, slot)
+  }
+  const out: GeoFeature[] = []
+  for (const { local: l, discovered: d } of byCategory.values()) {
+    out.push(...mergeFeatures(l, d))
+  }
+  return out
 }
 
-// Look up a feature by canonical-form name OR alias. Strict match — no fuzzy
-// search. Returns null on no match.
+// Look up a feature by canonical-form name OR alias within a category.
+// Strict match. Returns null on no match.
 export const lookupInCategory = async (
   category: GeoCategory,
   query: string,
@@ -161,64 +188,26 @@ export const lookupInCategory = async (
   return hit
 }
 
-// Add or overwrite a feature. Dedup key: (category, canonical(name)). If a
-// feature with the same canonical name exists, it's replaced. Verified
-// curated entries are NOT overwritten by unverified additions — protection
-// against the agent silently downgrading curated data.
-export const upsertFeature = async (feature: GeoFeature): Promise<{ replaced: boolean }> => {
-  const category = feature.properties.category
-  const path = categoryFilePath(category)
-  return withFileMutex(path, async () => {
-    const fc = await readCategoryFile(category)
-    const key = canonical(feature.properties.name)
-    let replaced = false
-    const next: GeoFeature[] = []
-    for (const existing of fc.features) {
-      if (canonical(existing.properties.name) === key) {
-        // Verified-protection: don't let unverified writes clobber curated.
-        if (existing.properties.verified && !feature.properties.verified) {
-          return { replaced: false }
-        }
-        replaced = true
-        continue
-      }
-      next.push(existing)
-    }
-    next.push(feature)
-    await writeCategoryFile(category, { type: 'FeatureCollection', features: next })
-    return { replaced }
-  })
+// ============================================================================
+// Public API — category projection
+// ============================================================================
+
+// Derived registry: walk all features, project per-category metadata.
+export const listCategories = async (): Promise<ReadonlyArray<CategoryMeta>> => {
+  const features = await listAllFeatures()
+  const map = extractCategoryMetaFromFeatures(features)
+  return [...map.values()]
 }
 
-// Remove a feature by (source, id). Only removes when the feature exists in
-// this category and matches both source and id.
-export const removeFeature = async (
-  category: GeoCategory,
-  source: GeoSource,
-  id: string,
-): Promise<{ removed: boolean }> => {
-  const path = categoryFilePath(category)
-  return withFileMutex(path, async () => {
-    const fc = await readCategoryFile(category)
-    let removed = false
-    const next: GeoFeature[] = []
-    for (const f of fc.features) {
-      if (f.properties.id === id && f.properties.source === source) {
-        removed = true
-        continue
-      }
-      next.push(f)
-    }
-    if (removed) {
-      await writeCategoryFile(category, { type: 'FeatureCollection', features: next })
-    }
-    return { removed }
-  })
+export const getCategory = async (id: string): Promise<CategoryMeta | null> => {
+  const features = await listCategory(id)
+  if (features.length === 0) return null
+  const map = extractCategoryMetaFromFeatures(features)
+  return map.get(id) ?? null
 }
 
-// Counts for the UI panel. Includes discovered features so the surfaced
-// total matches what loadCategory / lookups actually see. Never throws —
-// missing file → zeros (discovered alone still counted).
+// Counts surface for the UI panel + geo_list_categories tool. Includes
+// local + discovered breakdown.
 export const categoryStats = async (category: GeoCategory): Promise<{
   total: number
   verified: number
@@ -226,19 +215,8 @@ export const categoryStats = async (category: GeoCategory): Promise<{
   local: number
   discovered: number
 }> => {
-  let localFeatures: ReadonlyArray<GeoFeature> = []
-  try {
-    const fc = await readCategoryFile(category)
-    localFeatures = fc.features
-  } catch {
-    // Missing or corrupt file — count only discovered.
-  }
-  const discoveredFeatures = await getDiscoveredFeatures(category)
-  const merged = mergeFeatures(localFeatures, discoveredFeatures)
-  let verified = 0
-  let unverified = 0
-  let local = 0
-  let discovered = 0
+  const merged = await listCategory(category)
+  let verified = 0, unverified = 0, local = 0, discovered = 0
   for (const f of merged) {
     if (f.properties.verified) verified++
     else unverified++
@@ -248,17 +226,106 @@ export const categoryStats = async (category: GeoCategory): Promise<{
   return { total: merged.length, verified, unverified, local, discovered }
 }
 
-// Used by tests + the panel's "list all" view. Returns features in stored
-// order — no implicit sorting. Includes discovered features merged in
-// (discovered wins on canonical-name collision; see mergeFeatures).
-export const listCategory = async (category: GeoCategory): Promise<ReadonlyArray<GeoFeature>> => {
-  let localFeatures: ReadonlyArray<GeoFeature> = []
-  try {
-    const fc = await readCategoryFile(category)
-    localFeatures = fc.features
-  } catch {
-    // Missing or corrupt file — fall through to discovered-only.
-  }
-  const discoveredFeatures = await getDiscoveredFeatures(category)
-  return mergeFeatures(localFeatures, discoveredFeatures)
+// ============================================================================
+// Public API — feature mutations (local-only)
+// ============================================================================
+
+// Add or overwrite a feature. Dedup key: (category, canonical(name)). If a
+// feature with the same key exists locally, it is replaced. Verified-
+// protection: an existing verified local entry is NOT overwritten by an
+// unverified write. Discovered entries cannot be modified through this
+// path; the caller can still add a local feature with the same name (it
+// stays local until merge precedence kicks in at read time).
+export const upsertFeature = async (feature: GeoFeature): Promise<{ replaced: boolean }> => {
+  return withMutex(async () => {
+    let fc: GeoFeatureCollection
+    try {
+      fc = await readFile_()
+    } catch {
+      fc = { type: 'FeatureCollection', features: [] }
+    }
+    const key = canonical(feature.properties.name)
+    const cat = feature.properties.category
+    let replaced = false
+    const next: GeoFeature[] = []
+    for (const existing of fc.features) {
+      if (existing.properties.category === cat && canonical(existing.properties.name) === key) {
+        if (existing.properties.verified && !feature.properties.verified) {
+          // Verified-protection: keep curated.
+          return { replaced: false }
+        }
+        replaced = true
+        continue
+      }
+      next.push(existing)
+    }
+    next.push(feature)
+    await writeFile_({ type: 'FeatureCollection', features: next })
+    return { replaced }
+  })
+}
+
+// Remove a feature by (category, source, id). Only touches the local file —
+// discovered features are read-only at runtime.
+export const removeFeature = async (
+  category: GeoCategory,
+  source: GeoSource,
+  id: string,
+): Promise<{ removed: boolean }> => {
+  return withMutex(async () => {
+    let fc: GeoFeatureCollection
+    try {
+      fc = await readFile_()
+    } catch {
+      return { removed: false }
+    }
+    let removed = false
+    const next: GeoFeature[] = []
+    for (const f of fc.features) {
+      if (
+        f.properties.category === category &&
+        f.properties.id === id &&
+        f.properties.source === source
+      ) {
+        removed = true
+        continue
+      }
+      next.push(f)
+    }
+    if (removed) {
+      await writeFile_({ type: 'FeatureCollection', features: next })
+    }
+    return { removed }
+  })
+}
+
+// Cascade-delete: remove every local feature for a category. Discovered
+// features for the same category are unaffected (read-only).
+export const removeCategory = async (category: GeoCategory): Promise<{ removed: number }> => {
+  return withMutex(async () => {
+    let fc: GeoFeatureCollection
+    try {
+      fc = await readFile_()
+    } catch {
+      return { removed: 0 }
+    }
+    let removed = 0
+    const next: GeoFeature[] = []
+    for (const f of fc.features) {
+      if (f.properties.category === category) {
+        removed++
+        continue
+      }
+      next.push(f)
+    }
+    if (removed > 0) {
+      await writeFile_({ type: 'FeatureCollection', features: next })
+    }
+    return { removed }
+  })
+}
+
+// Test-only — clear the in-memory mutex chain.
+export const __resetGeoStoreState = (): void => {
+  mutex = Promise.resolve()
 }

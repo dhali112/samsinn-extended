@@ -23,12 +23,10 @@ const promptTemplate = (task: string): string => `You are populating a category 
 
 Schema:
 {
-  "category": {
-    "id": "<kebab-case unique id>",
-    "displayName": "<Title Case>",
-    "icon": ${MARKER_ICONS.map((i) => `"${i}"`).join(' | ')},
-    "osmQuery": "<optional Overpass query template using {name} placeholder; omit if not relevant>"
-  },
+  "categoryId": "<kebab-case unique id, e.g. 'wind-farm'>",
+  "categoryDisplay": "<Title Case display name; omit when appending>",
+  "categoryIcon": ${MARKER_ICONS.map((i) => `"${i}"`).join(' | ')},
+  "categoryOsmQuery": "<optional Overpass template with {name} placeholder; omit if not relevant>",
   "features": [{
     "id": "<unique kebab-case>",
     "name": "<display name>",
@@ -45,13 +43,13 @@ Rules:
 - Coordinates MUST be decimal degrees, not DMS.
 - Use real coordinates from public sources — DO NOT invent.
 - If you cannot find at least 5 real entries, return {"error": "<reason>"} and nothing else.
-- "category" can also be a string id (e.g. "wind-farm") instead of an object — that means "append features to this existing category".
+- categoryDisplay/Icon/OsmQuery are optional when appending to an EXISTING category — omit them, only categoryId is required.
+- Categories are derived from features at read time. To "create" one, include its id (and optionally metadata) — the category appears as soon as the first feature lands.
 
 Task: ${task || '<describe the dataset, e.g. "all wind farms in the North Sea Norwegian sector">'}`
 
 interface ImportResultPayload {
   ok: boolean
-  categoryAction: 'created' | 'metadata-replaced' | 'append-only' | 'aborted'
   categoryId: string | null
   featuresAdded: number
   featuresReplaced: number
@@ -62,7 +60,7 @@ const submitImport = async (paste: string): Promise<ImportResultPayload | { netw
   let body: unknown
   try { body = JSON.parse(paste) }
   catch (err) {
-    return { ok: false, categoryAction: 'aborted', categoryId: null, featuresAdded: 0, featuresReplaced: 0, errors: [{ index: -1, message: `paste is not valid JSON: ${err instanceof Error ? err.message : String(err)}` }] }
+    return { ok: false, categoryId: null, featuresAdded: 0, featuresReplaced: 0, errors: [{ index: -1, message: `paste is not valid JSON: ${err instanceof Error ? err.message : String(err)}` }] }
   }
   try {
     const res = await fetch('/api/geodata/import', {
@@ -85,7 +83,7 @@ const renderResult = (resultEl: HTMLElement, r: ImportResultPayload | { networkE
     ? '<span class="px-1 py-0.5 rounded bg-green-900/30 text-green-300 text-[10px]">ok</span>'
     : '<span class="px-1 py-0.5 rounded bg-red-900/30 text-red-300 text-[10px]">aborted</span>'
   const lines: string[] = []
-  lines.push(`<div class="text-xs">${tag} category <span class="font-mono">${r.categoryId ?? '—'}</span> · action: <span class="font-mono">${r.categoryAction}</span> · added ${r.featuresAdded}, replaced ${r.featuresReplaced}</div>`)
+  lines.push(`<div class="text-xs">${tag} category <span class="font-mono">${r.categoryId ?? '—'}</span> · added ${r.featuresAdded}, replaced ${r.featuresReplaced}</div>`)
   if (r.errors.length > 0) {
     lines.push('<div class="text-xs text-yellow-300 mt-2">Errors:</div>')
     lines.push('<ul class="text-[11px] text-text-muted ml-4 list-disc">')

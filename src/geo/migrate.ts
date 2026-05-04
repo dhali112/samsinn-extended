@@ -1,66 +1,152 @@
-// One-shot migration for the user-definable categories refactor.
+// One-shot migrations for geodata layout changes. Idempotent — re-running is
+// always a no-op once the target layout is detected.
 //
-// Pre-refactor layout:
-//   ~/.samsinn/geodata/airport.geojson, city.geojson, offshore-platform.geojson, ...
-//   ~/.samsinn/geodata/.bundled/0.1.0/...    ← cached jsdelivr snapshot (also obsolete)
+// Layouts:
+//   v0 (pre-2d97306): bundled jsdelivr cache + ad-hoc *.geojson at the root.
+//   v1 (2d97306):      categories.json registry + <id>.geojson per category.
+//   v2 (this file):    single geodata.geojson FeatureCollection. Categories
+//                      derived from feature properties (category_display /
+//                      category_icon / category_osm_query). No registry file.
 //
-// Post-refactor layout:
-//   ~/.samsinn/geodata/categories.json       ← registry of user-defined categories
-//   ~/.samsinn/geodata/<category-id>.geojson ← one file per category
+// Migration policy:
+//   v0 → v2: just clear the bundled cache + any orphan files (no data to
+//            preserve; the user already accepted the wipe at v0→v1).
+//   v1 → v2: read categories.json + every <id>.geojson; concatenate features
+//            into one array; attach category_display/icon/osm_query as
+//            properties on the FIRST feature for each category; atomically
+//            write geodata.geojson; delete the now-stale per-category files
+//            and categories.json (clean break — no backward compat).
 //
-// Detection: the absence of categories.json AND presence of any *.geojson
-// files in the geodata dir. Run once at boot. Idempotent: a fresh install
-// has no .geojson files; a migrated install has categories.json.
-//
-// Decision (per Q1 in the stress-test): wipe everything. The user opted
-// for a clean break. Affected files are deleted, the .bundled cache is
-// removed, an empty categories.json is written. One log line.
+// Atomicity: we write to geodata.geojson.tmp + rename. If anything fails
+// before the rename, the old files stay intact and the next boot retries.
 
 import { existsSync } from 'node:fs'
-import { readdir, rm, unlink } from 'node:fs/promises'
+import { readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sharedPaths } from '../core/paths.ts'
+import type { GeoFeature, GeoFeatureCollection } from './types.ts'
 
+const TARGET_FILE = 'geodata.geojson'
 const REGISTRY_FILE = 'categories.json'
 
 export interface MigrationResult {
   readonly migrated: boolean
+  readonly version: 'v0->v2' | 'v1->v2' | 'none'
+  readonly featuresWritten: number
   readonly filesRemoved: number
-  readonly bundledRemoved: boolean
+}
+
+const NONE: MigrationResult = { migrated: false, version: 'none', featuresWritten: 0, filesRemoved: 0 }
+
+interface OldCategoryMeta {
+  readonly id: string
+  readonly displayName?: string
+  readonly icon?: string
+  readonly osmQuery?: string
+}
+
+const readJson = async <T>(path: string): Promise<T | null> => {
+  try {
+    const raw = await readFile(path, 'utf8')
+    return JSON.parse(raw) as T
+  } catch {
+    return null
+  }
 }
 
 export const runGeodataMigrationOnce = async (): Promise<MigrationResult> => {
   const root = sharedPaths.geodata()
-  if (!existsSync(root)) return { migrated: false, filesRemoved: 0, bundledRemoved: false }
+  if (!existsSync(root)) return NONE
+  if (existsSync(join(root, TARGET_FILE))) return NONE  // already on v2
+
+  // === v1 → v2: categories.json + per-cat .geojson present ===
   if (existsSync(join(root, REGISTRY_FILE))) {
-    return { migrated: false, filesRemoved: 0, bundledRemoved: false }
+    const registry = await readJson<{ version?: number; categories?: OldCategoryMeta[] }>(
+      join(root, REGISTRY_FILE),
+    )
+    const categoriesById = new Map<string, OldCategoryMeta>()
+    for (const c of registry?.categories ?? []) {
+      if (typeof c.id === 'string') categoriesById.set(c.id, c)
+    }
+
+    let entries: string[]
+    try { entries = await readdir(root) } catch { return NONE }
+
+    const allFeatures: GeoFeature[] = []
+    const filesToRemove: string[] = []
+    const seenCategoryMeta = new Set<string>()
+
+    for (const e of entries) {
+      if (e === REGISTRY_FILE || e === TARGET_FILE) continue
+      if (!e.endsWith('.geojson')) continue
+      const path = join(root, e)
+      const fc = await readJson<GeoFeatureCollection>(path)
+      if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) continue
+      filesToRemove.push(path)
+
+      for (const f of fc.features) {
+        if (!f || typeof f !== 'object') continue
+        const props = f.properties as Record<string, unknown> | undefined
+        if (!props || typeof props.category !== 'string') continue
+        const catId = props.category as string
+        const meta = categoriesById.get(catId)
+
+        // First feature for this category gets the meta embedded (if any).
+        const carryMeta = !seenCategoryMeta.has(catId) && meta
+          ? {
+              ...(typeof meta.displayName === 'string' ? { category_display: meta.displayName } : {}),
+              ...(typeof meta.icon === 'string' ? { category_icon: meta.icon } : {}),
+              ...(typeof meta.osmQuery === 'string' ? { category_osm_query: meta.osmQuery } : {}),
+            }
+          : {}
+        if (Object.keys(carryMeta).length > 0) seenCategoryMeta.add(catId)
+
+        allFeatures.push({
+          type: 'Feature',
+          geometry: f.geometry,
+          properties: { ...props, ...carryMeta } as GeoFeature['properties'],
+        })
+      }
+    }
+
+    // Atomic write: tmp + rename. If anything below throws, old files stay.
+    const target = join(root, TARGET_FILE)
+    const tmp = `${target}.tmp`
+    const fc: GeoFeatureCollection = { type: 'FeatureCollection', features: allFeatures }
+    await writeFile(tmp, `${JSON.stringify(fc, null, 2)}\n`, { mode: 0o600 })
+    await rename(tmp, target)
+
+    // Now safe to delete the old layout.
+    let filesRemoved = 0
+    for (const p of filesToRemove) {
+      try { await unlink(p); filesRemoved++ } catch { /* harmless */ }
+    }
+    try { await unlink(join(root, REGISTRY_FILE)); filesRemoved++ } catch { /* harmless */ }
+
+    console.log(`[geo/migrate] v1→v2: wrote ${allFeatures.length} features to ${TARGET_FILE}; removed ${filesRemoved} old file(s)`)
+    return { migrated: true, version: 'v1->v2', featuresWritten: allFeatures.length, filesRemoved }
   }
 
+  // === v0 → v2: no registry, but maybe orphan .geojson + .bundled cache ===
   let entries: string[]
-  try {
-    entries = await readdir(root)
-  } catch {
-    return { migrated: false, filesRemoved: 0, bundledRemoved: false }
-  }
-
+  try { entries = await readdir(root) } catch { return NONE }
   let filesRemoved = 0
   let bundledRemoved = false
   for (const e of entries) {
-    if (e === REGISTRY_FILE) continue
+    if (e === TARGET_FILE) continue
     const path = join(root, e)
     if (e === '.bundled') {
-      try { await rm(path, { recursive: true, force: true }); bundledRemoved = true }
-      catch { /* harmless */ }
+      try { await rm(path, { recursive: true, force: true }); bundledRemoved = true } catch { /* harmless */ }
       continue
     }
     if (!e.endsWith('.geojson')) continue
-    try { await unlink(path); filesRemoved++ }
-    catch { /* harmless */ }
+    try { await unlink(path); filesRemoved++ } catch { /* harmless */ }
   }
-
   const acted = filesRemoved > 0 || bundledRemoved
   if (acted) {
-    console.log(`[geo/migrate] cleared pre-registry layout: ${filesRemoved} .geojson file(s)${bundledRemoved ? ' + .bundled cache' : ''}`)
+    console.log(`[geo/migrate] v0→v2: cleared pre-registry layout: ${filesRemoved} .geojson file(s)${bundledRemoved ? ' + .bundled cache' : ''}`)
   }
-  return { migrated: acted, filesRemoved, bundledRemoved }
+  return acted
+    ? { migrated: true, version: 'v0->v2', featuresWritten: 0, filesRemoved }
+    : NONE
 }

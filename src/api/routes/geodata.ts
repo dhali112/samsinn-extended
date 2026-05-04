@@ -14,8 +14,8 @@
 
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
-import { categoryStats, listCategory, removeFeature } from '../../geo/store.ts'
-import { deleteCategory, getCategory, listCategories } from '../../geo/categories.ts'
+import { categoryStats, listCategory, removeCategory, removeFeature } from '../../geo/store.ts'
+import { getCategory, listCategories } from '../../geo/categories.ts'
 import { resolveLocation } from '../../geo/resolver.ts'
 import { applyImport } from '../../geo/import.ts'
 import { getDiscoveryStatus, warmDiscoveredCache } from '../../geo/discovered-cache.ts'
@@ -97,15 +97,18 @@ export const geodataRoutes: RouteEntry[] = [
     },
   },
 
-  // --- Delete a category (cascades to per-category .geojson). ---
+  // --- Delete a category (cascade-removes all local features in it).
+  //     Discovered features for the same category remain (read-only at
+  //     runtime). The category disappears from listCategories() once no
+  //     features in any source carry that id. ---
   {
     method: 'DELETE',
     pattern: /^\/api\/geodata\/categories\/([a-z0-9-]+)$/,
     handler: async (_req, match) => {
       const id = match[1]!
-      const r = await deleteCategory(id)
-      if (!r.deleted) return errorResponse('not found', 404)
-      return json(r)
+      const r = await removeCategory(id)
+      if (r.removed === 0) return errorResponse('no local features in that category', 404)
+      return json({ deleted: true, removedFeatures: r.removed })
     },
   },
 

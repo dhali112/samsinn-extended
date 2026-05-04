@@ -1,34 +1,38 @@
 // ============================================================================
 // Paste-import pipeline — validates the paste object, applies it.
 //
-// Paste shape (canonical):
-//   { "category": <CategoryMeta>, "features": [<feature>...] }
+// Categories are derived from features (no separate registry). The paste
+// shape mirrors that:
 //
-// Shorthand for appending to an existing category:
-//   { "category": "<existing-id>", "features": [<feature>...] }
+//   {
+//     "categoryId": "<id>",                 // required, kebab-case
+//     "categoryDisplay": "<display>",       // optional, attached to first feature
+//     "categoryIcon": "<marker-icon>",      // optional, attached to first feature
+//     "categoryOsmQuery": "<...{name}...>", // optional, attached to first feature
+//     "features": [<feature>, ...]
+//   }
 //
 // Rules:
-//   - Object form on a NEW id   → registers the category, then writes features.
-//   - Object form on EXISTING id → REPLACES metadata, then writes features.
-//   - Shorthand on EXISTING id  → leaves metadata, writes features.
-//   - Shorthand on UNKNOWN id   → fatal error (no metadata to register from).
-//   - Duplicate `id` within the features array → fatal error.
+//   - categoryId must match /^[a-z][a-z0-9-]{0,62}$/.
+//   - The category's metadata fields (categoryDisplay/Icon/OsmQuery) are
+//     written onto the FIRST feature in the import. Existing features in
+//     the same category that already declare metadata are not modified —
+//     the projection picks the first metadata-bearing feature it finds.
 //   - Per-feature minimum: id, name, lat, lng (numeric, in range).
-//   - If ZERO features survive validation, abort the import: registry is not
-//     touched. Prevents phantom empty categories from accidental pastes.
+//   - Duplicate id within the features array → fatal error.
+//   - If ZERO features survive validation, abort.
 //   - All paste features default to verified:true, source:'local',
 //     added_by:'user' — explicit import is a curation event.
 // ============================================================================
 
-import { getCategory, upsertCategory, validateCategoryMeta } from './categories.ts'
 import { upsertFeature } from './store.ts'
-import type { CategoryMeta, GeoFeature } from './types.ts'
+import { validateEmbeddedCategoryMeta } from './projection.ts'
+import { isMarkerIcon, type GeoFeature, type MarkerIcon } from './types.ts'
 
 export interface ImportError { readonly index: number; readonly field?: string; readonly message: string }
 
 export interface ImportResult {
   readonly ok: boolean
-  readonly categoryAction: 'created' | 'metadata-replaced' | 'append-only' | 'aborted'
   readonly categoryId: string | null
   readonly featuresAdded: number
   readonly featuresReplaced: number
@@ -86,7 +90,15 @@ const validateFeatureRow = (raw: unknown, index: number): { ok: true; feature: P
   return { ok: true, feature: out }
 }
 
-const buildGeoFeature = (categoryId: string, p: ParsedFeature): GeoFeature => {
+const buildGeoFeature = (
+  categoryId: string,
+  p: ParsedFeature,
+  embeddedMeta?: {
+    display?: string
+    icon?: MarkerIcon
+    osmQuery?: string
+  },
+): GeoFeature => {
   const now = new Date().toISOString()
   return {
     type: 'Feature',
@@ -106,13 +118,15 @@ const buildGeoFeature = (categoryId: string, p: ParsedFeature): GeoFeature => {
       ...(p.icao ? { icao: p.icao } : {}),
       ...(p.tags ? { tags: p.tags } : {}),
       ...(p.subcategory ? { subcategory: p.subcategory } : {}),
+      ...(embeddedMeta?.display ? { category_display: embeddedMeta.display } : {}),
+      ...(embeddedMeta?.icon ? { category_icon: embeddedMeta.icon } : {}),
+      ...(embeddedMeta?.osmQuery ? { category_osm_query: embeddedMeta.osmQuery } : {}),
     },
   }
 }
 
 const fail = (message: string): ImportResult => ({
   ok: false,
-  categoryAction: 'aborted',
   categoryId: null,
   featuresAdded: 0,
   featuresReplaced: 0,
@@ -126,33 +140,23 @@ export const applyImport = async (body: unknown): Promise<ImportResult> => {
   const root = body as Record<string, unknown>
   if (root.error) return fail(`AI returned error: ${String(root.error)}`)
 
-  // --- Resolve category: shorthand string vs full object ---
-  let categoryId: string
-  let categoryMetaToWrite: CategoryMeta | null = null
-  let categoryAction: ImportResult['categoryAction']
-  if (typeof root.category === 'string') {
-    categoryId = root.category
-    const existing = await getCategory(categoryId)
-    if (!existing) return fail(`category '${categoryId}' is not registered. Provide full metadata in 'category' to create it.`)
-    categoryAction = 'append-only'
-  } else if (root.category && typeof root.category === 'object') {
-    const v = validateCategoryMeta(root.category)
-    if (!v.ok) {
-      return {
-        ok: false,
-        categoryAction: 'aborted',
-        categoryId: null,
-        featuresAdded: 0,
-        featuresReplaced: 0,
-        errors: v.errors.map((e) => ({ index: -1, field: e.field, message: e.message })),
-      }
-    }
-    categoryId = v.meta.id
-    categoryMetaToWrite = v.meta
-    const existing = await getCategory(categoryId)
-    categoryAction = existing ? 'metadata-replaced' : 'created'
-  } else {
-    return fail('`category` must be a string id or a full category metadata object')
+  // --- Validate category metadata fields ---
+  if (typeof root.categoryId !== 'string') {
+    return fail('`categoryId` must be a string')
+  }
+  const metaErr = validateEmbeddedCategoryMeta({
+    category: root.categoryId,
+    category_display: root.categoryDisplay,
+    category_icon: root.categoryIcon,
+    category_osm_query: root.categoryOsmQuery,
+  })
+  if (metaErr) return fail(metaErr)
+  const categoryId = root.categoryId
+
+  const embeddedMeta = {
+    ...(typeof root.categoryDisplay === 'string' ? { display: root.categoryDisplay } : {}),
+    ...(isMarkerIcon(root.categoryIcon) ? { icon: root.categoryIcon } : {}),
+    ...(typeof root.categoryOsmQuery === 'string' ? { osmQuery: root.categoryOsmQuery } : {}),
   }
 
   // --- Validate features ---
@@ -173,7 +177,6 @@ export const applyImport = async (body: unknown): Promise<ImportResult> => {
     if (seen.has(f.id)) {
       return {
         ok: false,
-        categoryAction: 'aborted',
         categoryId: null,
         featuresAdded: 0,
         featuresReplaced: 0,
@@ -184,25 +187,15 @@ export const applyImport = async (body: unknown): Promise<ImportResult> => {
   }
 
   if (valid.length === 0) {
-    return {
-      ok: false,
-      categoryAction: 'aborted',
-      categoryId: null,
-      featuresAdded: 0,
-      featuresReplaced: 0,
-      errors,
-    }
+    return { ok: false, categoryId: null, featuresAdded: 0, featuresReplaced: 0, errors }
   }
 
-  // --- Apply: register/update category, then write features ---
-  if (categoryMetaToWrite) {
-    await upsertCategory(categoryMetaToWrite)
-  }
-
+  // --- Apply: write features. Category metadata rides on the FIRST feature. ---
   let added = 0
   let replaced = 0
-  for (const p of valid) {
-    const feat = buildGeoFeature(categoryId, p)
+  for (let i = 0; i < valid.length; i++) {
+    const p = valid[i]!
+    const feat = buildGeoFeature(categoryId, p, i === 0 ? embeddedMeta : undefined)
     const r = await upsertFeature(feat)
     if (r.replaced) replaced++
     else added++
@@ -210,7 +203,6 @@ export const applyImport = async (body: unknown): Promise<ImportResult> => {
 
   return {
     ok: true,
-    categoryAction,
     categoryId,
     featuresAdded: added,
     featuresReplaced: replaced,

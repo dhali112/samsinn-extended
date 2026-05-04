@@ -3,20 +3,39 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createGeoAddTool, createGeoListCategoriesTool, createGeoListFeaturesTool, createGeoLookupTool, createGeoRemoveTool } from './geo-tools.ts'
-import { upsertCategory, validateCategoryMeta, __resetCategoryRegistryState } from '../../geo/categories.ts'
 import { upsertFeature } from '../../geo/store.ts'
-import type { GeoFeature } from '../../geo/types.ts'
+import { __resetDiscoveredCacheState } from '../../geo/discovered-cache.ts'
+import { invalidateDiscoveryCache } from '../../geo/discovery.ts'
+import type { GeoFeature, MarkerIcon } from '../../geo/types.ts'
 
 let prevHome: string | undefined
+let prevGeoSources: string | undefined
 let testDir: string
 
 const fakeContext = { callerId: 'agent-x', callerName: 'Agent X' }
 
-const seedCategory = async (id: string): Promise<void> => {
-  const v = validateCategoryMeta({ id, displayName: id, icon: 'pin' })
-  if (!v.ok) throw new Error('val')
-  await upsertCategory(v.meta)
+// Under the derived-categories model, a category exists iff a feature
+// carries that id. Most tests just write the features they care about
+// and the category emerges. This helper is for tests that need a
+// category to exist WITHOUT pinning the test to a specific feature
+// (e.g. "errors when categoryHint is missing" — needs *some* category).
+// Returns the seed feature's id so the test can ignore it in assertions.
+const seedEmptyCategory = async (id: string, icon: MarkerIcon = 'pin'): Promise<void> => {
+  await upsertFeature({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [0, 0] },
+    properties: {
+      id: `__seed-${id}__`,
+      name: `__seed-${id}__`,
+      category: id,
+      verified: true,
+      source: 'local',
+      category_display: id,
+      category_icon: icon,
+    },
+  })
 }
+const seedCategory = seedEmptyCategory
 
 const makeFeature = (name: string, lat: number, lng: number, verified: boolean, category = 'city'): GeoFeature => ({
   type: 'Feature',
@@ -32,15 +51,22 @@ const makeFeature = (name: string, lat: number, lng: number, verified: boolean, 
 
 beforeEach(() => {
   prevHome = process.env.SAMSINN_HOME
+  prevGeoSources = process.env.SAMSINN_GEO_SOURCES
   testDir = mkdtempSync(join(tmpdir(), 'samsinn-geo-tools-test-'))
   process.env.SAMSINN_HOME = testDir
-  __resetCategoryRegistryState()
+  process.env.SAMSINN_GEO_SOURCES = '__test-isolated-no-geo-org__'
+  __resetDiscoveredCacheState()
+  invalidateDiscoveryCache()
 })
 
 afterEach(() => {
   if (prevHome === undefined) delete process.env.SAMSINN_HOME
   else process.env.SAMSINN_HOME = prevHome
+  if (prevGeoSources === undefined) delete process.env.SAMSINN_GEO_SOURCES
+  else process.env.SAMSINN_GEO_SOURCES = prevGeoSources
   rmSync(testDir, { recursive: true, force: true })
+  __resetDiscoveredCacheState()
+  invalidateDiscoveryCache()
 })
 
 describe('geo_lookup', () => {
@@ -124,7 +150,6 @@ describe('geo_list_categories', () => {
   })
 
   test('returns registered categories with counts', async () => {
-    await seedCategory('wind-farm')
     await upsertFeature(makeFeature('Horns Rev 1', 55.49, 7.84, true, 'wind-farm'))
     const r = await tool.execute({}, fakeContext as never)
     expect(r.success).toBe(true)
@@ -169,7 +194,6 @@ describe('geo_list_features', () => {
   })
 
   test('exact category id returns all features as map envelope', async () => {
-    await seedCategory('oil-platforms')
     await seedFeature('Statfjord A', 61.25, 1.85, { country: 'NO', operator: 'Equinor' })
     await seedFeature('Snorre B', 61.45, 2.16, { country: 'NO', operator: 'Equinor' })
     const r = await tool.execute({ category: 'oil-platforms' }, fakeContext as never)
@@ -183,7 +207,6 @@ describe('geo_list_features', () => {
   })
 
   test('country filter narrows results', async () => {
-    await seedCategory('oil-platforms')
     await seedFeature('Statfjord A', 61.25, 1.85, { country: 'NO' })
     await seedFeature('Brent C', 61.0, 1.7, { country: 'GB' })
     const r = await tool.execute({ category: 'oil-platforms', country: 'NO' }, fakeContext as never)
@@ -195,9 +218,22 @@ describe('geo_list_features', () => {
   })
 
   test('categoryHint matches by displayName substring', async () => {
-    const v = validateCategoryMeta({ id: 'oil-platforms', displayName: 'Oil Platforms', icon: 'pin' })
-    if (v.ok) await upsertCategory(v.meta)
-    await seedFeature('Statfjord A', 61.25, 1.85, { country: 'NO' })
+    // Seed a feature with explicit category metadata so the projection
+    // picks up "Oil Platforms" as the displayName.
+    await upsertFeature({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [1.85, 61.25] },
+      properties: {
+        id: 'no-statfjord-a',
+        name: 'Statfjord A',
+        category: 'oil-platforms',
+        verified: true,
+        source: 'local',
+        country: 'NO',
+        category_display: 'Oil Platforms',
+        category_icon: 'pin',
+      },
+    })
     const r = await tool.execute({ categoryHint: 'oil platform' }, fakeContext as never)
     expect(r.success).toBe(true)
     if (r.success) {
@@ -207,22 +243,35 @@ describe('geo_list_features', () => {
   })
 
   test('categoryHint surfaces ambiguity with candidates', async () => {
-    const v1 = validateCategoryMeta({ id: 'oil-platforms', displayName: 'Oil Platforms', icon: 'pin' })
-    const v2 = validateCategoryMeta({ id: 'oil-rigs', displayName: 'Oil Rigs (legacy)', icon: 'pin' })
-    if (v1.ok) await upsertCategory(v1.meta)
-    if (v2.ok) await upsertCategory(v2.meta)
+    // Two categories with overlapping displayName substrings ("oil").
+    await upsertFeature({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [0, 0] },
+      properties: {
+        id: 'plat-1', name: 'Plat 1', category: 'oil-platforms',
+        verified: true, source: 'local',
+        category_display: 'Oil Platforms', category_icon: 'pin',
+      },
+    })
+    await upsertFeature({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [0, 0] },
+      properties: {
+        id: 'rig-1', name: 'Rig 1', category: 'oil-rigs',
+        verified: true, source: 'local',
+        category_display: 'Oil Rigs (legacy)', category_icon: 'pin',
+      },
+    })
     const r = await tool.execute({ categoryHint: 'oil' }, fakeContext as never)
     expect(r.success).toBe(false)
     if (!r.success) {
       expect(r.error).toMatch(/ambiguous/)
-      // candidates is on the error result
       const e = r as unknown as { candidates: Array<{ id: string }> }
       expect(e.candidates.length).toBe(2)
     }
   })
 
   test('limit caps results and reports truncation', async () => {
-    await seedCategory('oil-platforms')
     for (let i = 0; i < 5; i++) {
       await seedFeature(`Platform ${i}`, 60 + i * 0.1, 1 + i * 0.1)
     }
@@ -237,7 +286,6 @@ describe('geo_list_features', () => {
   })
 
   test('view fits multi-point bbox', async () => {
-    await seedCategory('oil-platforms')
     await seedFeature('A', 60, 1)
     await seedFeature('B', 62, 3)
     const r = await tool.execute({ category: 'oil-platforms' }, fakeContext as never)
