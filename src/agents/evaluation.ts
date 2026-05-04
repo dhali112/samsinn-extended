@@ -163,7 +163,8 @@ export const streamWithRetry = async (
         // Strip think blocks and trim
         content = content.replace(THINK_BLOCK_RE, '').trim()
         const durationMs = Math.round(performance.now() - startMs)
-        console.log(`[llm] provider=${metrics.provider ?? '?'} model=${request.model} path=stream chunks_emit=${chunksEmit} content_len=${content.length} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${durationMs}`)
+        const toolCallsCount = toolCalls?.length ?? 0
+        console.log(`[llm] provider=${metrics.provider ?? '?'} model=${request.model} path=stream chunks_emit=${chunksEmit} content_len=${content.length} tools=${toolCallsCount} completion_tokens=${metrics.completionTokens ?? '?'} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${durationMs}`)
         return { content, toolCalls, durationMs, metrics }
       }
 
@@ -173,7 +174,7 @@ export const streamWithRetry = async (
         chunksEmit++
         onEvent({ kind: 'chunk', delta: response.content })
       }
-      console.log(`[llm] provider=${response.provider ?? '?'} model=${request.model} path=chat chunks_emit=${chunksEmit} content_len=${response.content.length} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${response.generationMs}`)
+      console.log(`[llm] provider=${response.provider ?? '?'} model=${request.model} path=chat chunks_emit=${chunksEmit} content_len=${response.content.length} tools=${response.toolCalls?.length ?? 0} completion_tokens=${response.tokensUsed.completion ?? '?'} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${response.generationMs}`)
       return {
         content: response.content,
         toolCalls: response.toolCalls,
