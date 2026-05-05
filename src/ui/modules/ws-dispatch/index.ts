@@ -528,12 +528,6 @@ const handlers: Handlers = {
     }))
   },
 
-  wiki_changed(_msg) {
-    // A wiki was created / updated / deleted / warmed / bound. Wikis panel
-    // re-fetches /api/wikis on this event.
-    window.dispatchEvent(new CustomEvent('wikis-changed'))
-  },
-
   triggers_changed(_msg) {
     // A trigger was created / updated / deleted on some agent. Open
     // triggers modals re-fetch their data.

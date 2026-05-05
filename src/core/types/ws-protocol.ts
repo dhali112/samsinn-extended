@@ -81,16 +81,8 @@ export type WSOutbound =
   // Fired after a room's activePacks list is replaced. UI updates the
   // active-packs panel for that room without a full refetch.
   | { readonly type: 'pack_activation_changed'; readonly roomId: string; readonly activePacks: ReadonlyArray<string> }
-  // Fired after a wiki is created/updated/deleted/warmed/bound. UI panels refresh.
-  | {
-      readonly type: 'wiki_changed'
-      readonly wikiId?: string
-      readonly roomId?: string
-      readonly agentId?: string
-      readonly action: 'created' | 'updated' | 'deleted' | 'warmed' | 'warm_failed' | 'bound' | 'discovery_refreshed'
-      readonly pageCount?: number
-      readonly error?: string
-    }
+  // (`wiki_changed` removed in commit M — wiki lifecycle now rides on
+  // `packs_changed` since wikis are pack-bundled.)
   // Fired after an agent's trigger is created/updated/deleted. UI re-fetches
   // the trigger list. The scheduler itself doesn't broadcast on fire — fired
   // triggers post to the room and surface as a normal `message.posted` event.

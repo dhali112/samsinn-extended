@@ -23,8 +23,17 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { MergedWikiEntry } from './types.ts'
-import type { WikiAdapter } from './github-adapter.ts'
 import { createWikiError, isWikiError } from './errors.ts'
+
+// Adapter contract: how the registry fetches pages for a wiki. Today only
+// the filesystem adapter implements it; pre-prune there was a GitHub
+// adapter too. Kept as an interface so tests can inject fakes.
+export interface WikiAdapter {
+  readonly fetchIndex: () => Promise<string>
+  readonly fetchScope: () => Promise<string | undefined>     // missing scope.md is non-fatal
+  readonly fetchPage: (slug: string) => Promise<{ path: string; body: string }>
+  readonly listWikiTree: () => Promise<ReadonlyArray<string>>  // wiki-relative .md paths
+}
 
 // Walks the wiki dir recursively, returning slug-relative .md paths.
 // Mirrors github-adapter's listWikiTree shape — same return type so the
@@ -66,12 +75,8 @@ const readMarkdown = async (path: string, wikiId: string): Promise<string> => {
 }
 
 export const createFilesystemAdapter = (wiki: MergedWikiEntry): WikiAdapter => {
-  if (!wiki.dirPath) {
-    // Defensive — caller should never reach here without dirPath (the
-    // factory dispatch in registry.ts is what gates this). Throw rather
-    // than silently degrade.
-    throw new Error(`createFilesystemAdapter: wiki "${wiki.id}" has no dirPath`)
-  }
+  // dirPath is required on MergedWikiEntry post-prune (commit M) — TypeScript
+  // enforces it; no runtime guard needed.
   const root = wiki.dirPath
   const id = wiki.id
 

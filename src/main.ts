@@ -122,7 +122,6 @@ export interface System {
   readonly packsDir: string
   readonly knowledgeDir: string
   readonly providersStorePath: string
-  readonly wikisStorePath: string
   // Shared wiki registry — read by tools and the wiki admin endpoints.
   readonly wikiRegistry: import('./wiki/registry.ts').WikiRegistry
   // Trigger scheduler — REST handlers call invalidate() after mutating an
@@ -796,7 +795,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     packsDir,
     knowledgeDir: sharedPaths.knowledge(),
     providersStorePath: sharedPaths.providers(),
-    wikisStorePath: sharedPaths.wikis(),
     wikiRegistry: shared.wikiRegistry,
     triggerScheduler,
     ollamaUrls,

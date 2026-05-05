@@ -5,10 +5,9 @@
 // such directory becomes a MergedWikiEntry with dirPath set, which the
 // registry's default factory routes to the filesystem adapter.
 //
-// This is the local-disk parallel of the samsinn-wikis GitHub discovery
-// (src/wiki/discovery.ts). After the wiki demolition lands, the discovery
-// path goes away and packs become the only distribution mechanism for
-// non-user-curated wiki content.
+// Sole wiki source post-prune (commit M). The samsinn-wikis GitHub
+// discovery and operator-stored wikis.json adapter were removed; packs
+// are the only distribution mechanism for wiki content.
 //
 // Convention: <pack>/wikis/<slug>/index.md is required for the slug to be
 // treated as a wiki. A slug without index.md is silently skipped (logged
@@ -30,10 +29,8 @@ const VALID_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/
 // with the operator's own configured wikis are impossible by construction.
 const buildId = (pack: string, slug: string): string => `${pack}:${slug}`
 
-export interface ScannedPackWiki extends MergedWikiEntry {
-  readonly pack: string
-  readonly dirPath: string
-}
+// Scanned entry IS a MergedWikiEntry — no separate shape post-prune.
+export type ScannedPackWiki = MergedWikiEntry
 
 export const scanPackWikis = async (
   packsDir: string,
@@ -69,16 +66,7 @@ export const scanPackWikis = async (
 
       out.push({
         id: buildId(pack, slug),
-        // Placeholders — the filesystem adapter ignores owner/repo/ref/
-        // apiKey, but the registry's reconcile dedup uses them so we
-        // need stable values (using the on-disk path keeps reconcile
-        // idempotent across boots even if the operator renames the pack).
-        owner: 'pack',
-        repo: `${pack}/${slug}`,
-        ref: 'main',
         displayName: `${pack}/${slug}`,
-        apiKey: '',
-        maskedKey: '—',
         enabled: true,
         pack,
         dirPath: slugDir,

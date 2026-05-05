@@ -1,50 +1,17 @@
-// Settings > Wikis modal — list of configured wikis + add/refresh/delete +
-// per-room binding toggles. Mirrors packs-modal.ts.
+// Settings > Wikis modal — read-only list of pack-bundled wikis.
+//
+// Post-prune (commit M): wikis come exclusively from packs. Add / edit /
+// delete / discovery-refresh affordances are gone. The modal is a thin
+// shell around renderWikisInto; install/uninstall happens via the
+// Settings → Packs flow, which re-fires the WS `packs_changed` event
+// that this modal listens for.
 
-import { createModal, createButton } from '../modals/detail-modal.ts'
-import { renderWikisInto, promptAddWiki } from '../panels/wikis-panel.ts'
-import { icon } from '../icon.ts'
-import { showToast } from '../toast.ts'
+import { createModal } from '../modals/detail-modal.ts'
+import { renderWikisInto } from '../panels/wikis-panel.ts'
 
 export const openWikisModal = async (): Promise<void> => {
   const modal = createModal({ title: 'Wikis', width: 'max-w-2xl' })
   document.body.appendChild(modal.overlay)
-
-  // Append action buttons to the header. The createModal helper no longer
-  // adds an × button — backdrop click + Escape are the close affordances.
-  const addBtn = createButton({
-    variant: 'ghost',
-    icon: icon('plus', { size: 12 }),
-    label: 'Add',
-    title: 'Register a new wiki',
-    className: 'mr-2',
-    onClick: async () => {
-      await promptAddWiki(async () => { await renderWikisInto(listEl) })
-    },
-  })
-  modal.header.appendChild(addBtn)
-
-  // Discovery force-refresh — busts the 5-min cache so a freshly-transferred
-  // repo in the SAMSINN_WIKI_SOURCES org appears immediately without a
-  // server restart.
-  const discRefreshBtn = createButton({
-    variant: 'ghost',
-    icon: icon('refresh-cw', { size: 12 }),
-    label: 'Discovery',
-    title: 'Re-scan SAMSINN_WIKI_SOURCES (busts the 5-min cache)',
-    className: 'mr-2',
-    onClick: async () => {
-      const res = await fetch('/api/wikis/discovery/refresh', { method: 'POST' })
-      if (res.ok) {
-        const data = await res.json() as { count?: number }
-        showToast(document.body, `Discovery refreshed (${data.count ?? '?'} active)`, { type: 'success', position: 'fixed' })
-        await renderWikisInto(listEl)
-      } else {
-        showToast(document.body, `Refresh failed (${res.status})`, { type: 'error', position: 'fixed' })
-      }
-    },
-  })
-  modal.header.appendChild(discRefreshBtn)
 
   const listEl = document.createElement('div')
   listEl.className = '-mx-6 -my-4'
@@ -52,12 +19,13 @@ export const openWikisModal = async (): Promise<void> => {
 
   await renderWikisInto(listEl)
 
-  // Re-render on wiki_changed WS events.
+  // Wikis change as a side effect of pack install / uninstall — listen on
+  // packs_changed (the only remaining wiki-affecting WS event post-prune).
   const listener = (): void => { if (listEl.isConnected) void renderWikisInto(listEl) }
-  window.addEventListener('wikis-changed', listener)
+  window.addEventListener('packs-changed', listener)
   const removalObserver = new MutationObserver(() => {
     if (!modal.overlay.isConnected) {
-      window.removeEventListener('wikis-changed', listener)
+      window.removeEventListener('packs-changed', listener)
       removalObserver.disconnect()
     }
   })

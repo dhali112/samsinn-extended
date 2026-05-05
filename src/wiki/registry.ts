@@ -11,10 +11,9 @@
 // ============================================================================
 
 import type { MergedWikiEntry, WikiPage, WikiState } from './types.ts'
-import type { WikiAdapter } from './github-adapter.ts'
+import type { WikiAdapter } from './filesystem-adapter.ts'
 import { createFilesystemAdapter } from './filesystem-adapter.ts'
 import type { WikiCache } from './cache.ts'
-import { createGithubAdapter } from './github-adapter.ts'
 import { createWikiCache } from './cache.ts'
 import { parseWikiPage, extractIndexSlugs } from './parser.ts'
 
@@ -42,10 +41,9 @@ export interface WikiListEntry {
   readonly pageCount: number
   readonly lastWarmAt?: number
   readonly lastError?: string
-  // Owning pack namespace for pack-bundled wikis. Undefined for wikis
-  // sourced from samsinn-wikis discovery / wikis.json — those are
-  // implicit-active 'local' for activation purposes.
-  readonly pack?: string
+  // Owning pack namespace. Required post-prune (commit M) — every wiki is
+  // pack-bundled, so the activation gate always has a namespace to match.
+  readonly pack: string
 }
 
 export interface WikiRegistry {
@@ -86,16 +84,12 @@ interface InternalState {
   lastError?: string
 }
 
-// Default adapter dispatch: pack-bundled wikis (those with dirPath set)
-// use the local filesystem adapter; everything else falls through to the
-// GitHub adapter. Tests can still override the whole factory via
-// opts.adapterFactory — this branch only fires when no override is set.
-const defaultAdapterFactory = (wiki: MergedWikiEntry): WikiAdapter =>
-  wiki.dirPath ? createFilesystemAdapter(wiki) : createGithubAdapter(wiki)
-
 export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
   const cache = opts.cache ?? createWikiCache({ ttlMs: opts.ttlMs ?? 24 * 60 * 60 * 1000 })
-  const factory = opts.adapterFactory ?? defaultAdapterFactory
+  // Single adapter post-prune: every wiki is pack-bundled with a dirPath,
+  // loaded by createFilesystemAdapter. Tests can still inject a fake via
+  // opts.adapterFactory.
+  const factory = opts.adapterFactory ?? createFilesystemAdapter
   const states = new Map<string, InternalState>()
 
   const installWiki = (wiki: MergedWikiEntry): void => {
@@ -119,12 +113,10 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
     }
     for (const w of wikis) {
       const existing = states.get(w.id)
-      // Re-install if config changed (new ref/PAT/etc).
-      const configChanged = !existing
-        || existing.wiki.owner !== w.owner
-        || existing.wiki.repo !== w.repo
-        || existing.wiki.ref !== w.ref
-        || existing.wiki.apiKey !== w.apiKey
+      // Re-install if the on-disk path swapped (operator renamed the pack
+      // dir, or two packs raced to claim the same id). dirPath is the only
+      // mutable identity field post-prune — owner/repo/ref/apiKey are gone.
+      const configChanged = !existing || existing.wiki.dirPath !== w.dirPath
       if (configChanged) {
         cache.clear(w.id)
         installWiki(w)
@@ -240,7 +232,7 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
       pageCount: cache.size(s.wiki.id),
       ...(s.lastWarmAt !== undefined ? { lastWarmAt: s.lastWarmAt } : {}),
       ...(s.lastError !== undefined ? { lastError: s.lastError } : {}),
-      ...(s.wiki.pack !== undefined ? { pack: s.wiki.pack } : {}),
+      pack: s.wiki.pack,
     }))
 
   return {

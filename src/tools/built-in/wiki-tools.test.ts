@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import { createWikiTools } from './wiki-tools.ts'
 import { createWikiRegistry } from '../../wiki/registry.ts'
-import type { WikiAdapter } from '../../wiki/github-adapter.ts'
+import type { WikiAdapter } from '../../wiki/filesystem-adapter.ts'
 import type { ToolContext } from '../../core/types/tool.ts'
 
 const ctx: ToolContext = { callerId: 'a', callerName: 'A' }
@@ -9,20 +9,26 @@ const ctx: ToolContext = { callerId: 'a', callerName: 'A' }
 const adapter: WikiAdapter = {
   fetchIndex: async () => `# Index\n- [[scenario-rod]]\n- [[transformer]]\n`,
   fetchScope: async () => undefined,
-  fetchPage: async (slug) => {
+  fetchPage: async (slug: string) => {
     const map: Record<string, string> = {
       'scenario-rod': `---\ntitle: Rod Scenario\ntype: scenario\ntags: [safety]\n---\nDescribes rod withdrawal during reactor startup.`,
       transformer: `---\ntitle: Transformer\ntype: concept\n---\nAttention is all you need.`,
     }
     if (!map[slug]) throw new Error(`not found: ${slug}`)
-    return { path: `wiki/${slug}.md`, body: map[slug] }
+    return { path: `${slug}.md`, body: map[slug] }
   },
-  listWikiTree: async () => [`wiki/scenario-rod.md`, `wiki/transformer.md`],
+  listWikiTree: async () => [`scenario-rod.md`, `transformer.md`],
 }
 
 const makeRegistry = async () => {
   const reg = createWikiRegistry({
-    wikis: [{ id: 'nuclear', owner: 'o', repo: 'r', ref: 'main', displayName: 'Nuclear', apiKey: '', maskedKey: '', enabled: true }],
+    wikis: [{
+      id: 'nuclear',
+      displayName: 'Nuclear',
+      enabled: true,
+      pack: 'nuclear-pack',
+      dirPath: '/fake/nuclear',
+    }],
     adapterFactory: () => adapter,
   })
   await reg.warm('nuclear')

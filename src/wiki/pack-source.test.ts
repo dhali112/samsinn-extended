@@ -77,9 +77,10 @@ describe('createFilesystemAdapter', () => {
     })
     entry = {
       id: 'aviation:icao',
-      owner: 'pack', repo: 'aviation/icao', ref: 'main',
-      displayName: 'aviation/icao', apiKey: '', maskedKey: '—',
-      enabled: true, pack: 'aviation', dirPath: dir,
+      displayName: 'aviation/icao',
+      enabled: true,
+      pack: 'aviation',
+      dirPath: dir,
     }
   })
   afterEach(async () => { await rm(parent, { recursive: true, force: true }) })
@@ -120,10 +121,5 @@ describe('createFilesystemAdapter', () => {
     const adapter = createFilesystemAdapter(entry)
     const tree = await adapter.listWikiTree()
     expect([...tree].sort()).toEqual(['index.md', 'osl.md', 'scope.md', 'subdir/lha.md'])
-  })
-
-  test('throws if dirPath is unset (defensive)', () => {
-    const noDir: MergedWikiEntry = { ...entry, dirPath: undefined }
-    expect(() => createFilesystemAdapter(noDir)).toThrow(/no dirPath/)
   })
 })

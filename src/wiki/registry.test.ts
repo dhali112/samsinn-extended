@@ -1,28 +1,29 @@
 import { describe, it, expect } from 'bun:test'
 import { createWikiRegistry } from './registry.ts'
-import type { WikiAdapter } from './github-adapter.ts'
+import type { WikiAdapter } from './filesystem-adapter.ts'
 import type { MergedWikiEntry } from './types.ts'
 
+// Post-prune (commit M): MergedWikiEntry only carries id/displayName/
+// enabled/pack/dirPath. The fakeAdapter below stubs the WikiAdapter
+// contract directly so dirPath is irrelevant for these tests — they
+// inject the adapter via opts.adapterFactory.
 const wiki: MergedWikiEntry = {
   id: 'test',
-  owner: 'o',
-  repo: 'r',
-  ref: 'main',
   displayName: 'Test',
-  apiKey: '',
-  maskedKey: '',
   enabled: true,
+  pack: 'test-pack',
+  dirPath: '/fake/test',
 }
 
 const fakeAdapter = (pages: Record<string, string>, indexMd: string, scopeMd?: string): WikiAdapter => ({
   fetchIndex: async () => indexMd,
   fetchScope: async () => scopeMd,
-  fetchPage: async (slug) => {
+  fetchPage: async (slug: string) => {
     const body = pages[slug]
     if (body === undefined) throw new Error(`not found: ${slug}`)
-    return { path: `wiki/${slug}.md`, body }
+    return { path: `${slug}.md`, body }
   },
-  listWikiTree: async () => Object.keys(pages).map((s) => `wiki/${s}.md`),
+  listWikiTree: async () => Object.keys(pages).map((s) => `${s}.md`),
 })
 
 describe('createWikiRegistry', () => {
@@ -64,8 +65,8 @@ describe('createWikiRegistry', () => {
     const adapter: WikiAdapter = {
       fetchIndex: async () => indexMd,
       fetchScope: async () => undefined,
-      fetchPage: async (slug) => { fetches += 1; return { path: `wiki/${slug}.md`, body: `---\ntitle: A\n---\nbody` } },
-      listWikiTree: async () => [`wiki/a.md`],
+      fetchPage: async (slug: string) => { fetches += 1; return { path: `${slug}.md`, body: `---\ntitle: A\n---\nbody` } },
+      listWikiTree: async () => [`a.md`],
     }
     const reg = createWikiRegistry({ wikis: [wiki], adapterFactory: () => adapter })
     await reg.warm('test')
@@ -82,7 +83,7 @@ describe('createWikiRegistry', () => {
     const adapter: WikiAdapter = {
       fetchIndex: async () => '',
       fetchScope: async () => undefined,
-      fetchPage: async (slug) => { fetches += 1; return { path: `wiki/${slug}.md`, body: `---\ntitle: ${slug}\n---\nbody` } },
+      fetchPage: async (slug: string) => { fetches += 1; return { path: `${slug}.md`, body: `---\ntitle: ${slug}\n---\nbody` } },
       listWikiTree: async () => [],
     }
     const reg = createWikiRegistry({ wikis: [wiki], adapterFactory: () => adapter })
@@ -148,8 +149,9 @@ describe('createWikiRegistry', () => {
     })
     const newWikiCalls: string[] = []
     reg.setOnNewWiki((id) => newWikiCalls.push(id))
-    // Same id, different ref → re-install + fire.
-    const swapped: MergedWikiEntry = { ...wiki, ref: 'develop' }
+    // Same id, different dirPath → re-install + fire (operator moved
+    // the pack on disk, or two packs raced for the same id).
+    const swapped: MergedWikiEntry = { ...wiki, dirPath: '/fake/swapped' }
     reg.reconcile([swapped])
     expect(newWikiCalls).toEqual(['test'])
   })

@@ -1,15 +1,21 @@
 // ============================================================================
-// Wiki errors — typed discriminated union surfaced by adapter + registry.
-// Tools translate these into "wiki unavailable" messages for agents instead
-// of letting the turn crash.
+// Wiki errors — typed discriminated union surfaced by the filesystem
+// adapter + registry. Tools translate these into "wiki unavailable"
+// messages for agents instead of letting the turn crash.
+//
+// Post-prune (commit M): only filesystem-shaped errors remain. The HTTP-
+// response mapper that handled GitHub's rate-limit headers went away with
+// github-adapter; the kinds 'rate_limited' and 'unauthorized' are kept in
+// the union for forward-compat (a future remote-mirror adapter would
+// re-introduce them) but no production code path emits them now.
 // ============================================================================
 
 export type WikiErrorKind =
-  | 'unavailable'        // network failure, DNS, timeout
-  | 'not_found'          // 404 — page or repo doesn't exist
-  | 'rate_limited'       // 403 with rate-limit header, or 429
-  | 'unauthorized'       // 401 / 403 (non-rate-limit) — bad/missing PAT
-  | 'parse_error'        // response body wasn't what we expected
+  | 'unavailable'        // filesystem read failed (EACCES, ENOTDIR, etc.)
+  | 'not_found'          // ENOENT — file or wiki dir doesn't exist
+  | 'rate_limited'       // reserved (no current emitter)
+  | 'unauthorized'       // reserved (no current emitter)
+  | 'parse_error'        // file contents weren't what we expected
   | 'unknown'
 
 export interface WikiError extends Error {
@@ -35,26 +41,3 @@ export const createWikiError = (
 
 export const isWikiError = (err: unknown): err is WikiError =>
   err instanceof Error && typeof (err as { kind?: unknown }).kind === 'string'
-
-// Map an HTTP response to a WikiError. Honors GitHub's rate-limit headers.
-export const wikiErrorFromResponse = (res: Response, wikiId?: string): WikiError => {
-  const status = res.status
-  if (status === 404) return createWikiError('not_found', `not found (404)`, { status, wikiId })
-  if (status === 401) return createWikiError('unauthorized', `unauthorized (401)`, { status, wikiId })
-  if (status === 429) {
-    const retryAfter = res.headers.get('retry-after')
-    const retryAfterMs = retryAfter ? Number.parseInt(retryAfter, 10) * 1000 : undefined
-    return createWikiError('rate_limited', `rate limited (429)`, { status, retryAfterMs, wikiId })
-  }
-  if (status === 403) {
-    const remaining = res.headers.get('x-ratelimit-remaining')
-    if (remaining === '0') {
-      const reset = res.headers.get('x-ratelimit-reset')
-      const resetMs = reset ? Number.parseInt(reset, 10) * 1000 : undefined
-      const retryAfterMs = resetMs ? Math.max(0, resetMs - Date.now()) : undefined
-      return createWikiError('rate_limited', `rate limited (403, x-ratelimit-remaining=0)`, { status, retryAfterMs, wikiId })
-    }
-    return createWikiError('unauthorized', `forbidden (403)`, { status, wikiId })
-  }
-  return createWikiError('unknown', `unexpected status ${status}`, { status, wikiId })
-}

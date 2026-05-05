@@ -39,11 +39,11 @@ const buildActiveSet = (
   return new Set([...IMPLICIT_ACTIVE, ...explicit])
 }
 
-const isWikiActive = (entry: { readonly pack?: string }, active: ReadonlySet<string> | undefined): boolean => {
-  if (!active) return true                        // no filter → all visible
-  if (entry.pack === undefined) return true       // non-pack wiki → always active
-  return active.has(entry.pack)
-}
+// Post-prune (commit M), every wiki has a pack origin — there's no
+// non-pack wiki source any more. The undefined-pack branch is gone; if
+// `active` is unset we skip the filter entirely (tests / MCP-only).
+const isWikiActive = (entry: { readonly pack: string }, active: ReadonlySet<string> | undefined): boolean =>
+  !active || active.has(entry.pack)
 
 export const createWikiListTool = (registry: WikiRegistry, deps?: WikiToolsDeps): Tool => ({
   name: 'wiki_list',

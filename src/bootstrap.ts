@@ -46,7 +46,6 @@ import { loadAllPacks } from './packs/loader.ts'
 import { createPolicyStore } from './llm/llm-policy-store.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
-import { loadWikiStore } from './wiki/store.ts'
 import { resolveActiveWikis } from './wiki/resolve-active.ts'
 import { createWikiTools } from './tools/built-in/wiki-tools.ts'
 import { parseLogConfigFromEnv } from './logging/config.ts'
@@ -258,16 +257,21 @@ export const bootstrap = async (): Promise<void> => {
       })
       .catch((err) => console.error(`[wiki:${wikiId}] warm failed: ${(err as Error).message}`))
   })
-  // Initial reconcile + warm. Best-effort: discovery might be down at boot;
-  // the next resolveActiveWikis call (from any GET /api/wikis) will retry.
-  // Per-wiki warm fires from the onNewWiki hook above.
-  const { warnings: wikiWarnings } = await loadWikiStore(sharedPaths.wikis())
-  for (const w of wikiWarnings) console.warn(`[wikis.json] ${w}`)
+  // Initial reconcile + warm. Per-wiki warm fires from the onNewWiki hook.
+  // Operator-stored wikis.json was retired in commit M; if the file still
+  // exists from a prior install, log a one-line nudge so the operator
+  // knows to migrate. The file is never auto-deleted or read.
+  {
+    const { existsSync } = await import('node:fs')
+    const legacy = sharedPaths.wikis()
+    if (existsSync(legacy)) {
+      console.warn(`[wikis] ${legacy} detected — no longer read; restructure into a pack to restore.`)
+    }
+  }
   try {
-    const merged = await resolveActiveWikis(sharedPaths.wikis(), shared.wikiRegistry, sharedPaths.packs())
+    const merged = await resolveActiveWikis(shared.wikiRegistry, sharedPaths.packs())
     const active = merged.filter(w => w.enabled)
-    const packCount = active.filter(w => w.source === 'pack').length
-    console.log(`[wiki] reconciled — ${active.length} active${packCount > 0 ? ` (${packCount} from packs)` : ''}`)
+    console.log(`[wiki] reconciled — ${active.length} active${active.length > 0 ? ' (all from packs)' : ''}`)
   } catch (err) {
     console.warn(`[wiki] initial reconcile failed: ${err instanceof Error ? err.message : String(err)}`)
   }

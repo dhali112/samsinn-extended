@@ -1,42 +1,25 @@
 // ============================================================================
-// Wiki types — config + bindings + cached page shape.
+// Wiki types — pack-bundled only.
 //
-// A "wiki" is a GitHub repo following the llm-wiki-skills convention:
-//   wiki/index.md    catalog
-//   wiki/scope.md    coverage map
-//   wiki/<slug>.md   pages with YAML frontmatter + [[wikilinks]]
+// Post-prune: a wiki is always a directory under <pack>/wikis/<slug>/. The
+// filesystem adapter loads pages from disk; there is no GitHub-discovery or
+// operator-stored variant. Wiki id is namespaced as `<pack>:<slug>`.
 //
-// v1: in-memory cache only (no on-disk mirror). Single shape (no wikiKind flag).
+// On-disk layout under <pack>/wikis/<slug>/:
+//   index.md         catalog (required)
+//   scope.md         coverage hints (optional)
+//   <slug>.md        pages with YAML frontmatter + [[wikilinks]]
+//   subdir/<slug>.md nested ok; the adapter walks recursively
 // ============================================================================
 
-// === Config (persisted in ~/.samsinn/wikis.json) ===
-
-export interface WikiConfig {
-  readonly id: string                  // stable user-chosen ID, e.g. "nuclear"
-  readonly owner: string               // GitHub owner/org
-  readonly repo: string                // GitHub repo name
-  readonly ref?: string                // branch or commit; default 'main'
-  readonly displayName?: string        // optional pretty name; defaults to "{owner}/{repo}"
-  readonly apiKey?: string             // optional GitHub PAT (repo:read)
-  readonly enabled?: boolean           // default: true
-}
+// === Wiki entry (in-memory; not persisted) ===
 
 export interface MergedWikiEntry {
-  readonly id: string
-  readonly owner: string
-  readonly repo: string
-  readonly ref: string                 // resolved (defaults to 'main')
+  readonly id: string                  // `<pack>:<slug>`
   readonly displayName: string         // resolved
-  readonly apiKey: string              // '' when none
-  readonly maskedKey: string           // safe for UI / logs
   readonly enabled: boolean
-  // Pack-bundled wiki origin. When set, dirPath points at the on-disk
-  // <pack>/wikis/<slug>/ directory and the registry picks the filesystem
-  // adapter instead of github-adapter. owner/repo/ref/apiKey are placeholders
-  // ('local'/'<pack>/<slug>'/'main'/'') so the rest of the registry's flow
-  // (cache key, warm, search) doesn't need a special case.
-  readonly pack?: string               // owning pack namespace
-  readonly dirPath?: string            // absolute path to the on-disk wiki dir
+  readonly pack: string                // owning pack namespace
+  readonly dirPath: string             // absolute path to the on-disk wiki dir
 }
 
 // === Bindings (persisted in snapshot, not in wikis.json) ===
