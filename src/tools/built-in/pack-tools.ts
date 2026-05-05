@@ -220,6 +220,22 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
       deps.skillStore,
     )
 
+    // Transactional contract: if ANY tool or skill failed to load, roll back
+    // everything (unregister anything that did register, remove the pack
+    // directory) and return a typed failure. The agent must not be able to
+    // see `success: true` while only half the pack's capabilities exist —
+    // that is exactly the inconsistent-state bug that left agents claiming
+    // VATSIM tools they didn't have.
+    if (result.errors.length > 0) {
+      deps.toolRegistry.unregisterByPack(namespace)
+      deps.skillStore.removeByPack(namespace)
+      try { await rm(finalPath, { recursive: true, force: true }) } catch { /* best-effort */ }
+      return {
+        success: false,
+        error: `Pack "${namespace}" failed to install cleanly — rolled back. ${result.errors.length} error(s):\n  • ${result.errors.join('\n  • ')}`,
+      }
+    }
+
     try {
       await deps.refreshAllAgentTools()
     } catch (err) {
@@ -238,7 +254,6 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
         tools: result.tools,
         skills: result.skills,
         manifest,
-        errors: result.errors,
       },
     }
   },
@@ -283,6 +298,20 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
       deps.toolRegistry,
       deps.skillStore,
     )
+
+    // Same transactional contract as install_pack: if any errors, roll back
+    // and report failure. After rollback the pack is in the "uninstalled"
+    // state on disk, so the user can decide whether to retry an install or
+    // pin to an older revision.
+    if (result.errors.length > 0) {
+      deps.toolRegistry.unregisterByPack(namespace)
+      deps.skillStore.removeByPack(namespace)
+      try { await rm(dirPath, { recursive: true, force: true }) } catch { /* best-effort */ }
+      return {
+        success: false,
+        error: `Pack "${namespace}" failed to update cleanly — rolled back (pack is now uninstalled). ${result.errors.length} error(s):\n  • ${result.errors.join('\n  • ')}`,
+      }
+    }
 
     try {
       await deps.refreshAllAgentTools()
