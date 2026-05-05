@@ -28,6 +28,12 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     { id: 'claude-haiku-4-5',  label: 'Haiku 4.5 (cheap, fast)' },
     { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5 (balanced)'   },
   ],
+  openai: [
+    // Mini-tier first: best price/perf for chat + tool use; Gemini-Flash class.
+    { id: 'gpt-4o-mini',  label: '4o-mini (cheap, fast)' },
+    { id: 'gpt-4.1-mini', label: '4.1-mini (better tool discipline)' },
+    { id: 'gpt-4o',       label: '4o (premium)' },
+  ],
   gemini: [
     // Flash first: Pro's capacity has been chronically tight (frequent 503
     // "high demand" responses) and Flash is comparable for short replies.

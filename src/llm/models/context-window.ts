@@ -22,6 +22,12 @@ const CLOUD_TABLE: Record<string, Record<string, number>> = {
     'claude-sonnet-4-5':  200_000,
     'claude-opus-4-5':    200_000,
   },
+  openai: {
+    'gpt-4o-mini':  128_000,
+    'gpt-4o':       128_000,
+    'gpt-4.1-mini': 1_047_576,
+    'gpt-4.1':      1_047_576,
+  },
   gemini: {
     'gemini-2.5-flash-lite': 1_048_576,
     'gemini-2.5-flash':      1_048_576,

@@ -55,6 +55,7 @@ export interface ProviderStatusEntry {
 import type { CloudProviderName } from '../../../../llm/providers-config.ts'
 const PROVIDER_URLS: Record<CloudProviderName | 'ollama', string> = {
   anthropic:  'https://console.anthropic.com',
+  openai:     'https://platform.openai.com',
   gemini:     'https://aistudio.google.com',
   cerebras:   'https://cloud.cerebras.ai',
   groq:       'https://console.groq.com',

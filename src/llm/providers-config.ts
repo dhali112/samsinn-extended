@@ -6,9 +6,10 @@
 //   PROVIDER=ollama                       override: single-Ollama mode
 //   PROVIDER_ORDER=cerebras,groq,...      explicit router priority order
 //   OLLAMA_URL=http://localhost:11434     Ollama endpoint (preserved)
-//   CEREBRAS_API_KEY, GROQ_API_KEY,
-//   OPENROUTER_API_KEY, MISTRAL_API_KEY,
-//   SAMBANOVA_API_KEY                     cloud provider credentials
+//   OPENAI_API_KEY, ANTHROPIC_API_KEY,
+//   GEMINI_API_KEY, CEREBRAS_API_KEY,
+//   GROQ_API_KEY, OPENROUTER_API_KEY,
+//   MISTRAL_API_KEY, SAMBANOVA_API_KEY     cloud provider credentials
 //   <NAME>_MAX_CONCURRENT                 per-provider concurrency cap
 //   FORCE_PROVIDER_FAIL=<name>            test hook — forces provider to fail
 // ============================================================================
@@ -27,6 +28,7 @@ import type { MergedProviders } from './providers-store.ts'
 // "does this provider need a key".
 export const PROVIDER_PROFILES = {
   anthropic:  { baseUrl: 'https://api.anthropic.com/v1',                          defaultMaxConcurrent: 3, kind: 'cloud' },
+  openai:     { baseUrl: 'https://api.openai.com/v1',                             defaultMaxConcurrent: 3, kind: 'cloud' },
   gemini:     { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultMaxConcurrent: 3, kind: 'cloud' },
   cerebras:   { baseUrl: 'https://api.cerebras.ai/v1',                            defaultMaxConcurrent: 2, kind: 'cloud' },
   groq:       { baseUrl: 'https://api.groq.com/openai/v1',                        defaultMaxConcurrent: 3, kind: 'cloud' },
@@ -48,7 +50,7 @@ export const isLocal = (name: string): boolean => {
 }
 
 export const DEFAULT_PROVIDER_ORDER: ReadonlyArray<string> =
-  ['anthropic', 'gemini', 'cerebras', 'groq', 'openrouter', 'mistral', 'sambanova', 'llamacpp', 'ollama']
+  ['anthropic', 'openai', 'gemini', 'cerebras', 'groq', 'openrouter', 'mistral', 'sambanova', 'llamacpp', 'ollama']
 
 export interface CloudProviderConfig {
   readonly apiKey: string
