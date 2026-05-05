@@ -39,6 +39,10 @@ export interface Script {
   readonly cast: ReadonlyArray<CastMember>              // exactly 2 in v1
   readonly steps: ReadonlyArray<Step>                   // ≥1
   readonly source: string                               // raw .md text — for round-trip / debug
+  // Owning pack namespace, if loaded from a pack's scripts/ dir. Undefined
+  // for scripts under the user's baseDir or bundled examples (they're
+  // implicitly 'local' / 'core' for activation purposes).
+  readonly pack?: string
 }
 
 // === Whisper (post-turn self-reflection, unchanged shape) ===

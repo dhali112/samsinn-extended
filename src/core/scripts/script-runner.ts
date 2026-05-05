@@ -20,6 +20,7 @@ import type { AIAgentConfig } from '../types/agent.ts'
 import { classifyWhisper } from './script-whisper.ts'
 import { renderLivingScript } from './script-render.ts'
 import { SYSTEM_SENDER_ID } from '../types/constants.ts'
+import { effectiveActivePackSet } from '../../packs/activation.ts'
 
 // === Public surface ===
 
@@ -162,6 +163,18 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     if (!room) return { ok: false, reason: 'room not found' }
     const script = system.scriptStore.get(scriptName)
     if (!script) return { ok: false, reason: `script "${scriptName}" not found` }
+
+    // Gate by active packs: a pack-bundled script can only run in rooms
+    // where its pack is activated. Standalone scripts (no pack tag) are
+    // implicit-active 'local' and run anywhere.
+    const owningPack = script.pack ?? 'local'
+    const active = effectiveActivePackSet(room)
+    if (!active.has(owningPack)) {
+      return {
+        ok: false,
+        reason: `script "${scriptName}" belongs to pack "${owningPack}" which is not active in this room`,
+      }
+    }
 
     for (const member of script.cast) {
       if (system.team.getAgent(member.name)) {

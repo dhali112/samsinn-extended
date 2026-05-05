@@ -207,6 +207,44 @@ describe('ScriptStore.upsert size cap', () => {
     }
   })
 
+  test('packDirs tag scripts with their owning pack namespace', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
+    const aviationDir = await mkdtemp(join(tmpdir(), 'samsinn-pack-aviation-'))
+    try {
+      await writeFile(join(baseDir, 'standalone.md'), VALID, 'utf-8')
+      await writeFile(join(aviationDir, 'pack-script.md'), VALID, 'utf-8')
+      const store = createScriptStore({
+        baseDir,
+        resolvePackDirs: async () => [{ pack: 'aviation', dir: aviationDir }],
+      })
+      await store.reload()
+      const standalone = store.get('standalone')
+      const packed = store.get('pack-script')
+      expect(standalone?.pack).toBeUndefined()
+      expect(packed?.pack).toBe('aviation')
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+      await rm(aviationDir, { recursive: true, force: true })
+    }
+  })
+
+  test('packDirs collide with baseDir → throws', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
+    const packDir = await mkdtemp(join(tmpdir(), 'samsinn-pack-'))
+    try {
+      await writeFile(join(baseDir, 'shared-name.md'), VALID, 'utf-8')
+      await writeFile(join(packDir, 'shared-name.md'), VALID, 'utf-8')
+      const store = createScriptStore({
+        baseDir,
+        resolvePackDirs: async () => [{ pack: 'aviation', dir: packDir }],
+      })
+      await expect(store.reload()).rejects.toThrow(/name collision for "shared-name"/)
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+      await rm(packDir, { recursive: true, force: true })
+    }
+  })
+
   test('accepts source at exactly the cap (when otherwise valid)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
     try {

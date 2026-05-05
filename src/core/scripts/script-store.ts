@@ -44,10 +44,18 @@ export interface ScriptStoreInit {
   // reload. Bundled examples live here. Collisions across any source
   // directory throw — operator-visible, not silently shadowed.
   readonly extraSourceDirs?: ReadonlyArray<string>
+  // Per-pack scripts/ directories. Each loaded Script is tagged with
+  // `pack: <namespace>` so the script-runner can gate firing by
+  // room.activePacks. Collisions follow the same rule (throw) — a pack
+  // can't shadow a user script with a same-named one.
+  //
+  // Resolved per reload (not init) so that install_pack / uninstall_pack
+  // followed by a reload picks up changes without rebuilding the store.
+  readonly resolvePackDirs?: () => Promise<ReadonlyArray<{ readonly pack: string; readonly dir: string }>>
 }
 
 export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
-  const { baseDir, extraSourceDirs = [] } = init
+  const { baseDir, extraSourceDirs = [], resolvePackDirs } = init
   const scripts = new Map<string, Script>()
   const listeners = new Set<() => void>()
 
@@ -63,7 +71,7 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
     const seenAt = new Map<string, string>()
     const merged = new Map<string, Script>()
 
-    const ingest = async (dir: string): Promise<void> => {
+    const ingest = async (dir: string, pack?: string): Promise<void> => {
       const loaded = await scanScriptDir(dir)
       for (const { script, sourcePath } of loaded) {
         const prior = seenAt.get(script.name)
@@ -74,12 +82,19 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
           )
         }
         seenAt.set(script.name, sourcePath)
-        merged.set(script.name, script)
+        // Tag pack-bundled scripts. Implicit-active 'core' / 'local' isn't
+        // stamped here — those scripts come from baseDir / extraSourceDirs
+        // and have undefined pack, which the runner treats as 'local'.
+        merged.set(script.name, pack ? { ...script, pack } : script)
       }
     }
 
     await ingest(baseDir)
     for (const extra of extraSourceDirs) await ingest(extra)
+    if (resolvePackDirs) {
+      const packDirs = await resolvePackDirs()
+      for (const { pack, dir } of packDirs) await ingest(dir, pack)
+    }
 
     scripts.clear()
     for (const [name, script] of merged) scripts.set(name, script)

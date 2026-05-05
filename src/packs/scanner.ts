@@ -43,3 +43,22 @@ export const scanPacks = async (rootDir: string): Promise<ReadonlyArray<Pack>> =
 
   return packs
 }
+
+// Helper for sub-system loaders that want a flat list of pack subdirs of a
+// given kind (scripts/, geodata/, wikis/). Returns one entry per existing
+// subdir — packs that don't ship that subdir are silently omitted.
+export const scanPackSubdirs = async (
+  rootDir: string,
+  subdir: 'scripts' | 'geodata' | 'wikis',
+): Promise<ReadonlyArray<{ readonly pack: string; readonly dir: string }>> => {
+  const packs = await scanPacks(rootDir)
+  const out: Array<{ pack: string; dir: string }> = []
+  for (const p of packs) {
+    const candidate = join(p.dirPath, subdir)
+    try {
+      const s = await stat(candidate)
+      if (s.isDirectory()) out.push({ pack: p.namespace, dir: candidate })
+    } catch { /* no such subdir — fine, packs choose what to ship */ }
+  }
+  return out
+}

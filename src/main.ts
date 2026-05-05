@@ -15,6 +15,7 @@ import type {
 } from './core/types/room.ts'
 import type { SummaryScheduler, SummaryTarget } from './core/summaries/summary-scheduler.ts'
 import { createSummaryEngine } from './core/summaries/summary-engine.ts'
+import { scanPackSubdirs } from './packs/scanner.ts'
 import { createSummaryScheduler } from './core/summaries/summary-scheduler.ts'
 import { createTriggerScheduler, type TriggerScheduler } from './core/triggers/scheduler.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
@@ -519,7 +520,15 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const packsDir = sharedPaths.packs()
   const skillStore = shared.sharedSkillStore
   const bundledExamplesDir = `${process.cwd()}/examples/scripts`
-  const scriptStore = createScriptStore({ baseDir: scriptsDir, extraSourceDirs: [bundledExamplesDir] })
+  // Pack-bundled scripts: each reload re-scans ~/.samsinn/packs/<ns>/scripts/
+  // and tags each loaded script with `pack: <ns>` so the runner gates by
+  // activation. install_pack / uninstall_pack hot-paths just call reload()
+  // and the new state is reflected without rebuilding the store.
+  const scriptStore = createScriptStore({
+    baseDir: scriptsDir,
+    extraSourceDirs: [bundledExamplesDir],
+    resolvePackDirs: () => scanPackSubdirs(packsDir, 'scripts'),
+  })
   // Fire-and-forget initial load — store is empty until this completes,
   // matching the skills loader pattern (which runs from bootstrap.ts).
   void scriptStore.reload().catch(err => console.error('[scripts] reload failed:', err))
