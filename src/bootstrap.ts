@@ -43,6 +43,7 @@ import { resolve } from 'node:path'
 import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
 import { loadAllPacks } from './packs/loader.ts'
+import { seedExampleScripts } from './core/scripts/script-store.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
 import { loadWikiStore } from './wiki/store.ts'
@@ -123,6 +124,20 @@ export const bootstrap = async (): Promise<void> => {
   await loadSkills(resolve(process.cwd(), 'skills'), shared.sharedSkillStore, shared.sharedToolRegistry)
   await loadSkills(sharedPaths.skills(), shared.sharedSkillStore, shared.sharedToolRegistry)
   await loadAllPacks(sharedPaths.packs(), shared.sharedToolRegistry, shared.sharedSkillStore)
+
+  // Seed bundled example scripts (oil-and-gas + nuclear demos + quarterly
+  // planning) into $SAMSINN_HOME/scripts/ if missing. Idempotent — never
+  // overwrites a user-edited script. Each instance's per-instance
+  // ScriptStore.reload() picks them up at instance creation.
+  try {
+    const examplesDir = resolve(process.cwd(), 'examples', 'scripts')
+    const seedResult = await seedExampleScripts(examplesDir, sharedPaths.scripts())
+    if (seedResult.seeded.length > 0) {
+      console.log(`[scripts] seeded ${seedResult.seeded.length} example(s): ${seedResult.seeded.join(', ')}`)
+    }
+  } catch (err) {
+    console.warn(`[scripts] example seeding failed: ${err instanceof Error ? err.message : err}`)
+  }
 
   // === Process-wide built-in tools (no per-instance state) ===
   // Anything that doesn't bind to a per-instance House registers ONCE here.

@@ -10,7 +10,7 @@
 // state and the living-document view.
 // ============================================================================
 
-import { readdir, readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises'
+import { readdir, readFile, stat, writeFile, mkdir, rm, copyFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Script } from '../types/script.ts'
 import { parseScriptMd, VALID_NAME } from './script-md-parser.ts'
@@ -148,4 +148,56 @@ const scanScriptDir = async (baseDir: string): Promise<ReadonlyArray<Script>> =>
 
   console.log(`[scripts] ${baseDir}: ${out.length} loaded`)
   return out
+}
+
+// === Seed-on-startup: copy bundled example scripts into the user's scripts
+// directory if no copy already exists. Idempotent — never overwrites a
+// user-edited file. Each example is parsed before copy so we never seed a
+// broken file. Called once per process from bootstrap. ===
+export const seedExampleScripts = async (
+  examplesDir: string,
+  scriptsDir: string,
+): Promise<{ readonly seeded: ReadonlyArray<string>; readonly skipped: ReadonlyArray<string> }> => {
+  let entries: string[]
+  try {
+    entries = await readdir(examplesDir)
+  } catch {
+    return { seeded: [], skipped: [] }
+  }
+
+  await mkdir(scriptsDir, { recursive: true })
+  const seeded: string[] = []
+  const skipped: string[] = []
+
+  for (const entry of entries) {
+    if (!entry.endsWith('.md')) continue
+    const stem = entry.slice(0, -'.md'.length)
+    if (!VALID_NAME.test(stem)) continue
+    const src = join(examplesDir, entry)
+    const dstFlat = join(scriptsDir, entry)
+    const dstDir = join(scriptsDir, stem, 'script.md')
+
+    // Already present in either layout — leave it alone.
+    let exists = false
+    try { await stat(dstFlat); exists = true } catch { /* not present */ }
+    if (!exists) { try { await stat(dstDir); exists = true } catch { /* not present */ } }
+    if (exists) { skipped.push(stem); continue }
+
+    // Validate the example before copying so we never seed a broken file.
+    try {
+      const raw = await readFile(src, 'utf-8')
+      parseScriptMd(stem, raw)
+    } catch (err) {
+      console.warn(`[scripts] example "${entry}": skipped — ${err instanceof Error ? err.message : err}`)
+      continue
+    }
+
+    try {
+      await copyFile(src, dstFlat)
+      seeded.push(stem)
+    } catch (err) {
+      console.warn(`[scripts] example "${entry}": copy failed — ${err instanceof Error ? err.message : err}`)
+    }
+  }
+  return { seeded, skipped }
 }
