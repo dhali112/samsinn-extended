@@ -18,15 +18,35 @@ import type { MergedWikiEntryWithSource } from './store.ts'
 import type { DiscoveredWiki } from './discovery.ts'
 import { loadWikiStore, mergeWithDiscovery } from './store.ts'
 import { getAvailableWikis } from './discovery.ts'
+import { scanPackWikis } from './pack-source.ts'
 
 export const resolveActiveWikis = async (
   storePath: string,
   registry: WikiRegistry,
+  packsDir?: string,
 ): Promise<ReadonlyArray<MergedWikiEntryWithSource>> => {
   const { data: store } = await loadWikiStore(storePath)
   let discovered: ReadonlyArray<DiscoveredWiki> = []
   try { discovered = await getAvailableWikis() } catch { /* discovery failures are non-fatal */ }
   const merged = mergeWithDiscovery(store, discovered)
-  registry.reconcile(merged.filter((w) => w.enabled))
-  return merged
+
+  // Pack-bundled wikis layered on top: each <pack>/wikis/<slug>/ becomes a
+  // MergedWikiEntry with dirPath set, routed to the filesystem adapter by
+  // the registry's default factory. Their ids are namespaced (`<pack>:<slug>`)
+  // so they can't collide with operator-configured or discovered ids.
+  // packsDir undefined = caller (test, MCP-only) doesn't have a packs root;
+  // skip pack scan entirely.
+  let packWikis: ReadonlyArray<MergedWikiEntryWithSource> = []
+  if (packsDir) {
+    try {
+      const scanned = await scanPackWikis(packsDir)
+      packWikis = scanned.map(w => ({ ...w, source: 'pack' as const }))
+    } catch (err) {
+      console.warn(`[wiki/pack] scan failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  const all = [...merged, ...packWikis]
+  registry.reconcile(all.filter(w => w.enabled))
+  return all
 }

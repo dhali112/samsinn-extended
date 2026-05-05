@@ -49,7 +49,7 @@ export const wikisRoutes: RouteEntry[] = [
       // calls discovery, merges, and reconciles the registry. Auto-warm
       // for new ids fires from inside the registry's onNewWiki hook.
       const { warnings } = await loadWikiStore(system.wikisStorePath)
-      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry, system.packsDir)
       const live = system.wikiRegistry.list()
       const liveById = new Map(live.map((w) => [w.id, w]))
       const wikis = merged.map((w) => ({
@@ -125,7 +125,7 @@ export const wikisRoutes: RouteEntry[] = [
       const next = { version: STORE_VERSION, wikis: [...store.wikis, entry] }
       await saveWikiStore(system.wikisStorePath, next)
       // Reconcile through the canonical helper so all callers stay in sync.
-      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry, system.packsDir)
 
       // Background warm — don't block the response.
       if (entry.enabled !== false) {
@@ -166,7 +166,7 @@ export const wikisRoutes: RouteEntry[] = [
       const next = { version: STORE_VERSION, wikis: [...store.wikis.slice(0, idx), updated, ...store.wikis.slice(idx + 1)] }
       await saveWikiStore(system.wikisStorePath, next)
       // Reconcile through the canonical helper so all callers stay in sync.
-      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry, system.packsDir)
       try { broadcast({ type: 'wiki_changed', wikiId: id, action: 'updated' }) } catch { /* ignore */ }
       return json({ ok: true })
     },
@@ -185,7 +185,7 @@ export const wikisRoutes: RouteEntry[] = [
       // Reconcile via the canonical helper. Delete-of-stored-override-of-
       // discovered leaves the discovered entry active automatically because
       // mergeWithDiscovery still includes it.
-      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry, system.packsDir)
       try { broadcast({ type: 'wiki_changed', wikiId: id, action: 'deleted' }) } catch { /* ignore */ }
       return json({ ok: true })
     },
@@ -202,7 +202,7 @@ export const wikisRoutes: RouteEntry[] = [
     pattern: /^\/api\/wikis\/discovery\/refresh$/,
     handler: async (_req, _match, { system, broadcast }) => {
       invalidateDiscoveryCache()
-      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry, system.packsDir)
       try { broadcast({ type: 'wiki_changed', action: 'discovery_refreshed' as const }) } catch { /* ignore */ }
       return json({ ok: true, count: merged.filter((w) => w.enabled).length })
     },
@@ -216,7 +216,7 @@ export const wikisRoutes: RouteEntry[] = [
       const id = match[1]!
       // resolveActiveWikis reconciles before we look up. Discovered-late
       // wikis become warmable here without operator intervention.
-      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry, system.packsDir)
       if (!merged.some((w) => w.id === id && w.enabled)) {
         return errorResponse(`wiki "${id}" not found`, 404)
       }

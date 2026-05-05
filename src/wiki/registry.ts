@@ -12,6 +12,7 @@
 
 import type { MergedWikiEntry, WikiPage, WikiState } from './types.ts'
 import type { WikiAdapter } from './github-adapter.ts'
+import { createFilesystemAdapter } from './filesystem-adapter.ts'
 import type { WikiCache } from './cache.ts'
 import { createGithubAdapter } from './github-adapter.ts'
 import { createWikiCache } from './cache.ts'
@@ -41,6 +42,10 @@ export interface WikiListEntry {
   readonly pageCount: number
   readonly lastWarmAt?: number
   readonly lastError?: string
+  // Owning pack namespace for pack-bundled wikis. Undefined for wikis
+  // sourced from samsinn-wikis discovery / wikis.json — those are
+  // implicit-active 'local' for activation purposes.
+  readonly pack?: string
 }
 
 export interface WikiRegistry {
@@ -81,9 +86,16 @@ interface InternalState {
   lastError?: string
 }
 
+// Default adapter dispatch: pack-bundled wikis (those with dirPath set)
+// use the local filesystem adapter; everything else falls through to the
+// GitHub adapter. Tests can still override the whole factory via
+// opts.adapterFactory — this branch only fires when no override is set.
+const defaultAdapterFactory = (wiki: MergedWikiEntry): WikiAdapter =>
+  wiki.dirPath ? createFilesystemAdapter(wiki) : createGithubAdapter(wiki)
+
 export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
   const cache = opts.cache ?? createWikiCache({ ttlMs: opts.ttlMs ?? 24 * 60 * 60 * 1000 })
-  const factory = opts.adapterFactory ?? createGithubAdapter
+  const factory = opts.adapterFactory ?? defaultAdapterFactory
   const states = new Map<string, InternalState>()
 
   const installWiki = (wiki: MergedWikiEntry): void => {
@@ -228,6 +240,7 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
       pageCount: cache.size(s.wiki.id),
       ...(s.lastWarmAt !== undefined ? { lastWarmAt: s.lastWarmAt } : {}),
       ...(s.lastError !== undefined ? { lastError: s.lastError } : {}),
+      ...(s.wiki.pack !== undefined ? { pack: s.wiki.pack } : {}),
     }))
 
   return {

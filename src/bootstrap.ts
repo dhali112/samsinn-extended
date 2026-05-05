@@ -238,7 +238,10 @@ export const bootstrap = async (): Promise<void> => {
   shared.sharedToolRegistry.register(createGeoRemoveTool())
   shared.sharedToolRegistry.register(createGeoListCategoriesTool())
   shared.sharedToolRegistry.register(createGeoListFeaturesTool())
-  for (const tool of createWikiTools(shared.wikiRegistry)) {
+  // Wiki tools share the same forward-bound activation resolver as the
+  // geo tools — registry isn't yet built, but `registry.list()` will be
+  // populated by the time these tools are called.
+  for (const tool of createWikiTools(shared.wikiRegistry, { getActivePacks: getRoomActivePacksForGeo })) {
     shared.sharedToolRegistry.register(tool)
   }
 
@@ -261,8 +264,10 @@ export const bootstrap = async (): Promise<void> => {
   const { warnings: wikiWarnings } = await loadWikiStore(sharedPaths.wikis())
   for (const w of wikiWarnings) console.warn(`[wikis.json] ${w}`)
   try {
-    const merged = await resolveActiveWikis(sharedPaths.wikis(), shared.wikiRegistry)
-    console.log(`[wiki] reconciled — ${merged.filter((w) => w.enabled).length} active`)
+    const merged = await resolveActiveWikis(sharedPaths.wikis(), shared.wikiRegistry, sharedPaths.packs())
+    const active = merged.filter(w => w.enabled)
+    const packCount = active.filter(w => w.source === 'pack').length
+    console.log(`[wiki] reconciled — ${active.length} active${packCount > 0 ? ` (${packCount} from packs)` : ''}`)
   } catch (err) {
     console.warn(`[wiki] initial reconcile failed: ${err instanceof Error ? err.message : String(err)}`)
   }

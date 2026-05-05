@@ -30,6 +30,13 @@ export interface MergedWikiEntry {
   readonly apiKey: string              // '' when none
   readonly maskedKey: string           // safe for UI / logs
   readonly enabled: boolean
+  // Pack-bundled wiki origin. When set, dirPath points at the on-disk
+  // <pack>/wikis/<slug>/ directory and the registry picks the filesystem
+  // adapter instead of github-adapter. owner/repo/ref/apiKey are placeholders
+  // ('local'/'<pack>/<slug>'/'main'/'') so the rest of the registry's flow
+  // (cache key, warm, search) doesn't need a special case.
+  readonly pack?: string               // owning pack namespace
+  readonly dirPath?: string            // absolute path to the on-disk wiki dir
 }
 
 // === Bindings (persisted in snapshot, not in wikis.json) ===

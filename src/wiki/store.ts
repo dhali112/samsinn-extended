@@ -143,7 +143,7 @@ export const isValidWikiId = (id: string): boolean => ID_PATTERN.test(id)
 // and REST surface can distinguish ephemeral discovered wikis from
 // operator-managed ones.
 
-export type WikiSource = 'stored' | 'discovered'
+export type WikiSource = 'stored' | 'discovered' | 'pack'
 
 export interface MergedWikiEntryWithSource extends MergedWikiEntry {
   readonly source: WikiSource
