@@ -157,7 +157,9 @@ export const migrateLocalPack = async (home: string): Promise<MigrationResult> =
     try {
       await mkdir(home, { recursive: true })
       await writeFile(sentinel, `${new Date().toISOString()} no-op\n`)
-    } catch { /* sentinel is best-effort */ }
+    } catch (err) {
+      console.warn('[migrate] sentinel write failed (no-op path):', err)
+    }
     return { status: 'skipped', reason: 'no drop-in files to migrate' }
   }
 
@@ -200,7 +202,9 @@ export const migrateLocalPack = async (home: string): Promise<MigrationResult> =
   // Sentinel + return.
   try {
     await writeFile(sentinel, `${new Date().toISOString()} migrated\n`)
-  } catch { /* best-effort */ }
+  } catch (err) {
+    console.warn('[migrate] sentinel write failed after migration:', err)
+  }
 
   return { status: 'migrated', backupPath, moved }
 }

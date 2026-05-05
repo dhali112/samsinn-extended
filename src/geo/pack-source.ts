@@ -14,7 +14,7 @@
 // and packs become the only distribution mechanism for non-user geodata.
 // ============================================================================
 
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import { scanPackSubdirs } from '../packs/scanner.ts'
 import { extractCategoryMetaFromFeatures, validateEmbeddedCategoryMeta } from './projection.ts'
@@ -144,8 +144,7 @@ const reload = async (packsDir: string): Promise<PackGeoState> => {
   for (const { pack, dir } of subdirs) {
     let entries: string[] = []
     try {
-      const fs = await import('node:fs/promises')
-      entries = await fs.readdir(dir)
+      entries = await readdir(dir)
     } catch (err) {
       errors.push({ pack, file: '', reason: `readdir: ${err instanceof Error ? err.message : String(err)}` })
       continue
