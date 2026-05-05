@@ -6,13 +6,15 @@
 // Layout:
 //   $SAMSINN_HOME/                              ← global / shared
 //     providers.json                            ← provider keys + order
-//     packs/<namespace>/                        ← installed packs (shared)
-//     skills/<name>/                            ← global skills
-//     tools/                                    ← drop-in TS tools
+//     packs/                                    ← installed packs (shared)
+//       <namespace>/                            ← third-party packs
+//       local/                                  ← user's drop-in dirs
+//         tools/                                ← drop-in TS tools
+//         skills/<name>/                        ← drop-in skills
+//         scripts/*.md                          ← drop-in scripts
+//         geodata/<category>.geojson            ← user-paste geodata
+//     geodata/.bundled/<version>/               ← cached samsinn-geodata snapshot (NOT user data)
 //     knowledge/                                ← shared knowledge files
-//     geodata/                                  ← user-local GeoJSON store
-//       <category>.geojson
-//       .bundled/<version>/                     ← cached pinned snapshot
 //     logs/admin.jsonl                          ← janitor + registry events
 //     instances/                                ← per-instance state
 //       <id>/
@@ -21,6 +23,9 @@
 //         memory/<agentName>/{notes.log,facts.json}
 //       .trash/
 //         <id>-<unix-ts>/                       ← evicted/reset, kept 7 days
+//     .local-pack-migrated                      ← sentinel: drop-in dirs
+//                                                  moved into packs/local/
+//                                                  (commit P, one-shot)
 //
 // SAMSINN_HOME defaults to ~/.samsinn (preserves existing single-tenant UX).
 // ============================================================================
@@ -33,18 +38,28 @@ export const samsinnHome = (): string =>
     ? process.env.SAMSINN_HOME
     : join(homedir(), '.samsinn')
 
-// Shared (global) paths — registries, configs, packs/skills/tools dirs.
+// Shared (global) paths — registries, configs, packs dirs.
+//
+// Drop-in dirs (tools/skills/scripts/geodata) live INSIDE the synthetic
+// 'local' pack at packs/local/<subdir>/ since commit P. The migration
+// at boot moves them from their old top-level locations idempotently.
+// See migrate-local-pack.ts.
+const localPack = (): string => join(samsinnHome(), 'packs', 'local')
+
 export const sharedPaths = {
   root: (): string => samsinnHome(),
   providers: (): string => join(samsinnHome(), 'providers.json'),
   llmPolicy: (): string => join(samsinnHome(), 'llm-policy.json'),
   wikis: (): string => join(samsinnHome(), 'wikis.json'),
   packs: (): string => join(samsinnHome(), 'packs'),
-  skills: (): string => join(samsinnHome(), 'skills'),
-  scripts: (): string => join(samsinnHome(), 'scripts'),
-  tools: (): string => join(samsinnHome(), 'tools'),
+  skills: (): string => join(localPack(), 'skills'),
+  scripts: (): string => join(localPack(), 'scripts'),
+  tools: (): string => join(localPack(), 'tools'),
   knowledge: (): string => join(samsinnHome(), 'knowledge'),
-  geodata: (): string => join(samsinnHome(), 'geodata'),
+  geodata: (): string => join(localPack(), 'geodata'),
+  // The bundled-geodata snapshot cache is NOT user data — it stays at
+  // <home>/geodata/.bundled/ regardless of where user geodata lives.
+  // Rebuilds on demand if missing.
   geodataBundleCache: (): string => join(samsinnHome(), 'geodata', '.bundled'),
   // Legacy global memory dir. Moves to per-instance in Phase I; keep for
   // now so single-tenant agents keep their notes.log/facts.json.

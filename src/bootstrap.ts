@@ -124,6 +124,24 @@ export const bootstrap = async (): Promise<void> => {
     mcpDisconnect = result.disconnect
   }
 
+  // === One-shot filesystem migration (idempotent via sentinel) ===
+  // Moves drop-in dirs into the synthetic 'local' pack so the layout
+  // matches every other pack. Tarball-backed; refuses to clobber if
+  // both old and new locations already have content. See migrate-local-
+  // pack.ts.
+  {
+    const { migrateLocalPack } = await import('./core/migrate-local-pack.ts')
+    const result = await migrateLocalPack(sharedPaths.root())
+    if (result.status === 'migrated') {
+      const summary = (result.moved ?? []).map(m => `${m.dir}=${m.count}`).join(' ')
+      console.log(`[migrate] moved drop-ins → packs/local/ (${summary}); backup: ${result.backupPath}`)
+    } else if (result.status === 'failed') {
+      console.error(`[migrate] failed: ${result.reason}`)
+      console.error('[migrate] samsinn will continue with whatever paths sharedPaths.* now resolves to. Resolve manually then restart.')
+    }
+    // 'skipped' is the steady-state — silent.
+  }
+
   // === Process-wide tool/skill/pack scan — once, into shared ===
   // Single FS scan: external tools, free-standing skills (cwd + samsinn-home),
   // and packs all register into the SHARED registry/store. Per-instance

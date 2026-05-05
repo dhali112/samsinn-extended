@@ -24,6 +24,11 @@ export const scanPacks = async (rootDir: string): Promise<ReadonlyArray<Pack>> =
 
   for (const entry of entries) {
     if (entry.startsWith('.') || entry.startsWith('_')) continue
+    // 'local' is the synthetic system pack — its directory holds the
+    // user's drop-in tools/skills/scripts/geodata, but it's surfaced via
+    // the system-pack synthesis in list_packs (kind:'external' / etc.),
+    // not as a regular installable. Skip here to avoid duplication.
+    if (entry === 'local') continue
 
     const dirPath = join(rootDir, entry)
     try {
