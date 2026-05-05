@@ -145,4 +145,43 @@ describe('pack-source geodata loader', () => {
     const neither = await listCategoryForRoom('airports', new Set(['core', 'local']))
     expect(neither.filter(f => f.properties.source === 'pack')).toHaveLength(0)
   })
+
+  test('concurrent refreshes serialise — final state matches the last filesystem snapshot', async () => {
+    // Burst of 3 refreshes against an evolving disk. Each refresh awaits
+    // the previous and re-scans, so the third call returns the state with
+    // all three packs. Asserts no in-flight dedupe race drops a pack.
+    await mkdir(join(packsDir, 'p1', 'geodata'), { recursive: true })
+    await writeFile(
+      join(packsDir, 'p1', 'geodata', 'a.geojson'),
+      fc([feature('p1-a', 'A', 'cat', 0, 0)]),
+      'utf-8',
+    )
+
+    const r1 = refreshPackGeodata(packsDir)
+
+    await mkdir(join(packsDir, 'p2', 'geodata'), { recursive: true })
+    await writeFile(
+      join(packsDir, 'p2', 'geodata', 'a.geojson'),
+      fc([feature('p2-a', 'A', 'cat', 0, 0)]),
+      'utf-8',
+    )
+    const r2 = refreshPackGeodata(packsDir)
+
+    await mkdir(join(packsDir, 'p3', 'geodata'), { recursive: true })
+    await writeFile(
+      join(packsDir, 'p3', 'geodata', 'a.geojson'),
+      fc([feature('p3-a', 'A', 'cat', 0, 0)]),
+      'utf-8',
+    )
+    const r3 = refreshPackGeodata(packsDir)
+
+    const [s1, s2, s3] = await Promise.all([r1, r2, r3])
+    // Each successive scan sees more packs (writes happened between them).
+    expect(s1.perPackFeatureCounts.size).toBe(1)
+    expect(s2.perPackFeatureCounts.size).toBeGreaterThanOrEqual(1)
+    // The last call must capture every pack on disk.
+    expect(s3.perPackFeatureCounts.get('p1')).toBe(1)
+    expect(s3.perPackFeatureCounts.get('p2')).toBe(1)
+    expect(s3.perPackFeatureCounts.get('p3')).toBe(1)
+  })
 })

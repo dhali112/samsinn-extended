@@ -43,7 +43,13 @@ const EMPTY_STATE: PackGeoState = {
 }
 
 let state: PackGeoState = EMPTY_STATE
-let inFlight: Promise<PackGeoState> | null = null
+
+// Serialised reload queue — every refreshPackGeodata call awaits the
+// previous one, then runs its own scan. Bursts of N installs produce
+// N scans in submission order; the last one captures the final disk
+// state. Coalescing was rejected because it has a subtle race where a
+// second caller arriving mid-coalesce-window can miss its target state.
+let chain: Promise<PackGeoState> = Promise.resolve(state)
 
 const isValidGeoFeature = (raw: unknown): boolean => {
   if (!raw || typeof raw !== 'object') return false
@@ -189,16 +195,12 @@ const reload = async (packsDir: string): Promise<PackGeoState> => {
 // between sources cleanly.
 
 export const refreshPackGeodata = async (packsDir: string): Promise<PackGeoState> => {
-  if (inFlight) return inFlight
-  inFlight = (async () => {
-    try {
-      state = await reload(packsDir)
-      return state
-    } finally {
-      inFlight = null
-    }
-  })()
-  return inFlight
+  const next = chain.then(
+    async () => { state = await reload(packsDir); return state },
+    async () => { state = await reload(packsDir); return state },
+  )
+  chain = next
+  return next
 }
 
 export const getPackFeatures = (categoryId: string): ReadonlyArray<GeoFeature> =>
@@ -217,5 +219,5 @@ export const getPackGeoState = (): PackGeoState => state
 // Test seam — clears the cached state so the next refresh runs fresh.
 export const __resetPackGeodataCache = (): void => {
   state = EMPTY_STATE
-  inFlight = null
+  chain = Promise.resolve(state)
 }
