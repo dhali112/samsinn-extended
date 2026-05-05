@@ -263,7 +263,7 @@ describe('list_packs', () => {
   let parent: string
   afterEach(async () => { if (parent) await rm(parent, { recursive: true, force: true }) })
 
-  it('returns installed packs with their tool/skill keys', async () => {
+  it('returns installed packs with their tool/skill keys, prefixed by synthetic system packs', async () => {
     const env = await makeDeps()
     parent = env.parent
     const url = await buildRepo(env.parent, 'atc')
@@ -272,10 +272,33 @@ describe('list_packs', () => {
     const list = createListPacksTool(env.deps)
     const result = await list.execute({}, CTX)
     expect(result.success).toBe(true)
-    const data = result.data as Array<{ namespace: string; tools: string[]; skills: string[] }>
-    expect(data.length).toBe(1)
-    expect(data[0]?.namespace).toBe('atc')
-    expect(data[0]?.tools).toEqual(['atc_ping'])
-    expect(data[0]?.skills).toEqual(['atc/demo'])
+    const data = result.data as Array<{
+      namespace: string
+      tools: string[]
+      skills: string[]
+      system?: boolean
+    }>
+
+    // Two synthetic system packs (core, local) followed by the installed
+    // 'atc' pack. System packs are first so the UI surfaces the always-on
+    // baseline before user-controlled entries.
+    expect(data.map(p => p.namespace)).toEqual(['core', 'local', 'atc'])
+
+    expect(data[0]?.system).toBe(true)
+    expect(data[1]?.system).toBe(true)
+    expect(data[2]?.system).toBe(false)
+
+    // The installed pack reports its own tools/skills correctly.
+    expect(data[2]?.namespace).toBe('atc')
+    expect(data[2]?.tools).toEqual(['atc_ping'])
+    expect(data[2]?.skills).toEqual(['atc/demo'])
+
+    // System pack tool/skill counts depend on what the test's tool registry
+    // contains — makeDeps doesn't pre-load built-ins or external dropins,
+    // so core/local should be empty here. (Production has the full set.)
+    expect(data[0]?.tools).toEqual([])
+    expect(data[0]?.skills).toEqual([])
+    expect(data[1]?.tools).toEqual([])
+    expect(data[1]?.skills).toEqual([])
   })
 })

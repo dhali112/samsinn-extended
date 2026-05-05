@@ -19,6 +19,9 @@ interface InstalledPack {
   manifest: { name?: string; description?: string }
   tools: string[]
   skills: string[]
+  // system: true for the synthetic 'core' and 'local' packs. UI hides
+  // the activation toggle (always-active) and uninstall/update controls.
+  system?: boolean
 }
 
 interface RegistryPack {
@@ -161,24 +164,30 @@ const renderInstalledSection = (
     const desc = pack.manifest.description ?? ''
     const counts = `${pack.tools.length} tool${pack.tools.length === 1 ? '' : 's'}, ${pack.skills.length} skill${pack.skills.length === 1 ? '' : 's'}`
     const isActive = activeSet.has(pack.namespace)
-    const toggleHtml = activation
-      ? `<label class="pack-toggle inline-flex items-center gap-1 cursor-pointer select-none px-2" title="Toggle activation in ${escapeHtml(activation.roomName)}">
-           <input type="checkbox" class="pack-toggle-input" ${isActive ? 'checked' : ''} />
-           <span class="text-[10px] text-text-subtle">${isActive ? 'active' : 'inactive'}</span>
-         </label>`
-      : ''
+
+    // System packs (core, local) are always-active and cannot be
+    // uninstalled — show a "system" badge instead of toggle/buttons.
+    const rightCol = pack.system
+      ? `<span class="text-[10px] text-text-subtle uppercase tracking-wide px-2" title="Always active. Built into samsinn or sourced from your drop-in dirs.">system · always on</span>`
+      : `${activation
+          ? `<label class="pack-toggle inline-flex items-center gap-1 cursor-pointer select-none px-2" title="Toggle activation in ${escapeHtml(activation.roomName)}">
+               <input type="checkbox" class="pack-toggle-input" ${isActive ? 'checked' : ''} />
+               <span class="text-[10px] text-text-subtle">${isActive ? 'active' : 'inactive'}</span>
+             </label>`
+          : ''}
+         <button class="pack-update text-text-subtle hover:text-text px-2 py-1" title="Update (git pull)">↻</button>
+         <button class="pack-uninstall text-text-subtle hover:text-danger px-2 py-1" title="Uninstall">✕</button>`
+
     row.innerHTML = `
       <div class="flex-1 min-w-0">
         <div class="text-text-strong font-medium truncate">${label}</div>
         <div class="text-text-muted truncate" title="${desc}">${desc || counts}</div>
         <div class="text-text-subtle text-[10px]">${counts}</div>
       </div>
-      ${toggleHtml}
-      <button class="pack-update text-text-subtle hover:text-text px-2 py-1" title="Update (git pull)">↻</button>
-      <button class="pack-uninstall text-text-subtle hover:text-danger px-2 py-1" title="Uninstall">✕</button>
+      ${rightCol}
     `
 
-    if (activation) {
+    if (activation && !pack.system) {
       const input = row.querySelector<HTMLInputElement>('.pack-toggle-input')
       input?.addEventListener('change', async () => {
         const next = input.checked
@@ -200,22 +209,28 @@ const renderInstalledSection = (
         // manual call needed.
       })
     }
-    row.querySelector<HTMLButtonElement>('.pack-update')?.addEventListener('click', async () => {
-      showToast(document.body, `${pack.namespace}: updating…`, { position: 'fixed' })
-      const res = await fetch(`/api/packs/update/${encodeURIComponent(pack.namespace)}`, { method: 'POST' })
-      const ok = res.ok
-      showToast(document.body, `${pack.namespace}: ${ok ? 'updated' : 'update failed'}`, {
-        type: ok ? 'success' : 'error', position: 'fixed',
+    // Update/uninstall only apply to installed (non-system) packs. The
+    // buttons aren't rendered for system packs, so the querySelector
+    // returns null and the listener is a no-op — guard explicitly so
+    // future readers don't ask "why is this attaching to nothing."
+    if (!pack.system) {
+      row.querySelector<HTMLButtonElement>('.pack-update')?.addEventListener('click', async () => {
+        showToast(document.body, `${pack.namespace}: updating…`, { position: 'fixed' })
+        const res = await fetch(`/api/packs/update/${encodeURIComponent(pack.namespace)}`, { method: 'POST' })
+        const ok = res.ok
+        showToast(document.body, `${pack.namespace}: ${ok ? 'updated' : 'update failed'}`, {
+          type: ok ? 'success' : 'error', position: 'fixed',
+        })
       })
-    })
-    row.querySelector<HTMLButtonElement>('.pack-uninstall')?.addEventListener('click', async () => {
-      if (!confirm(`Uninstall pack "${pack.namespace}"? Its tools and skills will be unregistered.`)) return
-      const res = await fetch(`/api/packs/${encodeURIComponent(pack.namespace)}`, { method: 'DELETE' })
-      const ok = res.ok
-      showToast(document.body, `${pack.namespace}: ${ok ? 'uninstalled' : 'uninstall failed'}`, {
-        type: ok ? 'success' : 'error', position: 'fixed',
+      row.querySelector<HTMLButtonElement>('.pack-uninstall')?.addEventListener('click', async () => {
+        if (!confirm(`Uninstall pack "${pack.namespace}"? Its tools and skills will be unregistered.`)) return
+        const res = await fetch(`/api/packs/${encodeURIComponent(pack.namespace)}`, { method: 'DELETE' })
+        const ok = res.ok
+        showToast(document.body, `${pack.namespace}: ${ok ? 'uninstalled' : 'uninstall failed'}`, {
+          type: ok ? 'success' : 'error', position: 'fixed',
+        })
       })
-    })
+    }
     container.appendChild(row)
   }
 }

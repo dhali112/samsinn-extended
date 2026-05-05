@@ -430,31 +430,67 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
 
 export const createListPacksTool = (deps: PackToolsDeps): Tool => ({
   name: 'list_packs',
-  description: 'Lists all installed packs with their manifest and per-pack tool/skill counts.',
-  returns: 'Array of pack objects.',
+  description: 'Lists all installed packs (including the synthetic system packs core + local) with their manifest and per-pack tool/skill counts. System packs are always-active and cannot be uninstalled.',
+  returns: 'Array of pack objects, each with `system: boolean` indicating whether it can be deactivated/uninstalled.',
   parameters: { type: 'object', properties: {} },
   execute: async () => {
     const packs = await scanPacks(deps.packsDir)
     const entries = deps.toolRegistry.listEntries()
     const skills = deps.skillStore.list()
 
-    const data = packs.map(p => {
-      const toolKeys = entries
-        .filter(e => e.source.kind === 'pack-bundled' && e.source.pack === p.namespace)
-        .map(e => e.tool.name)
-      const skillKeys = skills
-        .filter(s => s.pack === p.namespace)
-        .map(s => s.name)
-      return {
-        namespace: p.namespace,
-        dirPath: p.dirPath,
-        manifest: p.manifest,
-        tools: toolKeys,
-        skills: skillKeys,
-      }
-    })
+    // Synthetic system pack entries — visible in list_packs + UI alongside
+    // installed packs, but flagged `system: true` so the UI hides the
+    // uninstall + activation toggle. core covers built-ins (kind='built-in'),
+    // local covers drop-ins (kind='external') and any skill/tool whose
+    // source.pack is unset. Always-active in every room — see
+    // effectiveActivePacks() which prepends ['core', 'local'] regardless.
+    const systemBuckets: Array<{
+      namespace: 'core' | 'local'
+      manifest: { name: string; description: string }
+      kindMatch: (e: typeof entries[number]) => boolean
+      skillMatch: (s: typeof skills[number]) => boolean
+    }> = [
+      {
+        namespace: 'core',
+        manifest: { name: 'core', description: 'Built-in tools (always active, cannot be uninstalled).' },
+        kindMatch: (e) => e.source.kind === 'built-in',
+        // Skills are never built-in today; the matcher exists for symmetry.
+        skillMatch: () => false,
+      },
+      {
+        namespace: 'local',
+        manifest: { name: 'local', description: 'Drop-in tools and skills under ~/.samsinn/{tools,skills}/. Always active.' },
+        kindMatch: (e) =>
+          e.source.kind === 'external' ||
+          (e.source.kind === 'skill-bundled' && !e.source.pack),
+        skillMatch: (s) => !s.pack,
+      },
+    ]
 
-    return { success: true, data }
+    const systemEntries = systemBuckets.map(b => ({
+      namespace: b.namespace,
+      dirPath: '',                 // not on disk — synthetic
+      manifest: b.manifest,
+      tools: entries.filter(b.kindMatch).map(e => e.tool.name),
+      skills: skills.filter(b.skillMatch).map(s => s.name),
+      system: true as const,
+    }))
+
+    const installedEntries = packs.map(p => ({
+      namespace: p.namespace,
+      dirPath: p.dirPath,
+      manifest: p.manifest,
+      tools: entries
+        .filter(e => e.source.kind === 'pack-bundled' && e.source.pack === p.namespace)
+        .map(e => e.tool.name),
+      skills: skills
+        .filter(s => s.pack === p.namespace)
+        .map(s => s.name),
+      system: false as const,
+    }))
+
+    // System packs first — they're the baseline surface every room sees.
+    return { success: true, data: [...systemEntries, ...installedEntries] }
   },
 })
 
