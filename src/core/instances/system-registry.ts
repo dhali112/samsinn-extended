@@ -181,11 +181,32 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
 
   // --- Internals ---
 
+  // A5: two-phase drain.
+  //   Phase 1 — race natural idle vs drainMs timeout. Most evals finish well
+  //   under the limit; this is the happy path.
+  //   Phase 2 — anything still generating (slow LLM, network hang) gets
+  //   cancelled. cancelGeneration aborts the AbortController and clears the
+  //   active flag synchronously; whenIdle resolves on the next microtask.
+  //   A short final wait (100ms) converges. Without this, an agent stuck in
+  //   eval would have its result land in the now-evicted system as a ghost
+  //   message on next reload.
   const drainAgents = async (system: System): Promise<void> => {
     const timeout = new Promise<void>(res => setTimeout(res, drainMs))
     const aiAgents = system.team.listAgents()
       .flatMap(a => { const ai = asAIAgent(a); return ai ? [ai] : [] })
     await Promise.all(aiAgents.map(a => Promise.race([a.whenIdle(), timeout])))
+    // Cancel anything still generating after the timeout.
+    let cancelled = 0
+    for (const a of aiAgents) {
+      if (a.state.get() === 'generating') {
+        a.cancelGeneration()
+        cancelled++
+      }
+    }
+    if (cancelled > 0) {
+      const finalTimeout = new Promise<void>(res => setTimeout(res, 100))
+      await Promise.all(aiAgents.map(a => Promise.race([a.whenIdle(), finalTimeout])))
+    }
   }
 
   // Build the per-instance autosaver. Callback wiring (which schedules
