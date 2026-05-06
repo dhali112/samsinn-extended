@@ -18,16 +18,17 @@ knowledge graph.
 
 ## Status
 
-This document specifies **procmd v0.4**. Samsinn-side runtime support
+This document specifies **procmd v0.5**. Samsinn-side runtime support
 (executor tool, agent guardrail traversal, render integration) is out of
-scope for v0.2; see [Deferred](#deferred--out-of-scope-for-v02) at the
+scope for v0.5; see [Deferred](#deferred--out-of-scope-for-v05) at the
 bottom.
 
 **Breaking changes are allowed between v0.x minor versions until v1.0.**
-v0.2 introduces small grammar tightenings and is not backward-compatible
-with v0.1 — corpora must migrate by bumping `procedure-md: 0.1` to `0.2`
-in frontmatter and addressing any validator errors. Migration is
-mechanical. After v1.0, breaking changes require a major bump.
+v0.5 is additive over v0.4 — existing v0.4 procedures parse unchanged
+once the frontmatter version is bumped, and only acquire new validation
+rules if they introduce `«TAG»` references. Earlier minor versions
+required mechanical migration; v0.5 does not. After v1.0, breaking
+changes require a major bump.
 
 ## Semantic model
 
@@ -56,7 +57,7 @@ Explicit `[<primitive>]` tag in the step heading overrides inference (see
 [Step structure](#step-structure)).
 
 See [Semantics for future executors](#semantics-for-future-executors) for
-the full lifecycle model. v0.2 does not enforce lifecycle; it defines it
+the full lifecycle model. v0.5 does not enforce lifecycle; it defines it
 for future runtimes.
 
 ## File format
@@ -70,7 +71,7 @@ procedures use standard `[[wikilinks]]`.
 ```yaml
 ---
 type: procedure
-procedure-md: 0.4
+procedure-md: 0.5
 procedure-id: E-0
 title: Reactor Trip or Safety Injection
 profile: nuclear-erg
@@ -131,7 +132,7 @@ defined semantics:
 | `Until:` | lifecycle | Completion condition (loop exit, plan done) |
 | `Abort-if:` | lifecycle | Abort condition |
 | `Abort-to:` | lifecycle | Optional abort handler target (default: procedure terminates as discarded) |
-| `Within:` | advisory | Time bound. Advisory in v0.2 — authoring intent only; no v0.2 runtime enforces it |
+| `Within:` | advisory | Time bound. Advisory in v0.5 — authoring intent only; no v0.5 runtime enforces it |
 | `Concurrent: <name>` | Plan ref | Spawn sub-Plan in parallel. See [Concurrent placement](#concurrent-placement) |
 | `Caution:` | annotation | Operator-facing warning. Renders as a `!!! warning` admonition |
 | `Note:` | annotation | Operator-facing note. Renders as a `!!! note` admonition |
@@ -228,7 +229,7 @@ target is used for resolution, the display text is presentation.
 escapes: `[[E-3|Heat\|Sink]]`.
 
 `Because:` and `Against:` lines under a branch attach rationale.
-Rationale is *unweighted* in v0.2 — agents reason over it as soft
+Rationale is *unweighted* in v0.5 — agents reason over it as soft
 context. Weighted argumentation is deferred.
 
 ### Edge type inference (no in-source labels)
@@ -270,7 +271,7 @@ its frontmatter.
 ```yaml
 ---
 type: procedure-profile
-procedure-md: 0.4
+procedure-md: 0.5
 profile-id: nuclear-erg
 title: Nuclear Emergency Response Guidelines profile
 ---
@@ -393,6 +394,124 @@ set. Formal SHACL/OWL schema is deferred.
 A reference exporter for the `pwr-eops` corpus lives in that repo as
 `scripts/export-kg.ts` (single TS file, no deps, runs under Bun).
 
+## Tag references
+
+Procedures bind to plant data — instrument signals, equipment positions,
+setpoints — by referencing **tags** inline in step bodies. Each procedure
+is **self-contained**: every tag it references is defined in a `## Tags`
+appendix at the bottom of the same file. There is no separate catalog
+page. Authors edit the appendix directly; cross-procedure consistency is
+enforced by the validator at corpus level.
+
+### Inline tag syntax
+
+A tag reference is an identifier wrapped in **guillemets** (U+00AB
+LEFT-POINTING DOUBLE ANGLE QUOTATION MARK and U+00BB RIGHT-POINTING):
+
+```markdown
+Check: pressurizer pressure «PT-455» trending toward setpoint
+Action: close MSIV on ruptured SG — «MSIV-A»
+```
+
+- Tag-id charset: `[A-Z][A-Z0-9-]*` (uppercase, alphanumeric, hyphens;
+  must start with a letter). Visually distinct from step IDs.
+- A `«TAG»` reference is recognized in any step body line — `Check:`,
+  `Action:`, `Caution:`, `Note:`, `When:`, `Until:`, `Abort-if:`, free
+  prose, branch conditions.
+- References inside fenced code blocks (```` ``` ````) and inline code
+  spans (`` ` ``) are inert — useful for spec docs that demonstrate
+  procmd in examples without triggering the validator.
+- References inside `[[wikilink]]` targets and display text are inert.
+
+The guillemet sigil is chosen to avoid collision with Jinja2 templating
+(which `mkdocs-macros-plugin` and others consume as `{{...}}`).
+
+### `## Tags` appendix
+
+A procedure that uses any `«TAG»` reference MUST contain a `## Tags`
+section at the bottom of the file. Each entry is a list item with
+sub-keys:
+
+```markdown
+## Tags
+
+- id: PT-455
+  description: pressurizer pressure (wide range)
+  sim-path: rcs.pressurizer.pressure_wr
+  units: psig
+  equipment: pressurizer
+  range: [0, 3000]
+
+- id: MSIV-A
+  description: SG-A main steam isolation valve position
+  sim-path: secondary.msiv.a.position
+  units: enum[OPEN,CLOSED,INTERMEDIATE]
+  equipment: sg-a-msl
+```
+
+Required sub-keys per entry: `id`, `description`, `sim-path`, `units`,
+`equipment`. Optional: `range` (numeric `[min, max]`) and any further
+keys (preserved as annotations under the
+[open-annotation rule](#open-annotation-fallback)).
+
+A procedure with no `«TAG»` references MAY omit the `## Tags` section.
+
+### Validator rules for tags
+
+Per-procedure (parser-local):
+
+- Every `«TAG»` reference resolves to a `## Tags` entry in the same file.
+- Every `## Tags` entry has all required sub-keys.
+- Tag-id charset matches `[A-Z][A-Z0-9-]*`.
+- `## Tags` entries unreferenced in the body produce a **warning** (not
+  an error — authors may keep entries for documentation).
+
+Corpus-wide (cross-procedure):
+
+- A tag id appearing in two procedures with conflicting `sim-path`,
+  `units`, or `equipment` is an **error**. Authors must reconcile or
+  rename one. This replaces the role a central catalog would have
+  played.
+- Conflicting `description` for the same tag id across procedures is a
+  **warning** — descriptions may legitimately vary in detail.
+
+### Knowledge graph predicates
+
+The KG export adds two predicates derived from tag references:
+
+| Predicate | Subject → Object |
+|---|---|
+| `referencesTag` | step → tag |
+| `tagOnEquipment` | tag → equipment |
+
+Tag and equipment become first-class node types in the JSON-LD output.
+A `tag` node carries `simPath`, `units`, and `description` as datatype
+properties; an `equipment` node carries no further properties at v0.5
+(equipment is identified by id only).
+
+This makes coverage queries directly expressible:
+
+- "Which procedures touch the pressurizer?" → all procedures containing a
+  step with a `referencesTag` edge to a tag whose `tagOnEquipment` edge
+  targets `pressurizer`.
+- "Which procedures use PT-455?" → all `referencesTag → PT-455` subjects.
+
+### Authoring guidance for tags
+
+- **Edit the appendix when you add a reference.** Adding `«PT-455»` to a
+  step body without an entry in `## Tags` is a validator error.
+- **Treat the appendix as canonical for the procedure.** When you copy a
+  procedure to a new wiki, the appendix travels with it.
+- **Use the cascade script for sim-path changes.** A reference exporter
+  in `pwr-eops` ships `scripts/update-tag.ts <id> --field=sim-path
+  --to=<new>` to propagate a definition change across every procedure
+  referencing the tag. Cheaper than hand-editing N files; guaranteed
+  consistent.
+- **Coordinate ids across procedures.** Two procedures using `PT-455`
+  must agree on its `sim-path`, `units`, and `equipment`. The
+  cross-procedure validator catches drift; agreeing up front avoids
+  reconciling later.
+
 ## The single-source-of-truth invariant
 
 Any proposed addition to the spec must pass this test: **a domain
@@ -466,13 +585,15 @@ Sub-steps are part of their parent step's Plan:
 
 ### Validator scope vs runtime scope
 
-- **v0.2 validator** checks structural correctness only (frontmatter
+- **v0.5 validator** checks structural correctness only (frontmatter
   shape, step IDs unique, branch syntax, cross-page resolution,
-  reachability, taxonomy against profile vocabulary, edge label
-  vocabulary).
-- **v0.2 validator does NOT check** lifecycle semantics, `When:` / `Until:`
-  truth at any execution moment, time bounds, or cascade propagation.
-- A v0.3+ runtime is the consumer of these semantics.
+  reachability, taxonomy against profile vocabulary, tag references
+  against in-file appendix, cross-procedure tag consistency).
+- **v0.5 validator does NOT check** lifecycle semantics, `When:` / `Until:`
+  truth at any execution moment, time bounds, cascade propagation, or
+  any property of the `sim-path` itself (whether the path resolves in a
+  particular simulator is a runtime concern).
+- A v0.6+ runtime is the consumer of these semantics.
 
 ## Validation
 
@@ -504,6 +625,11 @@ A v0.2 validator must check:
   loaded successfully
 - Profile resolution: declared synonyms recognized; profile load failures
   produce warnings, not blocking errors
+- Tag references (`«TAG»`) resolve to a `## Tags` appendix entry in the
+  same file; tag-id charset `[A-Z][A-Z0-9-]*`; appendix entries have all
+  required sub-keys; cross-procedure conflicts on `sim-path`/`units`/
+  `equipment` are errors; conflicting `description` is a warning;
+  unreferenced appendix entries are warnings
 
 A reference validator for the `pwr-eops` corpus lives in that repo as
 `validate.ts` (~580 LOC, single file, no dependencies, runs under Bun).
@@ -522,9 +648,8 @@ they wish.
 |---|---|---|---|
 | Rationale | `Because:` / `Against:` lines | `procmd-rationale` | Visible |
 | Step ID suffix | Visible code-span suffix on step heading | `procmd-step-id-suffix` | Visible |
-
-Reserved for future tag-declaration round (no toggle yet):
-`procmd-tag` — equipment / signal / setpoint references.
+| Tag reference | `«TAG»` inline reference | `procmd-tag` | Visible |
+| Tag appendix | The `## Tags` section block | `procmd-tag-appendix` | Visible |
 
 CSF declarations, Cautions, and Notes are not togglable in the
 recommended render — they carry operational importance.
@@ -576,6 +701,12 @@ Migration paths:
 
 Validators reject older syntax with explicit migration messages.
 
+Tag binding landed in v0.5 (additive):
+
+| Version | Additions | Notes |
+|---|---|---|
+| **v0.5** | `«TAG»` inline references + `## Tags` appendix + `referencesTag` / `tagOnEquipment` KG predicates | Procedures become self-contained — every referenced tag is defined in an appendix in the same file. Cross-procedure validator catches drift on `sim-path` / `units` / `equipment`. No central catalog page. Migration: bump `procedure-md: 0.4` → `0.5`; existing procedures with no tag refs are unchanged. |
+
 ## Versioning policy
 
 Until v1.0, breaking changes between minor versions are allowed.
@@ -619,7 +750,7 @@ of features must be announced one minor version before removal.
 ```markdown
 ---
 type: procedure
-procedure-md: 0.4
+procedure-md: 0.5
 procedure-id: example-engine-restart
 title: Engine Restart After In-Flight Shutdown
 profile: aviation-qrh
@@ -629,33 +760,59 @@ category: emergency-checklist
 # Engine Restart After In-Flight Shutdown
 
 ## Step 1 [id: confirm-shutdown]
-Check: affected engine N1 < 10% AND throttle at IDLE
+Check: affected engine N1 «N1-LH» < 10% AND throttle «THR-LH» at IDLE
 Caution: confirm correct engine before any action
 - Confirmed → #attempt-restart
 - Not confirmed → [[engine-fire-checklist]]
 
 ## Step 2 [id: attempt-restart]
-Action: ENGINE START switch — IGN/START
+Action: ENGINE START switch «STARTSW-LH» — IGN/START
 Within: 30s of stable airspeed
-- Started (N1 increasing, EGT rising within limits) → #stabilize
+- Started (N1 increasing, EGT «EGT-LH» rising within limits) → #stabilize
 - Not started → #abandon-restart
   Because: continued attempts risk hot start damage
 
 ## Step 3 [id: stabilize]
-Action: monitor N1 to idle, EGT within limits
+Action: monitor «N1-LH» to idle, «EGT-LH» within limits
 Until: stable idle for 60s
 - Stable → END
 - Unstable → #abandon-restart
 
 ## Step 4 [id: abandon-restart]
-Action: ENGINE START switch — OFF
+Action: ENGINE START switch «STARTSW-LH» — OFF
 Note: continue single-engine operations
 → END
+
+## Tags
+
+- id: N1-LH
+  description: left-engine N1 (low-pressure spool) speed
+  sim-path: engine.lh.n1
+  units: percent
+  equipment: engine-lh
+
+- id: EGT-LH
+  description: left-engine exhaust gas temperature
+  sim-path: engine.lh.egt
+  units: degC
+  equipment: engine-lh
+
+- id: THR-LH
+  description: left-engine throttle lever position
+  sim-path: cockpit.throttle.lh
+  units: enum[IDLE,CLB,FLX,TOGA,REV]
+  equipment: cockpit-throttle-quadrant
+
+- id: STARTSW-LH
+  description: left-engine start switch
+  sim-path: cockpit.start_switch.lh
+  units: enum[OFF,IGN_START,CRANK]
+  equipment: cockpit-engine-panel
 ```
 
-## Deferred / Out of scope for v0.2
+## Deferred / Out of scope for v0.5
 
-The following are deferred to v0.3 or later:
+The following are deferred to v0.6 or later:
 
 ### Samsinn-side runtime
 - **Procedure executor as agent tool.** `procedure_start(name)` /
@@ -672,13 +829,18 @@ The following are deferred to v0.3 or later:
   plus general samsinn introspection content, linked at agent startup.
 
 ### Spec extensions
-- **Equipment / signal / setpoint declarations** at step level
-  (`Signals:`, `Equipment:`, `Setpoints:`) and a `tag-catalog` page type
-  with tag definitions and units. Enables linking procedures to live
-  simulator data.
-- **UI hide mechanism** for tag declarations and `Because:` rationale
-  (operator vs reviewer vs engineering views via render-time class
-  wrapping and JS toggle).
+- **`Evaluate:` micro-language** for runtime-evaluable guards over
+  tag references, e.g. `Evaluate: PT-455 < 2235 AND TE-401-HOT > 530`.
+  Defers to v0.6 with the executor — committing the spec to a runtime
+  contract before a runtime exists is the same anti-pattern that drove
+  the v0.4 retraction of in-source edge labels. The KG-export wins of
+  tag binding (`referencesTag`, `tagOnEquipment`) are immediate without
+  it.
+- **Cross-wiki tag sharing.** A shared tag catalog reused across
+  multiple procedure wikis (e.g. one `pwr-instrumentation` catalog
+  consumed by `pwr-eops` and `pwr-aops`). v0.5 keeps tags per-procedure
+  precisely to avoid pulling cross-wiki references forward; if the use
+  case becomes pressing, it lands with general cross-wiki references.
 - **Weighted argumentation.** `Because (strong):` / `Because (weak):`
   with a defined recommendation rule.
 - **Cross-wiki references.** Syntax for linking procedures across
@@ -713,4 +875,4 @@ The following are deferred to v0.3 or later:
 
 ---
 
-*procmd v0.4 — last reviewed 2026-05-06.*
+*procmd v0.5 — last reviewed 2026-05-06.*
