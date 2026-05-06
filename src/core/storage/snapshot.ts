@@ -7,7 +7,12 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v20: current. Adds top-level `pendingScrubs` — the queue used by
+// v21: current. Adds top-level `housePrompt` + `responseFormat` —
+// house-level state that has been get/set-able since v0 but was never
+// serialised. Operator customisations (system prompt, response format
+// rules) survived the request that set them but reverted to defaults on
+// restart/eviction. Snapshots from v20 are rejected at load.
+// v20: adds top-level `pendingScrubs` — the queue used by
 // cross-instance pack-uninstall to remove a namespace from
 // room.activePacks across instances that were evicted at the time of the
 // uninstall. Drained on restoreFromSnapshot. Without this, an evicted
@@ -52,12 +57,13 @@ import type { Bookmark, Room } from '../types/room.ts'
 import type { SummaryConfig } from '../types/summary.ts'
 import type { Trigger } from '../triggers/types.ts'
 import { asAIAgent } from '../../agents/shared.ts'
+import { DEFAULT_HOUSE_PROMPT, DEFAULT_RESPONSE_FORMAT } from '../house.ts'
 import { mkdir, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 20
+export const SNAPSHOT_VERSION = 21
 
 // --- Snapshot schema ---
 
@@ -97,7 +103,7 @@ export interface PendingScrub {
 }
 
 export interface SystemSnapshot {
-  readonly version: '20'
+  readonly version: '21'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -109,6 +115,11 @@ export interface SystemSnapshot {
   // applied on next restoreFromSnapshot — namespace is removed from every
   // room.activePacks. Cleared after drain on the same restore.
   readonly pendingScrubs?: ReadonlyArray<PendingScrub>
+  // House-level customisations. Both omitted from the snapshot when equal
+  // to the default — restoreFromSnapshot leaves the in-memory default in
+  // place if absent. Persisted as v21 (was set/get-able but unsaved before).
+  readonly housePrompt?: string
+  readonly responseFormat?: string
 }
 
 // --- Minimal System interface for serialization ---
@@ -180,8 +191,11 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
     }
   }
 
+  const housePrompt = system.house.getHousePrompt()
+  const responseFormat = system.house.getResponseFormat()
+
   return {
-    version: '20',
+    version: '21',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -191,6 +205,11 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       ollamaUrls: system.ollamaUrls.list(),
       ollamaUrl: system.ollamaUrls.getCurrent(),
     } : {}),
+    // Omit when equal to the default — keeps snapshots small and lets
+    // restoreFromSnapshot leave the in-memory default in place when no
+    // override was set.
+    ...(housePrompt !== DEFAULT_HOUSE_PROMPT ? { housePrompt } : {}),
+    ...(responseFormat !== DEFAULT_RESPONSE_FORMAT ? { responseFormat } : {}),
     // pendingScrubs is NOT serialised from a live system — it's only ever
     // injected externally by appendPendingScrub (uninstall_pack against an
     // evicted instance), and it's drained at restoreFromSnapshot. By the
@@ -407,6 +426,11 @@ export const restoreFromSnapshot = async (
     for (const url of snapshot.ollamaUrls) system.ollamaUrls.add(url)
     if (snapshot.ollamaUrl) system.ollamaUrls.setCurrent(snapshot.ollamaUrl)
   }
+
+  // 6. Restore house-level customisations. Omitted fields leave the
+  //    in-memory default (set by createHouse) untouched.
+  if (snapshot.housePrompt !== undefined) system.house.setHousePrompt(snapshot.housePrompt)
+  if (snapshot.responseFormat !== undefined) system.house.setResponseFormat(snapshot.responseFormat)
 }
 
 // --- Auto-saver ---

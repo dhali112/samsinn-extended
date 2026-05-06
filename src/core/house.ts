@@ -13,9 +13,12 @@ import type { RoomProfile } from './types/messaging.ts'
 import { createRoom, type RoomCallbacks } from './rooms/room.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
-const DEFAULT_HOUSE_PROMPT = `You are part of samsinn, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use the pass tool when the conversation genuinely does not need your input.`
+// Exported so snapshot persistence can omit serialised values that match
+// the default (keeps snapshots small + lets restoreFromSnapshot leave the
+// in-memory default in place when no override was set).
+export const DEFAULT_HOUSE_PROMPT = `You are part of samsinn, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use the pass tool when the conversation genuinely does not need your input.`
 
-const DEFAULT_RESPONSE_FORMAT = `- Write your message as natural text. Your response IS the message other participants will read.
+export const DEFAULT_RESPONSE_FORMAT = `- Write your message as natural text. Your response IS the message other participants will read.
 - You may use Markdown formatting (headings, bold, lists, code blocks, etc.).
 - To direct a message to a specific agent, use [[AgentName]] in your response.
   Example: [[Analyst-1]] can you elaborate on that point?

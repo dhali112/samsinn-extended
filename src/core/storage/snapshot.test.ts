@@ -80,7 +80,7 @@ describe('Snapshot', () => {
       const system = createTestSystem()
       const snapshot = serializeSystem(system)
 
-      expect(snapshot.version).toBe('20')
+      expect(snapshot.version).toBe('21')
       expect(snapshot.timestamp).toBeGreaterThan(0)
       expect(snapshot.rooms.length).toBe(1) // default Introductions room
       expect(snapshot.agents.length).toBe(0)
@@ -131,7 +131,7 @@ describe('Snapshot', () => {
 
       const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
       expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('20')
+      expect(loaded!.version).toBe('21')
       expect(loaded!.rooms.length).toBe(snapshot.rooms.length)
 
       const chatMsgs = loaded!.rooms[0]!.messages.filter(m => m.type === 'chat')
@@ -317,7 +317,50 @@ describe('Snapshot', () => {
     })
 
     test('SNAPSHOT_VERSION is current', () => {
-      expect(SNAPSHOT_VERSION).toBe(20)
+      expect(SNAPSHOT_VERSION).toBe(21)
+    })
+  })
+
+  describe('A2: house-level state persistence (v21)', () => {
+    test('default housePrompt + responseFormat are omitted from snapshot', () => {
+      const system = createTestSystem()
+      const snapshot = serializeSystem(system)
+      expect(snapshot.housePrompt).toBeUndefined()
+      expect(snapshot.responseFormat).toBeUndefined()
+    })
+
+    test('customised housePrompt round-trips through serialise + restore', async () => {
+      const system = createTestSystem()
+      system.house.setHousePrompt('CUSTOM HOUSE PROMPT')
+      const snapshot = serializeSystem(system)
+      expect(snapshot.housePrompt).toBe('CUSTOM HOUSE PROMPT')
+
+      const fresh = createTestSystem()
+      const defaultIntro = fresh.house.getRoom('Introductions')
+      if (defaultIntro) fresh.house.removeRoom(defaultIntro.profile.id)
+      await restoreFromSnapshot({ house: fresh.house, spawnAIAgent: async () => {} }, snapshot)
+      expect(fresh.house.getHousePrompt()).toBe('CUSTOM HOUSE PROMPT')
+    })
+
+    test('customised responseFormat round-trips', async () => {
+      const system = createTestSystem()
+      system.house.setResponseFormat('-- pirate-style only --')
+      const snapshot = serializeSystem(system)
+      expect(snapshot.responseFormat).toBe('-- pirate-style only --')
+
+      const fresh = createTestSystem()
+      const defaultIntro = fresh.house.getRoom('Introductions')
+      if (defaultIntro) fresh.house.removeRoom(defaultIntro.profile.id)
+      await restoreFromSnapshot({ house: fresh.house, spawnAIAgent: async () => {} }, snapshot)
+      expect(fresh.house.getResponseFormat()).toBe('-- pirate-style only --')
+    })
+
+    test('absent housePrompt in restored snapshot leaves the in-memory default', async () => {
+      const fresh = createTestSystem()
+      const defaultPrompt = fresh.house.getHousePrompt()
+      const snapshotMissingHouse = { version: '21' as const, timestamp: 0, rooms: [], agents: [], humans: [] }
+      await restoreFromSnapshot({ house: fresh.house, spawnAIAgent: async () => {} }, snapshotMissingHouse)
+      expect(fresh.house.getHousePrompt()).toBe(defaultPrompt)
     })
   })
 })
