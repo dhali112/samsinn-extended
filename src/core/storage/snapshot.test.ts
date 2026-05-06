@@ -363,4 +363,59 @@ describe('Snapshot', () => {
       expect(fresh.house.getHousePrompt()).toBe(defaultPrompt)
     })
   })
+
+  describe('A4: concurrent writes are serialised — no JSON corruption', () => {
+    test('25 concurrent appendPendingScrub calls all land', async () => {
+      // Realistic scenario: cross-instance uninstall fires multiple
+      // appendPendingScrubs against the same evicted-instance snapshot
+      // file. Without the write chain, two concurrent read-modify-writes
+      // can lose the earlier append.
+      //
+      // Note: saveSnapshot vs appendPendingScrub is NOT a relevant race
+      // because saveSnapshot only runs for LIVE instances and
+      // appendPendingScrub only runs for EVICTED ones — the registry
+      // mutex guarantees the instance is in exactly one state.
+      await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
+      const system = createTestSystem()
+      await saveSnapshot(serializeSystem(system), TEST_SNAPSHOT_PATH)
+
+      const ops: Promise<unknown>[] = []
+      for (let i = 0; i < 25; i++) {
+        ops.push(appendPendingScrub(TEST_SNAPSHOT_PATH, {
+          namespace: `ns-${i}`,
+          scheduledAt: `2026-05-06T10:${String(i).padStart(2, '0')}:00.000Z`,
+        }))
+      }
+      await Promise.all(ops)
+
+      const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
+      expect(loaded).not.toBeNull()
+      expect(loaded!.pendingScrubs?.length).toBe(25)
+      const namespaces = new Set(loaded!.pendingScrubs!.map(p => p.namespace))
+      expect(namespaces.size).toBe(25)
+    })
+
+    test('concurrent saveSnapshots against the same path produce a valid final file', async () => {
+      // Live-instance debounced saves can fire close together (e.g. M5
+      // flushNow racing with the auto-saver's pending timer). The chain
+      // ensures the final file is whichever save was scheduled last,
+      // never a half-written interleave.
+      await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
+      const system = createTestSystem()
+      const room = system.house.getRoom('Introductions')!
+      const ops: Promise<unknown>[] = []
+      for (let i = 0; i < 20; i++) {
+        room.post({ senderId: 'agent-1', senderName: 'A', content: `msg-${i}`, type: 'chat' })
+        ops.push(saveSnapshot(serializeSystem(system), TEST_SNAPSHOT_PATH))
+      }
+      await Promise.all(ops)
+
+      const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
+      expect(loaded).not.toBeNull()
+      // Final state contains all 20 messages (last write wins; the chain
+      // guarantees the last-submitted save is the last one to rename).
+      const chatMsgs = loaded!.rooms[0]!.messages.filter(m => m.type === 'chat')
+      expect(chatMsgs.length).toBe(20)
+    })
+  })
 })

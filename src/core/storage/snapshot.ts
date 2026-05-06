@@ -246,13 +246,33 @@ export const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
   return snap.rooms.length === 0 && snap.agents.length === 0
 }
 
-export const saveSnapshot = async (snapshot: SystemSnapshot, path: string): Promise<void> => {
-  const dir = dirname(path)
-  await mkdir(dir, { recursive: true })
-  const tmpPath = `${path}.tmp`
-  await Bun.write(tmpPath, JSON.stringify(snapshot, null, 2))
-  await rename(tmpPath, path)
+// A4: serialise all snapshot file mutations through a single chained
+// promise. Both saveSnapshot (auto-saver) and appendPendingScrub (cross-
+// instance pack uninstall) tmp+rename to the same path; without
+// serialisation, B can read → A writes new content → B writes its
+// (stale-base) → A's content is lost. Chain pattern mirrors M2's
+// refreshPackGeodata and adds no new exported primitive.
+//
+// Keyed at module level (not per-path) because each Bun process owns
+// one $SAMSINN_HOME and the realistic concurrency is one path's writers
+// fighting each other.
+let writeChain: Promise<unknown> = Promise.resolve()
+const serialiseWrite = <T>(fn: () => Promise<T>): Promise<T> => {
+  const next = writeChain.then(fn, fn)
+  // Catch on the chain reference so a single failed write doesn't poison
+  // subsequent ones. The caller still sees the original rejection.
+  writeChain = next.catch(() => undefined)
+  return next
 }
+
+export const saveSnapshot = (snapshot: SystemSnapshot, path: string): Promise<void> =>
+  serialiseWrite(async () => {
+    const dir = dirname(path)
+    await mkdir(dir, { recursive: true })
+    const tmpPath = `${path}.tmp`
+    await Bun.write(tmpPath, JSON.stringify(snapshot, null, 2))
+    await rename(tmpPath, path)
+  })
 
 // Append a pending pack scrub to a snapshot file in place. Used by the
 // cross-instance scrub path for instances that are currently evicted —
@@ -263,36 +283,40 @@ export const saveSnapshot = async (snapshot: SystemSnapshot, path: string): Prom
 // or rejected by isValidSnapshot — a v19 leftover is harmless because it
 // will be ignored on next load anyway. Best-effort: callers log on failure
 // but don't surface to the uninstall response.
-export const appendPendingScrub = async (
+export const appendPendingScrub = (
   path: string,
   scrub: PendingScrub,
-): Promise<{ readonly applied: boolean; readonly reason?: string }> => {
-  const file = Bun.file(path)
-  if (!await file.exists()) return { applied: false, reason: 'no snapshot file' }
-  let raw: Record<string, unknown>
-  try {
-    raw = JSON.parse(await file.text()) as Record<string, unknown>
-  } catch (err) {
-    return { applied: false, reason: `parse failed: ${err instanceof Error ? err.message : String(err)}` }
-  }
-  if (!isValidSnapshot(raw)) {
-    return { applied: false, reason: `incompatible snapshot version (got v${raw.version})` }
-  }
-  // Dedupe by namespace — if a prior scrub for the same pack is already
-  // queued we don't pile on duplicates.
-  const existing = (raw.pendingScrubs as PendingScrub[] | undefined) ?? []
-  if (existing.some(p => p.namespace === scrub.namespace)) {
-    return { applied: false, reason: 'already queued' }
-  }
-  const next: SystemSnapshot = {
-    ...(raw as unknown as SystemSnapshot),
-    pendingScrubs: [...existing, scrub],
-  }
-  const tmpPath = `${path}.tmp`
-  await Bun.write(tmpPath, JSON.stringify(next, null, 2))
-  await rename(tmpPath, path)
-  return { applied: true }
-}
+): Promise<{ readonly applied: boolean; readonly reason?: string }> =>
+  // A4: serialise via the same chain as saveSnapshot so concurrent
+  // saveSnapshot + appendPendingScrub against the same file can't lose
+  // each other's writes.
+  serialiseWrite(async () => {
+    const file = Bun.file(path)
+    if (!await file.exists()) return { applied: false, reason: 'no snapshot file' }
+    let raw: Record<string, unknown>
+    try {
+      raw = JSON.parse(await file.text()) as Record<string, unknown>
+    } catch (err) {
+      return { applied: false, reason: `parse failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+    if (!isValidSnapshot(raw)) {
+      return { applied: false, reason: `incompatible snapshot version (got v${raw.version})` }
+    }
+    // Dedupe by namespace — if a prior scrub for the same pack is already
+    // queued we don't pile on duplicates.
+    const existing = (raw.pendingScrubs as PendingScrub[] | undefined) ?? []
+    if (existing.some(p => p.namespace === scrub.namespace)) {
+      return { applied: false, reason: 'already queued' }
+    }
+    const next: SystemSnapshot = {
+      ...(raw as unknown as SystemSnapshot),
+      pendingScrubs: [...existing, scrub],
+    }
+    const tmpPath = `${path}.tmp`
+    await Bun.write(tmpPath, JSON.stringify(next, null, 2))
+    await rename(tmpPath, path)
+    return { applied: true }
+  })
 
 export const loadSnapshot = async (path: string): Promise<SystemSnapshot | null> => {
   const file = Bun.file(path)
