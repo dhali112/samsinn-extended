@@ -7,11 +7,18 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v19: current. Replaces room.wikiBindings + agent.wikiBindings with
+// v20: current. Adds top-level `pendingScrubs` — the queue used by
+// cross-instance pack-uninstall to remove a namespace from
+// room.activePacks across instances that were evicted at the time of the
+// uninstall. Drained on restoreFromSnapshot. Without this, an evicted
+// instance reloaded after an uninstall would restore the deleted pack
+// into its rooms, and a later same-namespace install would auto-activate
+// without operator opt-in. Snapshots from v19 are rejected at load.
+// v19: replaces room.wikiBindings + agent.wikiBindings with
 // room.activePacks (single per-room layer per the unify-around-packs
 // design). Wikis are now reached via active packs that bundle them; the
 // per-agent binding layer is gone (config.tools whitelist remains the
-// per-agent fine-grain). Snapshots from v18 are rejected at load.
+// per-agent fine-grain). Snapshots from v18 were rejected at load.
 // v18: removed the artifact subsystem entirely (task_list, poll,
 // document, mermaid, map artifact types). Mermaid + map are now inline-only
 // via fenced code blocks in chat. The other types had no inline replacement
@@ -50,7 +57,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 19
+export const SNAPSHOT_VERSION = 20
 
 // --- Snapshot schema ---
 
@@ -84,8 +91,13 @@ export interface HumanAgentSnapshot {
   readonly triggers?: ReadonlyArray<Trigger>
 }
 
+export interface PendingScrub {
+  readonly namespace: string
+  readonly scheduledAt: string  // ISO-8601 — for triage when scrubs accumulate
+}
+
 export interface SystemSnapshot {
-  readonly version: '19'
+  readonly version: '20'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -93,6 +105,10 @@ export interface SystemSnapshot {
   readonly bookmarks?: ReadonlyArray<Bookmark>
   readonly ollamaUrls?: ReadonlyArray<string>
   readonly ollamaUrl?: string
+  // Pack scrubs scheduled while this instance was evicted. Each entry is
+  // applied on next restoreFromSnapshot — namespace is removed from every
+  // room.activePacks. Cleared after drain on the same restore.
+  readonly pendingScrubs?: ReadonlyArray<PendingScrub>
 }
 
 // --- Minimal System interface for serialization ---
@@ -165,7 +181,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   }
 
   return {
-    version: '19',
+    version: '20',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -175,6 +191,11 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       ollamaUrls: system.ollamaUrls.list(),
       ollamaUrl: system.ollamaUrls.getCurrent(),
     } : {}),
+    // pendingScrubs is NOT serialised from a live system — it's only ever
+    // injected externally by appendPendingScrub (uninstall_pack against an
+    // evicted instance), and it's drained at restoreFromSnapshot. By the
+    // time a live system is being serialised, every scrub has already been
+    // applied to room.activePacks.
   }
 }
 
@@ -212,6 +233,46 @@ export const saveSnapshot = async (snapshot: SystemSnapshot, path: string): Prom
   const tmpPath = `${path}.tmp`
   await Bun.write(tmpPath, JSON.stringify(snapshot, null, 2))
   await rename(tmpPath, path)
+}
+
+// Append a pending pack scrub to a snapshot file in place. Used by the
+// cross-instance scrub path for instances that are currently evicted —
+// since they're not live in memory, we mutate their on-disk snapshot
+// directly so the scrub applies on next restoreFromSnapshot.
+//
+// Atomic write via tmp+rename. Skips silently if the snapshot is missing
+// or rejected by isValidSnapshot — a v19 leftover is harmless because it
+// will be ignored on next load anyway. Best-effort: callers log on failure
+// but don't surface to the uninstall response.
+export const appendPendingScrub = async (
+  path: string,
+  scrub: PendingScrub,
+): Promise<{ readonly applied: boolean; readonly reason?: string }> => {
+  const file = Bun.file(path)
+  if (!await file.exists()) return { applied: false, reason: 'no snapshot file' }
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(await file.text()) as Record<string, unknown>
+  } catch (err) {
+    return { applied: false, reason: `parse failed: ${err instanceof Error ? err.message : String(err)}` }
+  }
+  if (!isValidSnapshot(raw)) {
+    return { applied: false, reason: `incompatible snapshot version (got v${raw.version})` }
+  }
+  // Dedupe by namespace — if a prior scrub for the same pack is already
+  // queued we don't pile on duplicates.
+  const existing = (raw.pendingScrubs as PendingScrub[] | undefined) ?? []
+  if (existing.some(p => p.namespace === scrub.namespace)) {
+    return { applied: false, reason: 'already queued' }
+  }
+  const next: SystemSnapshot = {
+    ...(raw as unknown as SystemSnapshot),
+    pendingScrubs: [...existing, scrub],
+  }
+  const tmpPath = `${path}.tmp`
+  await Bun.write(tmpPath, JSON.stringify(next, null, 2))
+  await rename(tmpPath, path)
+  return { applied: true }
 }
 
 export const loadSnapshot = async (path: string): Promise<SystemSnapshot | null> => {
@@ -266,11 +327,26 @@ export const restoreFromSnapshot = async (
   system: RestorableSystem,
   snapshot: SystemSnapshot,
 ): Promise<void> => {
+  // Drain pendingScrubs before applying activePacks. Each entry came from
+  // an uninstall_pack that fired while this instance was evicted; we apply
+  // by filtering the namespace out of every room.activePacks at restore.
+  // No on-disk write here — the next auto-save naturally produces a
+  // snapshot without pendingScrubs (serializeSystem omits the field).
+  const scrubbed = new Set<string>(
+    (snapshot.pendingScrubs ?? []).map(p => p.namespace),
+  )
+  if (scrubbed.size > 0) {
+    console.log(`[snapshot] applying ${scrubbed.size} pending pack scrub(s) on restore: ${[...scrubbed].join(', ')}`)
+  }
+
   // 1. Restore rooms (messages + membership + state)
   const roomMap = new Map<string, Room>()
   for (const roomSnap of snapshot.rooms) {
     const room = system.house.restoreRoom(roomSnap.profile)
     room.injectMessages(roomSnap.messages)
+    const filteredActive = roomSnap.activePacks
+      ? roomSnap.activePacks.filter(ns => !scrubbed.has(ns))
+      : undefined
     room.restoreState({
       members: roomSnap.members,
       muted: roomSnap.muted,
@@ -279,7 +355,7 @@ export const restoreFromSnapshot = async (
       compressedIds: roomSnap.compressedIds,
       ...(roomSnap.summaryConfig ? { summaryConfig: roomSnap.summaryConfig } : {}),
       ...(roomSnap.latestSummary ? { latestSummary: roomSnap.latestSummary } : {}),
-      ...(roomSnap.activePacks ? { activePacks: roomSnap.activePacks } : {}),
+      ...(filteredActive ? { activePacks: filteredActive } : {}),
     })
     roomMap.set(room.profile.id, room)
   }

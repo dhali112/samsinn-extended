@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from 'bun:test'
-import { serializeSystem, saveSnapshot, loadSnapshot, restoreFromSnapshot } from './snapshot.ts'
+import { serializeSystem, saveSnapshot, loadSnapshot, restoreFromSnapshot, appendPendingScrub, SNAPSHOT_VERSION } from './snapshot.ts'
 import { createHouse } from '../house.ts'
 import { createTeam } from '../../agents/team.ts'
 import type { DeliverFn } from '../types/messaging.ts'
@@ -79,7 +79,7 @@ describe('Snapshot', () => {
       const system = createTestSystem()
       const snapshot = serializeSystem(system)
 
-      expect(snapshot.version).toBe('19')
+      expect(snapshot.version).toBe('20')
       expect(snapshot.timestamp).toBeGreaterThan(0)
       expect(snapshot.rooms.length).toBe(1) // default Introductions room
       expect(snapshot.agents.length).toBe(0)
@@ -130,7 +130,7 @@ describe('Snapshot', () => {
 
       const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
       expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('19')
+      expect(loaded!.version).toBe('20')
       expect(loaded!.rooms.length).toBe(snapshot.rooms.length)
 
       const chatMsgs = loaded!.rooms[0]!.messages.filter(m => m.type === 'chat')
@@ -205,5 +205,77 @@ describe('Snapshot', () => {
       expect(restoredRoom!.profile.id).toBe(origRoomId)
     })
 
+  })
+
+  describe('pendingScrubs (M1: cross-instance pack uninstall)', () => {
+    test('appendPendingScrub queues a namespace and dedupes repeats', async () => {
+      await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
+      const system = createTestSystem()
+      const room = system.house.getRoom('Introductions')!
+      room.setActivePacks(['aviation', 'cafes'])
+      await saveSnapshot(serializeSystem(system), TEST_SNAPSHOT_PATH)
+
+      const r1 = await appendPendingScrub(TEST_SNAPSHOT_PATH, { namespace: 'aviation', scheduledAt: '2026-05-06T00:00:00.000Z' })
+      expect(r1.applied).toBe(true)
+
+      // Repeat same namespace — must dedupe.
+      const r2 = await appendPendingScrub(TEST_SNAPSHOT_PATH, { namespace: 'aviation', scheduledAt: '2026-05-06T00:01:00.000Z' })
+      expect(r2.applied).toBe(false)
+      expect(r2.reason).toBe('already queued')
+
+      // Different namespace appends.
+      const r3 = await appendPendingScrub(TEST_SNAPSHOT_PATH, { namespace: 'cafes', scheduledAt: '2026-05-06T00:02:00.000Z' })
+      expect(r3.applied).toBe(true)
+
+      const reloaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
+      expect(reloaded?.pendingScrubs?.length).toBe(2)
+      expect(reloaded?.pendingScrubs?.map(p => p.namespace).sort()).toEqual(['aviation', 'cafes'])
+    })
+
+    test('appendPendingScrub refuses missing snapshot file', async () => {
+      const result = await appendPendingScrub(TEST_SNAPSHOT_PATH, { namespace: 'x', scheduledAt: '2026-05-06T00:00:00.000Z' })
+      expect(result.applied).toBe(false)
+      expect(result.reason).toBe('no snapshot file')
+    })
+
+    test('appendPendingScrub refuses incompatible-version snapshot', async () => {
+      await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
+      await Bun.write(TEST_SNAPSHOT_PATH, JSON.stringify({ version: '7', timestamp: Date.now(), rooms: [], agents: [] }))
+      const result = await appendPendingScrub(TEST_SNAPSHOT_PATH, { namespace: 'x', scheduledAt: '2026-05-06T00:00:00.000Z' })
+      expect(result.applied).toBe(false)
+      expect(result.reason).toContain('incompatible snapshot version')
+    })
+
+    test('restoreFromSnapshot drains pendingScrubs from room.activePacks', async () => {
+      await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
+      const system = createTestSystem()
+      const room = system.house.getRoom('Introductions')!
+      room.setActivePacks(['aviation', 'cafes', 'maritime'])
+      await saveSnapshot(serializeSystem(system), TEST_SNAPSHOT_PATH)
+
+      // Schedule scrubs for aviation and maritime — cafes should remain.
+      await appendPendingScrub(TEST_SNAPSHOT_PATH, { namespace: 'aviation', scheduledAt: '2026-05-06T00:00:00.000Z' })
+      await appendPendingScrub(TEST_SNAPSHOT_PATH, { namespace: 'maritime', scheduledAt: '2026-05-06T00:01:00.000Z' })
+
+      const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
+      expect(loaded).not.toBeNull()
+
+      const fresh = createTestSystem()
+      const defaultIntro = fresh.house.getRoom('Introductions')
+      if (defaultIntro) fresh.house.removeRoom(defaultIntro.profile.id)
+      await restoreFromSnapshot({ house: fresh.house, spawnAIAgent: async () => {} }, loaded!)
+
+      const restored = fresh.house.getRoom(room.profile.id)!
+      expect(restored.getActivePacks()).toEqual(['cafes'])
+
+      // Re-serialise and verify pendingScrubs is gone (serializeSystem
+      // never writes the field; the next save naturally drops it).
+      const reSerialised = serializeSystem(fresh)
+      expect(reSerialised.pendingScrubs).toBeUndefined()
+    })
+
+    test('SNAPSHOT_VERSION is current', () => {
+      expect(SNAPSHOT_VERSION).toBe(20)
+    })
   })
 })

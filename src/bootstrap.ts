@@ -47,7 +47,8 @@ import { createPolicyStore } from './llm/llm-policy-store.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
 import { parseLogConfigFromEnv } from './logging/config.ts'
-import { sharedPaths } from './core/paths.ts'
+import { sharedPaths, instancePaths } from './core/paths.ts'
+import { appendPendingScrub } from './core/storage/snapshot.ts'
 import { createToolRegistry } from './core/tool-registry.ts'
 import { generateInstanceId } from './api/instance-cookie.ts'
 import { wireSystemEvents } from './api/wire-system-events.ts'
@@ -458,6 +459,26 @@ export const bootstrap = async (): Promise<void> => {
         saver.flush().catch(err => {
           console.error(`[packs] post-scrub snapshot flush failed for ${id}:`, err)
         })
+      }
+      // M1: append a pendingScrub to every evicted instance's snapshot so
+      // the scrub applies on its next reload. Without this, an evicted
+      // instance reloaded post-uninstall restores the deleted pack as
+      // active, and a later same-namespace install would auto-activate
+      // without operator opt-in. Fire-and-forget per file — failures are
+      // logged but don't block the uninstall response.
+      const scheduledAt = new Date().toISOString()
+      for (const meta of registry.list()) {
+        if (registry.tryGetLive(meta.id)) continue  // handled by live loop above
+        const snapshotPath = instancePaths(meta.id).snapshot
+        appendPendingScrub(snapshotPath, { namespace: packNamespace, scheduledAt })
+          .then(result => {
+            if (!result.applied && result.reason && result.reason !== 'no snapshot file' && result.reason !== 'already queued') {
+              console.warn(`[packs] could not queue scrub for evicted instance ${meta.id}: ${result.reason}`)
+            }
+          })
+          .catch(err => {
+            console.error(`[packs] appendPendingScrub failed for ${meta.id}:`, err)
+          })
       }
       return out
     }
