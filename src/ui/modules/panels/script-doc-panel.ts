@@ -198,7 +198,10 @@ const openSourceModal = async (): Promise<void> => {
   dialog.className = 'bg-surface border border-border rounded shadow-lg flex flex-col max-w-3xl w-[90vw] max-h-[80vh]'
   const header = document.createElement('div')
   header.className = 'px-4 py-2 border-b border-border flex items-center justify-between'
-  header.innerHTML = `<div class="text-sm font-semibold">${active.scriptName}.md — raw source</div>`
+  // Static shell + textContent on the script-name slot. scriptName is
+  // bounded by VALID_NAME server-side but textContent is the safer default.
+  header.innerHTML = '<div class="text-sm font-semibold"></div>'
+  header.querySelector('div')!.textContent = `${active.scriptName}.md — raw source`
   const close = document.createElement('button')
   close.className = 'icon-btn'
   close.setAttribute('aria-label', 'Close')

@@ -78,10 +78,25 @@ export const updateOllamaHealthUI = (
       modelsEl.appendChild(loadRow)
     }
     if (unloaded.length > 0) {
-      loadRow.innerHTML = `<select class="od-load-select flex-1 text-xs border rounded px-1 py-0.5">${unloaded.map(m => `<option value="${m}">${m}</option>`).join('')}</select><button class="od-load-btn text-xs px-2 py-0.5 bg-accent text-white rounded hover:bg-accent-hover">Load</button>`
-      loadRow.querySelector('.od-load-btn')?.addEventListener('click', async () => {
-        const sel = loadRow!.querySelector('.od-load-select') as HTMLSelectElement
-        if (sel?.value) await fetch(`/api/ollama/models/${encodeURIComponent(sel.value)}/load`, { method: 'POST' })
+      // Build select via DOM — Ollama model names come from the operator's
+      // local install so are usually safe, but defense in depth keeps
+      // user-string interpolation out of innerHTML.
+      loadRow.innerHTML = ''
+      const select = document.createElement('select')
+      select.className = 'od-load-select flex-1 text-xs border rounded px-1 py-0.5'
+      for (const m of unloaded) {
+        const opt = document.createElement('option')
+        opt.value = m
+        opt.textContent = m
+        select.appendChild(opt)
+      }
+      const btn = document.createElement('button')
+      btn.className = 'od-load-btn text-xs px-2 py-0.5 bg-accent text-white rounded hover:bg-accent-hover'
+      btn.textContent = 'Load'
+      loadRow.appendChild(select)
+      loadRow.appendChild(btn)
+      btn.addEventListener('click', async () => {
+        if (select.value) await fetch(`/api/ollama/models/${encodeURIComponent(select.value)}/load`, { method: 'POST' })
       })
     } else {
       loadRow.innerHTML = '<span class="text-xs text-text-muted">All models loaded</span>'

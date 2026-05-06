@@ -70,7 +70,10 @@ export const openSendAsPicker = async (
   card.className = 'rounded-lg shadow-xl w-full max-w-md bg-surface text-text overflow-hidden'
   const header = document.createElement('div')
   header.className = 'px-6 py-3 border-b border-border'
-  header.innerHTML = `<h3 class="text-base font-semibold">Post as…</h3><div class="text-xs text-text-muted mt-1">Pick a human to attribute this message to in <strong>${roomName}</strong>.</div>`
+  // Static shell + textContent on the user-controlled slot prevents XSS
+  // via room names that contain HTML (validateName allows `<>`).
+  header.innerHTML = '<h3 class="text-base font-semibold">Post as…</h3><div class="text-xs text-text-muted mt-1">Pick a human to attribute this message to in <strong></strong>.</div>'
+  header.querySelector('strong')!.textContent = roomName
   card.appendChild(header)
 
   const body = document.createElement('div')
@@ -86,7 +89,16 @@ export const openSendAsPicker = async (
   const buildRow = (h: AgentInfo, needsAdd: boolean): HTMLElement => {
     const row = document.createElement('div')
     row.className = 'py-2 flex items-center gap-2 border-b border-border last:border-b-0 cursor-pointer hover:bg-surface-muted px-2 -mx-2 rounded'
-    row.innerHTML = `<span class="font-medium flex-1">${h.name}</span><span class="text-[10px] uppercase tracking-wide text-text-subtle">${needsAdd ? 'add to room' : 'in room'}</span>`
+    // Build via DOM so h.name (user-controlled — validateName allows `<>`)
+    // never reaches innerHTML as a raw string.
+    const nameSpan = document.createElement('span')
+    nameSpan.className = 'font-medium flex-1'
+    nameSpan.textContent = h.name
+    const tagSpan = document.createElement('span')
+    tagSpan.className = 'text-[10px] uppercase tracking-wide text-text-subtle'
+    tagSpan.textContent = needsAdd ? 'add to room' : 'in room'
+    row.appendChild(nameSpan)
+    row.appendChild(tagSpan)
     row.onclick = () => {
       if (needsAdd) {
         if (!confirm(`Add ${h.name} to ${roomName}?`)) return

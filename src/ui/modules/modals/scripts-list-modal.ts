@@ -239,7 +239,9 @@ export const openScriptsListModal = async (): Promise<void> => {
     renderList()
     const script = await fetchScript(name)
     if (!script) {
-      detailInner.innerHTML = `<div class="text-xs text-danger">Failed to load "${name}"</div>`
+      // textContent on the user-supplied script name; static danger styling.
+      detailInner.innerHTML = '<div class="text-xs text-danger"></div>'
+      detailInner.querySelector('div')!.textContent = `Failed to load "${name}"`
       return
     }
     renderEditor(script.name, script.source, 'edit')

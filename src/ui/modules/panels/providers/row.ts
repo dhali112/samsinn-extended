@@ -232,10 +232,20 @@ export const renderFailuresSection = (entry: ProviderStatusEntry): HTMLElement |
   for (const f of failures) {
     const row = document.createElement('div')
     row.className = 'text-text-subtle'
-    const when = new Date(f.when).toLocaleTimeString()
-    const model = f.model ? ` · ${f.model}` : ''
-    const reason = (f.reason || f.code).replace(/</g, '&lt;')
-    row.innerHTML = `<span class="text-text-muted">${when}</span> <span class="text-warning">[${f.code}]</span>${model} — ${reason}`
+    // Build via DOM — f.model and f.reason come from upstream provider
+    // errors and could contain raw HTML if a provider echoes back the
+    // request URL or a stack trace. textContent neutralises every slot.
+    const whenSpan = document.createElement('span')
+    whenSpan.className = 'text-text-muted'
+    whenSpan.textContent = new Date(f.when).toLocaleTimeString()
+    const codeSpan = document.createElement('span')
+    codeSpan.className = 'text-warning'
+    codeSpan.textContent = `[${f.code}]`
+    row.appendChild(whenSpan)
+    row.appendChild(document.createTextNode(' '))
+    row.appendChild(codeSpan)
+    if (f.model) row.appendChild(document.createTextNode(` · ${f.model}`))
+    row.appendChild(document.createTextNode(` — ${f.reason || f.code}`))
     body.appendChild(row)
   }
   head.addEventListener('click', () => {

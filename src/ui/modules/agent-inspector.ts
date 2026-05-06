@@ -253,7 +253,12 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
       // Load models via the structured catalog; pre-select the agent's
       // current model (shown as "(not available)" if the provider is gone).
       const currentModel = (agentRes.model as string) ?? 'n/a'
-      modelSelect.innerHTML = `<option value="${currentModel}">${currentModel}</option>`
+      // Build option via DOM — currentModel is bounded by provider catalogs
+      // but defence in depth keeps innerHTML out of user-string paths.
+      const initialOpt = document.createElement('option')
+      initialOpt.value = currentModel
+      initialOpt.textContent = currentModel
+      modelSelect.appendChild(initialOpt)
       void populateModelSelect(modelSelect, { preferredModel: currentModel })
       modelSelect.onchange = async () => {
         if (!modelSelect.value) return
