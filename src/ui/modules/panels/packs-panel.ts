@@ -170,38 +170,82 @@ const renderInstalledSection = (
     const counts = `${pack.tools.length} tool${pack.tools.length === 1 ? '' : 's'}, ${pack.skills.length} skill${pack.skills.length === 1 ? '' : 's'}`
     const isActive = activeSet.has(pack.namespace)
 
-    // System packs (core, local) are always-active and cannot be
-    // uninstalled — show a "system" badge instead of toggle/buttons.
-    const rightCol = pack.system
-      ? `<span class="text-[10px] text-text-subtle uppercase tracking-wide px-2" title="Always active. Built into samsinn or sourced from your drop-in dirs.">system · always on</span>`
-      : `${activation
-          ? `<label class="pack-toggle inline-flex items-center gap-1 cursor-pointer select-none px-2" title="Toggle activation in ${escapeHtml(activation.roomName)}">
-               <input type="checkbox" class="pack-toggle-input" ${isActive ? 'checked' : ''} />
-               <span class="text-[10px] text-text-subtle">${isActive ? 'active' : 'inactive'}</span>
-             </label>`
-          : ''}
-         <button class="pack-update text-text-subtle hover:text-text px-2 py-1" title="Update (git pull)">↻</button>
-         <button class="pack-uninstall text-text-subtle hover:text-danger px-2 py-1" title="Uninstall">✕</button>`
+    // Build the row body via DOM construction. pack.manifest.{name,description}
+    // and the wiki name/url come from third-party pack.json files — putting
+    // them through innerHTML lets a malicious pack run script in any tab
+    // that opens this panel.
+    const bodyCol = document.createElement('div')
+    bodyCol.className = 'flex-1 min-w-0'
+    const labelDiv = document.createElement('div')
+    labelDiv.className = 'text-text-strong font-medium truncate'
+    labelDiv.textContent = label
+    const descDiv = document.createElement('div')
+    descDiv.className = 'text-text-muted truncate'
+    descDiv.setAttribute('title', desc)
+    descDiv.textContent = desc || counts
+    const countsDiv = document.createElement('div')
+    countsDiv.className = 'text-text-subtle text-[10px]'
+    countsDiv.textContent = counts
+    bodyCol.appendChild(labelDiv)
+    bodyCol.appendChild(descDiv)
+    bodyCol.appendChild(countsDiv)
 
     // External wiki links — pack metadata only, samsinn doesn't fetch the
-    // content. People view + edit on GitHub Pages directly. Render below
-    // the counts as a small link list.
-    const wikiLinks = (pack.manifest.wikis ?? [])
-      .map(w => `<a href="${escapeHtml(w.url)}" target="_blank" rel="noopener" class="text-accent hover:underline" title="${escapeHtml(w.url)}">📖 ${escapeHtml(w.name)} ↗</a>`)
-      .join(' · ')
-    const wikisRow = wikiLinks
-      ? `<div class="text-[10px] mt-0.5">${wikiLinks}</div>`
-      : ''
+    // content. People view + edit on GitHub Pages directly.
+    const wikis = pack.manifest.wikis ?? []
+    if (wikis.length > 0) {
+      const wikisRow = document.createElement('div')
+      wikisRow.className = 'text-[10px] mt-0.5'
+      wikis.forEach((w, i) => {
+        if (i > 0) wikisRow.appendChild(document.createTextNode(' · '))
+        const a = document.createElement('a')
+        a.setAttribute('href', w.url)
+        a.setAttribute('target', '_blank')
+        a.setAttribute('rel', 'noopener')
+        a.setAttribute('title', w.url)
+        a.className = 'text-accent hover:underline'
+        a.textContent = `📖 ${w.name} ↗`
+        wikisRow.appendChild(a)
+      })
+      bodyCol.appendChild(wikisRow)
+    }
+    row.appendChild(bodyCol)
 
-    row.innerHTML = `
-      <div class="flex-1 min-w-0">
-        <div class="text-text-strong font-medium truncate">${label}</div>
-        <div class="text-text-muted truncate" title="${desc}">${desc || counts}</div>
-        <div class="text-text-subtle text-[10px]">${counts}</div>
-        ${wikisRow}
-      </div>
-      ${rightCol}
-    `
+    // System packs (core, local) are always-active and cannot be
+    // uninstalled — show a "system" badge instead of toggle/buttons.
+    if (pack.system) {
+      const badge = document.createElement('span')
+      badge.className = 'text-[10px] text-text-subtle uppercase tracking-wide px-2'
+      badge.setAttribute('title', 'Always active. Built into samsinn or sourced from your drop-in dirs.')
+      badge.textContent = 'system · always on'
+      row.appendChild(badge)
+    } else {
+      if (activation) {
+        const lbl = document.createElement('label')
+        lbl.className = 'pack-toggle inline-flex items-center gap-1 cursor-pointer select-none px-2'
+        lbl.setAttribute('title', `Toggle activation in ${activation.roomName}`)
+        const input = document.createElement('input')
+        input.type = 'checkbox'
+        input.className = 'pack-toggle-input'
+        input.checked = isActive
+        const stateSpan = document.createElement('span')
+        stateSpan.className = 'text-[10px] text-text-subtle'
+        stateSpan.textContent = isActive ? 'active' : 'inactive'
+        lbl.appendChild(input)
+        lbl.appendChild(stateSpan)
+        row.appendChild(lbl)
+      }
+      const updateBtn = document.createElement('button')
+      updateBtn.className = 'pack-update text-text-subtle hover:text-text px-2 py-1'
+      updateBtn.setAttribute('title', 'Update (git pull)')
+      updateBtn.textContent = '↻'
+      const uninstallBtn = document.createElement('button')
+      uninstallBtn.className = 'pack-uninstall text-text-subtle hover:text-danger px-2 py-1'
+      uninstallBtn.setAttribute('title', 'Uninstall')
+      uninstallBtn.textContent = '✕'
+      row.appendChild(updateBtn)
+      row.appendChild(uninstallBtn)
+    }
 
     if (activation && !pack.system) {
       const input = row.querySelector<HTMLInputElement>('.pack-toggle-input')
