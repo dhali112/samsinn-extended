@@ -128,7 +128,7 @@ export const roomRoutes: RouteEntry[] = [
     // always active and don't belong in the stored list).
     method: 'PUT',
     pattern: /^\/api\/rooms\/([^/]+)\/packs$/,
-    handler: async (req, match, { system, broadcast }) => {
+    handler: async (req, match, { system, broadcastToInstance, instanceId }) => {
       const name = decodeURIComponent(match[1]!)
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
@@ -151,8 +151,14 @@ export const roomRoutes: RouteEntry[] = [
       if (unknown.length > 0) return errorResponse(`unknown pack namespaces: ${unknown.join(', ')}`, 400)
 
       room.setActivePacks(filtered)
+      // Per-instance state — pack activation is scoped to one tenant's room.
+      // The previous global `broadcast(...)` fanned out to every connected
+      // tenant; their UI handlers no-oped on unfamiliar roomId but the
+      // re-fetch traffic was wasted. RouteContext.broadcastToInstance is
+      // typed optional (MCP-mode shape compatibility); pack-activation
+      // routes only register in HTTP mode where it's always wired.
       try {
-        broadcast({ type: 'pack_activation_changed', roomId: room.profile.id, activePacks: filtered })
+        broadcastToInstance?.(instanceId, { type: 'pack_activation_changed', roomId: room.profile.id, activePacks: filtered })
       } catch { /* ignore */ }
       return json({ activePacks: room.getActivePacks() })
     },
