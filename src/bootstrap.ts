@@ -421,9 +421,9 @@ export const bootstrap = async (): Promise<void> => {
     // namespace from every room.activePacks across every live instance,
     // and broadcast pack_activation_changed per affected room. Returns
     // the audit list so the uninstall response can include it.
-    const crossInstanceScrubActivePacks = (
+    const crossInstanceScrubActivePacks = async (
       packNamespace: string,
-    ): { roomId: string; activePacks: ReadonlyArray<string> }[] => {
+    ): Promise<{ roomId: string; activePacks: ReadonlyArray<string> }[]> => {
       const out: { roomId: string; activePacks: ReadonlyArray<string> }[] = []
       const dirtyInstances = new Set<string>()
       for (const meta of registry.list()) {
@@ -464,22 +464,30 @@ export const bootstrap = async (): Promise<void> => {
       // the scrub applies on its next reload. Without this, an evicted
       // instance reloaded post-uninstall restores the deleted pack as
       // active, and a later same-namespace install would auto-activate
-      // without operator opt-in. Fire-and-forget per file — failures are
-      // logged but don't block the uninstall response.
+      // without operator opt-in.
+      //
+      // B3 (round 3): awaited via Promise.all so the uninstall response
+      // only returns once every evicted instance's snapshot is durable on
+      // disk. Adds ~5-20ms × max(N) latency where N is evicted-instance
+      // count — bounded by deploy size.
       const scheduledAt = new Date().toISOString()
+      const scrubPromises: Promise<unknown>[] = []
       for (const meta of registry.list()) {
         if (registry.tryGetLive(meta.id)) continue  // handled by live loop above
         const snapshotPath = instancePaths(meta.id).snapshot
-        appendPendingScrub(snapshotPath, { namespace: packNamespace, scheduledAt })
-          .then(result => {
-            if (!result.applied && result.reason && result.reason !== 'no snapshot file' && result.reason !== 'already queued') {
-              console.warn(`[packs] could not queue scrub for evicted instance ${meta.id}: ${result.reason}`)
-            }
-          })
-          .catch(err => {
-            console.error(`[packs] appendPendingScrub failed for ${meta.id}:`, err)
-          })
+        scrubPromises.push(
+          appendPendingScrub(snapshotPath, { namespace: packNamespace, scheduledAt })
+            .then(result => {
+              if (!result.applied && result.reason && result.reason !== 'no snapshot file' && result.reason !== 'already queued') {
+                console.warn(`[packs] could not queue scrub for evicted instance ${meta.id}: ${result.reason}`)
+              }
+            })
+            .catch(err => {
+              console.error(`[packs] appendPendingScrub failed for ${meta.id}:`, err)
+            }),
+        )
       }
+      await Promise.all(scrubPromises)
       return out
     }
 

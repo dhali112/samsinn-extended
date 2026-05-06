@@ -69,7 +69,11 @@ export interface PackToolsDeps {
   // referencing a now-deleted pack. Without this, the scrub is skipped
   // (tests / MCP-only mode where House isn't in scope — no rooms to
   // scrub anyway).
+  // Async because the implementation awaits per-evicted-instance snapshot
+  // writes (M1 pendingScrubs durability — see bootstrap.ts). Tests/MCP-only
+  // mode can pass a sync callback wrapped in Promise.resolve(...).
   readonly scrubActivePacks?: (packNamespace: string) =>
+    Promise<{ roomId: string; activePacks: ReadonlyArray<string> }[]>
     | { roomId: string; activePacks: ReadonlyArray<string> }[]
   // Optional: re-scan <pack>/geodata/*.geojson across all installed
   // packs. Called on install/update/uninstall so newly-bundled (or
@@ -472,7 +476,7 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
     // would see the pack's resolved-to-empty surface and behave oddly.
     // Scrubbing first means rooms transition cleanly from "active with
     // tools" to "no longer active" with no intermediate broken state.
-    const scrubbed = deps.scrubActivePacks?.(namespace) ?? []
+    const scrubbed = (await deps.scrubActivePacks?.(namespace)) ?? []
 
     // Step 2: registry teardown. unregisterByPack returns the keys that
     // were removed so we can report and audit. Both are synchronous so
