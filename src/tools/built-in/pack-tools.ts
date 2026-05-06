@@ -33,7 +33,7 @@ import type { SkillStore } from '../../skills/loader.ts'
 import { loadPack } from '../../packs/loader.ts'
 import { readManifest, resolveInstallNamespace, stripPackPrefix } from '../../packs/manifest.ts'
 import { scanPacks } from '../../packs/scanner.ts'
-import { getAvailablePacks } from '../../packs/registry.ts'
+import { getAvailablePacks, invalidateRegistryCache } from '../../packs/registry.ts'
 import { formatShellError } from '../../core/redact.ts'
 import { stat, mkdtemp, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -200,7 +200,14 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
       return { success: false, error: `Could not create temp dir for install: ${reason}` }
     }
 
-    const cleanup = async () => { try { await rm(tempDir, { recursive: true, force: true }) } catch { /* ignore */ } }
+    // C2: log cleanup failures rather than swallow. tempDirs that fail to rm
+    // accumulate under packsDir as `.tmp-install-XXXXXX` (scanPacks skips
+    // dotfiles, so they don't load as packs but waste disk). Surface so an
+    // operator notices.
+    const cleanup = async () => {
+      try { await rm(tempDir, { recursive: true, force: true }) }
+      catch (err) { console.warn(`[packs] failed to clean tempDir ${tempDir}:`, err) }
+    }
 
     const clone = await $`git clone --depth 1 ${resolved.url} ${tempDir}`.quiet().nothrow()
     if (clone.exitCode !== 0) {
@@ -280,6 +287,10 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
       action: 'installed', namespace,
       tools: result.tools, skills: result.skills,
     })
+
+    // C3: drop the registry cache so the next /api/packs/registry GET shows
+    // this pack with `installed: true` instead of waiting up to 5 min.
+    invalidateRegistryCache()
 
     return {
       success: true,
@@ -504,6 +515,10 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
         error: `Unregistered from runtime + scrubbed ${scrubbed.length} room(s), but failed to delete directory: ${formatShellError(rm, 'rm -rf')}`,
       }
     }
+
+    // C3: drop the registry cache so the next /api/packs/registry GET shows
+    // this pack with `installed: false` instead of waiting up to 5 min.
+    invalidateRegistryCache()
 
     return {
       success: true,
