@@ -274,8 +274,8 @@ describe('ScriptStore.upsert size cap', () => {
       )
       // Each result corresponds to its own input.
       for (let i = 0; i < names.length; i++) {
-        expect(results[i]!.name).toBe(names[i])
-        expect(results[i]!.title).toBe(`Plan ${names[i]}`)
+        expect(results[i]!.name).toBe(names[i]!)
+        expect(results[i]!.title).toBe(`Plan ${names[i]!}`)
       }
       // All 10 are present in the store after.
       for (const n of names) expect(store.get(n)?.name).toBe(n)

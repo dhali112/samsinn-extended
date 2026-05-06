@@ -154,6 +154,48 @@ describe('createJsonlFileSink — overflow handling', () => {
       await rm(dir, { recursive: true })
     }
   })
+
+  test('B3: log.dropped notice includes per-kind tally', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'samsinn-sink-'))
+    try {
+      const origErr = console.error
+      console.error = () => {}
+
+      const sink = await createJsonlFileSink({
+        dir, sessionId: 'kindstest',
+        queueCap: 3,
+        flushIntervalMs: 1_000_000,
+      })
+      // queueCap=3, 7 writes → 4 oldest dropped. Drop order is the
+      // submission order: events 0,1,2,3 are dropped (events 4,5,6 remain
+      // in the final flushed queue).
+      // Kinds dropped: agent.thinking×3 (events 0,2,3), summary.delta (event 1).
+      sink.write(mkEvent('kindstest', 'agent.thinking', 0))
+      sink.write(mkEvent('kindstest', 'summary.delta', 1))
+      sink.write(mkEvent('kindstest', 'agent.thinking', 2))
+      sink.write(mkEvent('kindstest', 'agent.thinking', 3))
+      sink.write(mkEvent('kindstest', 'summary.delta', 4))
+      sink.write(mkEvent('kindstest', 'message.posted', 5))
+      sink.write(mkEvent('kindstest', 'message.posted', 6))
+
+      await sink.close()
+      console.error = origErr
+
+      const raw = await readFile(join(dir, 'kindstest.jsonl'), 'utf-8')
+      const parsed = raw.trim().split('\n').map(l => JSON.parse(l))
+      const dropNotice = parsed[0]
+      expect(dropNotice.kind).toBe('log.dropped')
+      expect(dropNotice.payload.count).toBe(4)
+      expect(dropNotice.payload.kinds).toBeDefined()
+      const kindsSet = new Set<string>(dropNotice.payload.kinds)
+      expect(kindsSet.has('agent.thinking×3')).toBe(true)
+      expect(kindsSet.has('summary.delta')).toBe(true)
+      // message.posted should NOT be in the dropped tally — both still in queue.
+      expect(kindsSet.has('message.posted')).toBe(false)
+    } finally {
+      await rm(dir, { recursive: true })
+    }
+  })
 })
 
 describe('createJsonlFileSink — error containment', () => {

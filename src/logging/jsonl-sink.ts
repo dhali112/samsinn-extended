@@ -47,11 +47,17 @@ export const createJsonlFileSink = async (options: JsonlFileSinkOptions): Promis
   const flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS
   const queueCap = options.queueCap ?? DEFAULT_QUEUE_CAP
 
-  // Queue of serialized JSONL lines. Held in-memory between flushes.
-  let queue: string[] = []
+  // Queue of serialized JSONL lines paired with their event kind. The
+  // kind is retained so a queue-overflow drop can be attributed by kind
+  // in the synthetic log.dropped line (B3) — bare counts don't tell the
+  // operator what was lost.
+  let queue: { kind: string; line: string }[] = []
   let eventCount = 0
   let droppedCount = 0
   let pendingDropNotice = 0  // drops since last successful write — emitted as synthetic log.dropped
+  // Per-drop kind tally; emitted with the next log.dropped notice and
+  // cleared after.
+  const droppedKinds = new Map<string, number>()
 
   // Rotation state. currentFilePath is always <base>.jsonl (the active file).
   // On rotation it's renamed to <base>.1.jsonl (overwriting any prior .1).
@@ -101,16 +107,21 @@ export const createJsonlFileSink = async (options: JsonlFileSinkOptions): Promis
     const pending: string[] = []
     const emittingDropNotice = pendingDropNotice > 0
     if (emittingDropNotice) {
+      // B3: include per-kind tally so operators can see WHAT was lost,
+      // not just how many. Encoded as `kind×N` for kinds with N>1, bare
+      // kind otherwise — keeps the JSON compact for high-cardinality drops.
+      const kindsArr = [...droppedKinds.entries()].map(([k, n]) => n > 1 ? `${k}×${n}` : k)
       const notice: LogEvent = {
         ts: Date.now(),
         kind: 'log.dropped',
         session: options.sessionId,
-        payload: { count: pendingDropNotice, reason: 'queue overflow' },
+        payload: { count: pendingDropNotice, reason: 'queue overflow', kinds: kindsArr },
       }
       pending.push(serialize(notice))
       pendingDropNotice = 0
+      droppedKinds.clear()
     }
-    pending.push(...queue)
+    for (const entry of queue) pending.push(entry.line)
     queue = []
 
     const batch = pending.join('')
@@ -153,16 +164,18 @@ export const createJsonlFileSink = async (options: JsonlFileSinkOptions): Promis
     write: (event: LogEvent): void => {
       if (closed) return
       if (queue.length >= queueCap) {
-        // Drop the oldest event, increment counters, emit stderr warning once
-        // per overflow batch (every 100th drop suffices — we still surface count).
-        queue.shift()
+        // Drop the oldest event, tally its kind, increment counters, emit
+        // stderr warning once per overflow batch (every 100th drop suffices —
+        // we still surface count).
+        const dropped = queue.shift()
+        if (dropped) droppedKinds.set(dropped.kind, (droppedKinds.get(dropped.kind) ?? 0) + 1)
         droppedCount++
         pendingDropNotice++
         if (droppedCount === 1 || droppedCount % 100 === 0) {
           console.error(`[logging] queue overflow, dropping oldest (total dropped: ${droppedCount})`)
         }
       }
-      queue.push(serialize(event))
+      queue.push({ kind: event.kind, line: serialize(event) })
     },
     flush: async (): Promise<void> => {
       await flushNow()
