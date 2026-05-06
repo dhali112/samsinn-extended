@@ -36,12 +36,31 @@ if (TOKEN) {
 const MAX_TITLE = 200
 const MAX_DESC = 8000
 
-const buildIssueBody = (description: string, version: string, userAgent: string): string => {
+// A5: wrap user description in a 4-tilde fenced code block so GitHub
+// doesn't render any markdown features inside it. Eliminates @user
+// mentions (which would ping unrelated GitHub users from the operator's
+// repo), #123 issue cross-references, image hotlinks, and any future
+// GitHub markdown features. Cost: the description renders as plain text
+// — fine for bug reports, where the operator reads it as content not
+// markup.
+//
+// 4-tilde fence is used so a description containing the more common
+// ``` triple-backticks doesn't close the wrapper early. To defend
+// against deliberate fence-escape via embedded ~~~~+ in input, replace
+// any 4+ tildes in the user content with 3 tildes before wrapping.
+const wrapAsCodeBlock = (s: string): string => {
+  const safe = s.replace(/~~~~+/g, '~~~')
+  return `~~~~\n${safe}\n~~~~`
+}
+
+// Exported for test seam — buildIssueBody returns the GitHub markdown body
+// string that gets POSTed; unit tests assert the wrap + escape behaviour.
+export const buildIssueBody = (description: string, version: string, userAgent: string): string => {
   const ua = userAgent.length > 500 ? userAgent.slice(0, 500) + '…' : userAgent
   return [
     '*Reported via samsinn UI*',
     '',
-    description.trim(),
+    wrapAsCodeBlock(description.trim()),
     '',
     '---',
     `samsinn version: \`${version || 'unknown'}\``,
@@ -80,6 +99,13 @@ export const bugRoutes: RouteEntry[] = [
       const userAgent = typeof body.userAgent === 'string' ? body.userAgent : ''
 
       const issueBody = buildIssueBody(description, version, userAgent)
+      // A4: 15s abort. A slow / hung GitHub response otherwise leaves the
+      // connection open indefinitely — bad for UX (UI spinner) and for the
+      // server's outbound socket pool. AbortError lands in the catch below
+      // alongside DNS / connection-refused / etc., which already maps to
+      // the "network failure" UI path. No separate branch needed.
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 15_000)
       let res: Response
       try {
         res = await fetch(`https://api.github.com/repos/${REPO}/issues`, {
@@ -92,11 +118,14 @@ export const bugRoutes: RouteEntry[] = [
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ title, body: issueBody }),
+          signal: controller.signal,
         })
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
         console.error(`[bugs] network error: ${reason}`)
         return errorResponse('bug submission failed (network)', 502)
+      } finally {
+        clearTimeout(timeoutId)
       }
 
       if (res.ok) {
