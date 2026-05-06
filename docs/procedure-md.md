@@ -525,6 +525,58 @@ A v0.2 validator must check:
 A reference validator for the `pwr-eops` corpus lives in that repo as
 `validate.ts` (~580 LOC, single file, no dependencies, runs under Bun).
 
+## Reference rendering: visibility controls
+
+This section describes a **recommended** rendering convention. It is not
+part of the format spec — procmd parsers and KG exporters never need it.
+It documents how the canonical pwr-eops renderer surfaces optional
+content to readers, so other procmd wikis can adopt a compatible UX if
+they wish.
+
+### Toggleable categories
+
+| Category | Source element | CSS class on render | Default |
+|---|---|---|---|
+| Edge labels | `[Continue]` / `[Escalate]` / etc. branch prefix | `procmd-edge-label` | Hidden |
+| Rationale | `Because:` / `Against:` lines | `procmd-rationale` | Visible |
+| Step ID suffix | Visible code-span suffix on step heading | `procmd-step-id-suffix` | Visible |
+
+Reserved for future tag-declaration round (no toggle yet):
+`procmd-tag` — equipment / signal / setpoint references.
+
+CSF declarations, Cautions, and Notes are not togglable in the
+recommended render — they carry operational importance.
+
+### Mechanism
+
+1. **Build-time wrap.** The renderer wraps source elements in classed
+   inline elements (e.g. `<span class="procmd-edge-label">[Continue]</span>`).
+   Source markdown is untouched; the wrapping happens during the
+   build-time transform from source to enriched markdown.
+2. **CSS defaults.** A small CSS file sets default display per class
+   (e.g. `.procmd-edge-label { display: none }`).
+3. **Override classes on `<html>`.** A small JS bundle reads user
+   preferences from localStorage and applies override classes to
+   `<html>` (e.g. `<html class="show-edge-labels">`). CSS rules like
+   `html.show-edge-labels .procmd-edge-label { display: inline }`
+   flip visibility per category.
+4. **Eye-icon popover.** A button in the site header opens a popover
+   with per-category toggles. Toggles update localStorage and apply
+   classes immediately.
+5. **FOUC prevention.** A small synchronous `<script>` in the page
+   `<head>` reads localStorage and applies override classes before
+   first paint, so user-overridden categories never flash.
+
+The mechanism is purely browser-side. The procmd source is canonical;
+no parallel rendered files exist. Reference implementation lives in
+`samsinn-wikis/pwr-eops` (`overrides/visibility.css`, `overrides/visibility.js`,
+`overrides/main.html` FOUC `<script>`, plus build-time wrapping in
+`scripts/render-procmd.ts`).
+
+Other consumers (samsinn UI, future llm-wiki-skills bootstrap, custom
+renderers) may implement compatible behavior using the same CSS class
+names.
+
 ## Versioning policy
 
 Until v1.0, breaking changes between minor versions are allowed.
