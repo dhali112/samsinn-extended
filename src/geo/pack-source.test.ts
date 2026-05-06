@@ -176,10 +176,13 @@ describe('pack-source geodata loader', () => {
     const r3 = refreshPackGeodata(packsDir)
 
     const [s1, s2, s3] = await Promise.all([r1, r2, r3])
-    // Each successive scan sees more packs (writes happened between them).
-    expect(s1.perPackFeatureCounts.size).toBe(1)
-    expect(s2.perPackFeatureCounts.size).toBeGreaterThanOrEqual(1)
-    // The last call must capture every pack on disk.
+    // Per-call snapshot sizes are timing-dependent (a fast scan may see
+    // packs that were written between the refreshPackGeodata call and the
+    // chain dequeueing this scan). What we GUARANTEE is monotonic
+    // non-decrease and that the LAST call captures every pack on disk.
+    expect(s1.perPackFeatureCounts.size).toBeGreaterThanOrEqual(1)
+    expect(s2.perPackFeatureCounts.size).toBeGreaterThanOrEqual(s1.perPackFeatureCounts.size)
+    expect(s3.perPackFeatureCounts.size).toBeGreaterThanOrEqual(s2.perPackFeatureCounts.size)
     expect(s3.perPackFeatureCounts.get('p1')).toBe(1)
     expect(s3.perPackFeatureCounts.get('p2')).toBe(1)
     expect(s3.perPackFeatureCounts.get('p3')).toBe(1)
