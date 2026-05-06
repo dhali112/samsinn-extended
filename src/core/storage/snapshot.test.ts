@@ -1,5 +1,6 @@
 import { describe, test, expect, afterEach } from 'bun:test'
-import { serializeSystem, saveSnapshot, loadSnapshot, restoreFromSnapshot, appendPendingScrub, SNAPSHOT_VERSION } from './snapshot.ts'
+import { serializeSystem, saveSnapshot, loadSnapshot, restoreFromSnapshot, appendPendingScrub, SNAPSHOT_VERSION, createAutoSaver } from './snapshot.ts'
+import { stat } from 'node:fs/promises'
 import { createHouse } from '../house.ts'
 import { createTeam } from '../../agents/team.ts'
 import type { DeliverFn } from '../types/messaging.ts'
@@ -147,6 +148,47 @@ describe('Snapshot', () => {
       await Bun.write(TEST_SNAPSHOT_PATH, JSON.stringify({ version: '999', timestamp: 0, house: {}, rooms: [], agents: [] }))
       const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
       expect(loaded).toBeNull()
+    })
+
+    test('A3: empty-transition deletes the on-disk snapshot file', async () => {
+      await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
+      const system = createTestSystem()
+
+      // First save: non-empty (default Introductions room exists). With a
+      // bookmark added, isEmptySnapshot is false.
+      system.house.addBookmark('keep me alive')
+      const saver = createAutoSaver(system, TEST_SNAPSHOT_PATH, 0)
+      await saver.flush()
+      let exists = false
+      try { await stat(TEST_SNAPSHOT_PATH); exists = true } catch { /* expected fail */ }
+      expect(exists).toBe(true)
+
+      // Now empty the system: remove default room + bookmarks. isEmptySnapshot
+      // becomes true and the next save must rm the file.
+      const room = system.house.getRoom('Introductions')!
+      system.house.removeRoom(room.profile.id)
+      // Manually clear bookmarks via the same path used in tests.
+      system.house.restoreBookmarks([])
+      await saver.flush()
+
+      let stillExists = false
+      try { await stat(TEST_SNAPSHOT_PATH); stillExists = true } catch { /* expected */ }
+      expect(stillExists).toBe(false)
+      saver.dispose()
+    })
+
+    test('A3: empty save when no file exists is a no-op (no error)', async () => {
+      const system = createTestSystem()
+      const room = system.house.getRoom('Introductions')!
+      system.house.removeRoom(room.profile.id)
+      // Empty system, no prior file. flush() should not throw.
+      const saver = createAutoSaver(system, TEST_SNAPSHOT_PATH, 0)
+      await saver.flush()
+      saver.dispose()
+
+      let exists = false
+      try { await stat(TEST_SNAPSHOT_PATH); exists = true } catch { /* expected */ }
+      expect(exists).toBe(false)
     })
   })
 

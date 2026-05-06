@@ -52,7 +52,7 @@ import type { Bookmark, Room } from '../types/room.ts'
 import type { SummaryConfig } from '../types/summary.ts'
 import type { Trigger } from '../triggers/types.ts'
 import { asAIAgent } from '../../agents/shared.ts'
-import { mkdir, rename } from 'node:fs/promises'
+import { mkdir, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 // --- Version ---
@@ -452,7 +452,15 @@ export const createAutoSaver = (
       // cookieless drive-by visits and the seed-only state from leaving an
       // empty dir on disk. First user/AI message flips this and the dir is
       // created via saveSnapshot's mkdir(recursive).
-      if (isEmptySnapshot(snapshot)) return
+      //
+      // A3: when transitioning from non-empty to empty (operator deletes
+      // every room + agent) we must also delete any existing snapshot file.
+      // Without the rm, the OLD non-empty file lingers and is restored on
+      // next reload — state divergence between disk and memory.
+      if (isEmptySnapshot(snapshot)) {
+        try { await rm(path) } catch { /* may not exist; that's fine */ }
+        return
+      }
       // Bounded retry on transient errors (disk full, perm flip, etc.).
       // Same policy as eviction flush — see system-registry.ts:329.
       let lastErr: unknown = null
