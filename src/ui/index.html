@@ -363,6 +363,21 @@
 </head>
 <body class="h-screen flex flex-col">
 
+  <!-- file:// detector — when the page is opened by double-clicking
+       index.html (instead of via http://localhost:3000), nothing works:
+       /dist.css 404s, /modules/*.ts 404s, /api/* 404s. Recurring source of
+       "the UI is broken" reports. Show a loud banner so the cause is
+       immediately obvious instead of "the styling looks weird, try
+       reloading". Removes itself when served over http(s). -->
+  <script>
+    if (location.protocol === 'file:') {
+      var b = document.createElement('div');
+      b.style.cssText = 'position:fixed;inset:0 0 auto 0;padding:14px 20px;background:#dc2626;color:#fff;font:600 14px/1.4 system-ui,-apple-system,sans-serif;z-index:2147483647;text-align:center;';
+      b.innerHTML = '⚠ samsinn loaded via <code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px">file://</code> — nothing will work. Open <a href="http://localhost:3000" style="color:#fff;text-decoration:underline">http://localhost:3000</a> after starting the server (<code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px">bun run dev</code>).';
+      document.documentElement.appendChild(b);
+    }
+  </script>
+
   <!-- Toast container (bottom-right) -->
   <div id="toast-container"></div>
 
