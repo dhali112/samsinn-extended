@@ -12,7 +12,7 @@
 // sets `color: <user-colour>` inline. One CSS variable indirection means
 // future theme-aware fallbacks are a one-liner.
 
-import type { MarkerIcon } from './schema.ts'
+import type { MarkerIcon } from '../../../core/render-validators/map-schema.ts'
 
 export interface IconSpec {
   html: string

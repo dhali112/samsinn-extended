@@ -16,8 +16,8 @@
 // remove/update operations.
 // ============================================================================
 
-import type { MarkerIcon } from '../ui/modules/map/schema.ts'
-export { MARKER_ICONS, isMarkerIcon, type MarkerIcon } from '../ui/modules/map/schema.ts'
+import type { MarkerIcon } from '../core/render-validators/map-schema.ts'
+export { MARKER_ICONS, isMarkerIcon, type MarkerIcon } from '../core/render-validators/map-schema.ts'
 
 export type GeoSource = 'local' | 'overpass' | 'nominatim' | 'pack'
 

@@ -1,7 +1,9 @@
 // Renderer-facing thin wrapper over the canonical map schema.
 //
 // The schema, validator, and tolerant JSON parser all live in
-// src/ui/modules/map/schema.ts. This module exists to:
+// src/core/render-validators/map-schema.ts (moved out of the UI tree so
+// the eval loop can validate ```map fences server-side without an
+// upward UI→core dependency). This module exists to:
 //   - re-export the renderer-facing names (preserves call sites)
 //   - bridge the old `ParsedMap`/`MapEnvelope`-via-this-file imports until
 //     all UI call sites migrate to the canonical module directly
@@ -12,7 +14,7 @@
 //   - Unknown marker icons now produce a structured error, not a silent
 //     fallback to default pin
 //   - `parseMapSource(source)` keeps its name as the renderer entry point
-//     but internally calls `parseMapBody` from ui/modules/map/schema.ts
+//     but internally calls `parseMapBody` from core/render-validators/map-schema.ts
 
 export {
   MARKER_ICONS,
@@ -28,18 +30,18 @@ export {
   formatMapErrors,
   collectEnvelopeLatLngs,
   truncateForDisplay,
-} from './schema.ts'
+} from '../../../core/render-validators/map-schema.ts'
 
 // Backwards-compatible alias for the existing renderer `EnvelopeFeature`
-// name. New code should use `MapFeature` from ui/modules/map/schema.ts.
-export type { MapFeature as EnvelopeFeature } from './schema.ts'
+// name. New code should use `MapFeature` from core/render-validators/map-schema.ts.
+export type { MapFeature as EnvelopeFeature } from '../../../core/render-validators/map-schema.ts'
 
 import {
   parseMapBody,
   collectEnvelopeLatLngs,
   type MapEnvelope,
   type ValidatedMap,
-} from './schema.ts'
+} from '../../../core/render-validators/map-schema.ts'
 
 // Result type the renderer's existing call sites use. Wraps `ValidatedMap`
 // in the historical `kind:` shape so buildMap doesn't have to change.

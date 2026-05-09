@@ -1,6 +1,14 @@
 // ============================================================================
 // Canonical map schema — single source of truth for the entire mapping
-// system: parser, renderer, validator, agent-facing tool descriptions.
+// system: parser, renderer, validator, agent-facing tool descriptions, AND
+// the agent eval loop (which validates ```map fences server-side before
+// posting and retries the LLM if validation fails).
+//
+// Lives at src/core/render-validators/ rather than src/ui/modules/map/
+// because both the UI renderer (UI-side) and the eval loop (server-side)
+// consume the same validator. Importing from src/ui/ into src/agents/
+// would be the wrong dependency direction — keeping the schema in core
+// avoids the cycle.
 //
 // Two ingestion shapes are accepted (envelope and GeoJSON FeatureCollection),
 // but the validator always normalizes to the envelope shape — the renderer

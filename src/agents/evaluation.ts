@@ -13,6 +13,14 @@ import type { NativeToolCall, ToolCall, ToolDefinition, ToolExecutor, ToolResult
 import type { ToolTraceEntry } from '../core/types/messaging.ts'
 import type { ContextResult, FlushInfo } from './context-builder.ts'
 import { classifyLLMError } from './error-classify.ts'
+import { extractFences } from './fence-extract.ts'
+import { parseMapBody, formatMapErrors } from '../core/render-validators/map-schema.ts'
+
+// Max times the eval loop will ask the LLM to fix an invalid map/geojson
+// fence before giving up and posting the broken response (the UI banner
+// then takes over). Independent of `maxToolIterations` — a tool-heavy
+// agent must not lose fence retries to its tool budget.
+const MAX_FENCE_RETRIES = 2
 
 // === Decision — what the agent wants to do after evaluation ===
 
@@ -133,6 +141,87 @@ const callLLMOnce = async (
       model: request.model,
     },
   }
+}
+
+// === Map-fence validation + retry ===
+//
+// Validate every ```map and ```geojson fence in the response content. If
+// any are invalid, append a synthetic correction prompt to the conversation
+// context and re-call the LLM. Repeat up to MAX_FENCE_RETRIES times. Returns
+// the final response content (corrected if a retry succeeded; the last
+// attempt's content if all retries failed — the UI banner then shows the
+// errors below the fence).
+//
+// Map-only by design: mermaid's parser is browser-only; a server-side
+// validator would only catch trivial cases (oversized, completely wrong
+// keyword) and miss real syntax errors. Honest scoping > pretend-bulletproof.
+const validateAllMapFences = (content: string): { ok: boolean; errors: string } => {
+  const fences = extractFences(content, ['map', 'geojson'])
+  if (fences.length === 0) return { ok: true, errors: '' }
+  const errorParts: string[] = []
+  for (const fence of fences) {
+    const result = parseMapBody(fence.body)
+    if (!result.ok) {
+      errorParts.push(
+        `\`\`\`${fence.language}\` block at content line ${fence.startLine}:\n${formatMapErrors(result.errors)}`,
+      )
+    }
+  }
+  return errorParts.length === 0
+    ? { ok: true, errors: '' }
+    : { ok: false, errors: errorParts.join('\n\n') }
+}
+
+const retryInvalidMapFences = async (
+  initialContent: string,
+  context: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  config: AIAgentConfig,
+  llmProvider: LLMProvider,
+  signal: AbortSignal | undefined,
+  onEvent: ((event: EvalEvent) => void) | undefined,
+  systemBlocks: ContextResult['systemBlocks'],
+  toolDefinitions: ReadonlyArray<ToolDefinition> | undefined,
+  addGenerationMs: (ms: number) => void,
+  setLastMetrics: (m: LLMCallMetrics) => void,
+): Promise<string> => {
+  let content = initialContent
+  for (let attempt = 0; attempt < MAX_FENCE_RETRIES; attempt++) {
+    const validation = validateAllMapFences(content)
+    if (validation.ok) return content
+    // Append the invalid response + a precise correction prompt. The next
+    // LLM call will see (a) what it just emitted, (b) why it failed,
+    // (c) instruction to re-emit a corrected version.
+    context.push({ role: 'assistant' as const, content })
+    context.push({
+      role: 'user' as const,
+      content:
+        `Your previous response contained one or more invalid map fences:\n\n${validation.errors}\n\n` +
+        `Re-emit the FULL corrected response (keep the surrounding prose, fix the fence schema). ` +
+        `Refer to the rendering skill for the canonical schema.`,
+    })
+    if (signal?.aborted) return content
+    const request: ChatRequest = {
+      model: config.model,
+      messages: context as ReadonlyArray<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+      temperature: config.temperature,
+      ...(config.seed !== undefined ? { seed: config.seed } : {}),
+      tools: toolDefinitions,
+      think: config.thinking,
+      ...(systemBlocks ? { systemBlocks } : {}),
+    }
+    const stream = await callLLMOnce(llmProvider, request, onEvent, signal)
+    addGenerationMs(stream.durationMs)
+    setLastMetrics(stream.metrics)
+    content = stream.content.trim()
+    if (content.length === 0) {
+      // Empty correction attempt — give up and return the prior content.
+      return initialContent
+    }
+  }
+  // Exhausted retries — return the last attempt as-is. The UI's per-fence
+  // validation banner will render the errors to the user, who can prompt
+  // for another correction manually.
+  return content
 }
 
 // === Main evaluation loop ===
@@ -256,7 +345,7 @@ export const evaluate = async (
         continue
       }
 
-      // No tool calls → response text is the message
+      // No tool calls → response text is the message.
       const content = streamResult.content.trim()
       if (content.length === 0) {
         return makeResult({
@@ -265,7 +354,29 @@ export const evaluate = async (
           triggerRoomId,
         })
       }
-      return makeResult({ response: { action: 'respond', content }, generationMs: totalGenerationMs, triggerRoomId })
+      // Map-fence retry loop: validate any ```map / ```geojson fences in
+      // the response. If invalid, append a synthetic correction prompt to
+      // context and re-call the LLM up to MAX_FENCE_RETRIES times. Each
+      // retry streams live (the user sees the rewrite); only the final
+      // response is committed via makeResult. Retry budget is independent
+      // of toolRound — fence retries don't consume tool-iteration budget.
+      //
+      // Map-only on purpose: mermaid's parser is browser-only and a
+      // server-side validator would be a smell-test, not a real check.
+      // Honest scoping > pretending to bulletproof.
+      const finalContent = await retryInvalidMapFences(
+        content,
+        context,
+        config,
+        llmProvider,
+        signal,
+        onEvent,
+        contextResult.systemBlocks,
+        toolDefinitions,
+        (ms) => { totalGenerationMs += ms },
+        (m) => { lastMetrics = m },
+      )
+      return makeResult({ response: { action: 'respond', content: finalContent }, generationMs: totalGenerationMs, triggerRoomId })
     }
 
     // Max iterations reached. If the model produced any visible text along
