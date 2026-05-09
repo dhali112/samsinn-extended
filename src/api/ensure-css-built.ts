@@ -1,25 +1,12 @@
 // ============================================================================
-// CSS bootstrap — ensure src/ui/dist.css exists AND is up-to-date relative
-// to every file Tailwind scans, before the HTTP server starts serving.
+// CSS bootstrap — build src/ui/dist.css if missing OR stale before the HTTP
+// server starts serving. Lives here (not in scripts/dev.ts) so every launch
+// path (bun run start, bun --watch, preview tool, prod systemd, fresh
+// checkout) gets a built CSS regardless of how the server was started.
 //
-// Why this lives in the server, not in scripts/dev.ts:
-// dev.ts only runs when the developer types `bun run dev`. Every other
-// launch path (bun run start, bun --watch src/main.ts, the preview tool,
-// a fresh checkout, a CI smoke test, prod via systemd) bypasses dev.ts
-// and lands directly in the server. Putting the build here makes the
-// server self-sufficient — the page never serves the "CSS missing" banner
-// to a user, regardless of launch context.
-//
-// Staleness model: dist.css is stale iff ANY file Tailwind scans is newer
-// than it. Tailwind v4 picks files via @source directives in input.css —
-// for samsinn that's `./index.html` and `./modules/**/*.ts`. We don't
-// parse the @source directives; we just walk src/ui recursively and treat
-// any .ts / .html / .css file as a potential class source. Broader than
-// strictly necessary (we'd miss zero classes) and cheap (~100 file stats).
-//
-// This was the second occurrence of "I added a Tailwind class in a .ts
-// file and the page rendered unstyled" — the prior fix only compared
-// input.css mtime, missing the entire .ts class-source surface.
+// Staleness: dist.css is stale iff any Tailwind-scannable source file under
+// src/ui is newer. We walk recursively rather than parsing @source patterns
+// in input.css — broader by design so the check survives @source additions.
 // ============================================================================
 
 import { readdir, stat } from 'node:fs/promises'

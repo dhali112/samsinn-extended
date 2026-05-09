@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test'
-import { mkdtemp, rm, writeFile, stat, utimes } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, stat, utimes, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureCssBuilt } from './ensure-css-built.ts'
@@ -82,7 +82,7 @@ describe('ensureCssBuilt', () => {
     // to a .ts file made dist.css functionally stale even though input.css
     // had not changed. This regression test pins the broader scan.
     await writeFile(`${uiPath}/dist.css`, '/* stale */')
-    await import('node:fs/promises').then(fs => fs.mkdir(`${uiPath}/modules/foo`, { recursive: true }))
+    await mkdir(`${uiPath}/modules/foo`, { recursive: true })
     await writeFile(`${uiPath}/modules/foo/bar.ts`, '/* new module with new tailwind classes */')
     const future = new Date(Date.now() + 60_000)
     await utimes(`${uiPath}/modules/foo/bar.ts`, future, future)
@@ -126,10 +126,9 @@ describe('ensureCssBuilt', () => {
     await writeFile(`${uiPath}/dist.css`, '/* fresh */')
     const future = new Date(Date.now() + 60_000)
     await utimes(`${uiPath}/dist.css`, future, future)
-    const fs = await import('node:fs/promises')
-    await fs.mkdir(`${uiPath}/node_modules/foo`, { recursive: true })
+    await mkdir(`${uiPath}/node_modules/foo`, { recursive: true })
     await writeFile(`${uiPath}/node_modules/foo/bad.ts`, '/* should not trigger rebuild */')
-    await fs.mkdir(`${uiPath}/.cache`, { recursive: true })
+    await mkdir(`${uiPath}/.cache`, { recursive: true })
     await writeFile(`${uiPath}/.cache/bad.ts`, '/* should not trigger rebuild */')
     const veryFuture = new Date(Date.now() + 120_000)
     await utimes(`${uiPath}/node_modules/foo/bad.ts`, veryFuture, veryFuture)
