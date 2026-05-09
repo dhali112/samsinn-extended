@@ -68,22 +68,22 @@ describe('lateBinding warn-once', () => {
 
     try {
       const system = createSystem({ instanceLabel: 'test-instance' })
-      // Trigger evalEvent without setting a subscriber. mutateRoom: post a
-      // chat message via routeMessage so messagePosted fires too.
-      const room = system.house.createRoom({ name: 'lb-test', createdBy: SYSTEM_SENDER_ID })
-      const human = createHumanAgent({ name: 'Trigger' }, () => {})
-      system.team.addAgent(human)
+      // Use `bookmarksChanged` — wired into house callbacks but with no
+      // internal subscribers (wire-system-events would normally set one;
+      // tests skip that). Firing it without a subscriber should warn once.
+      //
+      // (The original version of this test fired `messagePosted` via room.post
+      // — but the scenario runner now subscribes to messagePosted internally
+      // for post-wait guides, so that slot is no longer "unsubscribed" by
+      // default.)
+      system.house.addBookmark('first')
+      system.house.addBookmark('second')
+      system.house.addBookmark('third')
 
-      // messagePosted is one of the slots. Without setOnMessagePosted called,
-      // the first proxy invocation should warn exactly once.
-      room.post({ senderId: human.id, content: 'hi', type: 'chat' })
-      room.post({ senderId: human.id, content: 'again', type: 'chat' })
-      room.post({ senderId: human.id, content: 'and again', type: 'chat' })
-
-      const messageWarnings = warnings.filter(w => w.includes('messagePosted'))
-      expect(messageWarnings.length).toBe(1)
-      expect(messageWarnings[0]).toContain('test-instance')
-      expect(messageWarnings[0]).toContain('first event dropped')
+      const slotWarnings = warnings.filter(w => w.includes('bookmarksChanged'))
+      expect(slotWarnings.length).toBe(1)
+      expect(slotWarnings[0]).toContain('test-instance')
+      expect(slotWarnings[0]).toContain('first event dropped')
     } finally {
       console.warn = origWarn
     }

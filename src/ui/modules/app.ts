@@ -16,6 +16,7 @@ import { mountRoomSwitcher } from './render/render-room-switcher.ts'
 import { mountVisibilityPopover } from './visibility-popover.ts'
 import { initMessageHeaderPrefs } from './message-header-prefs.ts'
 import { renderMessage } from './render/render-message.ts'
+import { renderScenarioStrip } from './scenario-strip.ts'
 import type {
   UIMessage,
   RoomProfile,
@@ -100,6 +101,19 @@ const {
 // Previously broken — callers assumed a global `$` that didn't exist, silently
 // throwing ReferenceError at module load and halting handler wiring.
 const $ = (sel: string) => document.querySelector(sel)!
+
+// Empty-state demo strip — adapter that closes over the messagesDiv ref and
+// the per-room "is the chat empty" check. Renders the strip below the
+// messages area only when (a) the current room has no chat (only system)
+// posts AND (b) no scenario is currently running in this tab.
+const renderScenarioStripForRoom = async (roomId: string): Promise<void> => {
+  if (messagesDiv.getAttribute('data-room-id') !== roomId) return
+  const isCurrentRoomEmpty = (): boolean => {
+    const msgs = $roomMessages.get()[roomId] ?? []
+    return msgs.every(m => m.type !== 'chat')
+  }
+  await renderScenarioStrip(messagesDiv, isCurrentRoomEmpty)
+}
 
 // === WS client ===
 // The `client` reference is held in ws-send.ts so any UI module can call
@@ -359,6 +373,11 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
 
     // Apply room-specific state
     refreshRoomControls()
+
+    // Empty-state demo nudge — shows when the room has no chat content
+    // (only the welcome system banner). Hides as soon as anyone posts or a
+    // scenario starts. Idempotent; safe to call on every room render.
+    void renderScenarioStripForRoom(roomId)
   } else {
     // No room selected — show the empty-state. Agent inspector is now a
     // modal, so it doesn't compete with chat-area visibility anymore.
@@ -432,6 +451,10 @@ $roomMessages.listen((allMessages, _old, changedRoomId) => {
   if (messagesDiv.scrollHeight - messagesDiv.scrollTop - messagesDiv.clientHeight < 100) {
     messagesDiv.scrollTop = messagesDiv.scrollHeight
   }
+
+  // The strip renderer's own empty-check decides whether to show or hide,
+  // so calling on every message update is the cheapest correct path.
+  void renderScenarioStripForRoom(changedRoomId)
 })
 
 // --- Thinking indicator lifecycle ---
@@ -846,4 +869,8 @@ void (async () => {
   const { ensureAuthenticated } = await import('./auth.ts')
   await ensureAuthenticated()
   connect()
+  // Share-link scenario boot: runs after WS connect so guide events
+  // emitted by the started run reach the overlay subscribers.
+  const { initScenarioShareLink } = await import('./scenario-share-link.ts')
+  void initScenarioShareLink()
 })()

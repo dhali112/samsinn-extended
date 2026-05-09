@@ -30,6 +30,7 @@ import { bookmarkRoutes } from './routes/bookmarks.ts'
 import { toolRoutes } from './routes/tools.ts'
 import { loggingRoutes } from './routes/logging.ts'
 import { scriptRoutes } from './routes/scripts.ts'
+import { scenarioRoutes } from './routes/scenarios.ts'
 import { geodataRoutes } from './routes/geodata.ts'
 import { documentRoutes } from './routes/documents.ts'
 import type { RouteContext } from './routes/types.ts'
@@ -59,6 +60,7 @@ const allRoutes = [
   ...bookmarkRoutes,
   // Scripts before rooms (avoids /rooms/:name/script being shadowed)
   ...scriptRoutes,
+  ...scenarioRoutes,
   // Geodata routes — process-wide, no instance binding.
   ...geodataRoutes,
   // RAG documents — per-instance corpus.

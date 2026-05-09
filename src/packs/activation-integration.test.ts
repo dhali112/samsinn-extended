@@ -132,12 +132,12 @@ describe('pack activation — end-to-end with House + Room', () => {
     expect(cafeSurf).not.toContain('av_atc')
   })
 
-  test('effectiveActivePacks is order-stable: implicit pair first, explicit appended', () => {
+  test('effectiveActivePacks is order-stable: implicit packs first, explicit appended', () => {
     const house = createHouse({})
     const room = house.createRoom({ name: 'X', createdBy: SYSTEM_SENDER_ID })
-    expect(effectiveActivePacks(room)).toEqual(['core', 'local'])
+    expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'welcome', 'demos'])
     room.setActivePacks(['z', 'a'])
-    expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'z', 'a'])
+    expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'welcome', 'demos', 'z', 'a'])
   })
 
   test('snapshot-style restore round-trips activePacks', () => {

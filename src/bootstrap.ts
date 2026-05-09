@@ -753,6 +753,16 @@ export const bootstrap = async (): Promise<void> => {
   }
 
   // === HTTP + WS server ===
+  // CSS bootstrap: build dist.css if missing or stale BEFORE the server
+  // starts listening. Makes the server self-sufficient regardless of how
+  // it was launched (bun run dev, bun --watch, prod systemd, preview tool,
+  // fresh checkout). The runtime fallback banner in server.ts stays as
+  // defense in depth for "dist.css deleted while server is running."
+  {
+    const { ensureCssBuilt } = await import('./api/ensure-css-built.ts')
+    const uiPath = `${import.meta.dir}/ui`
+    await ensureCssBuilt({ uiPath })
+  }
   const { createServer } = await import('./api/server.ts')
   createServer({
     registry,

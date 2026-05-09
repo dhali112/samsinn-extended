@@ -174,14 +174,22 @@ export const evaluate = async (
     return raw.length > PREVIEW_MAX ? `${raw.slice(0, PREVIEW_MAX)}…` : raw
   }
 
-  const makeResult = (decision: Decision): EvalResult => ({
-    decision: {
-      ...(inReplyTo && inReplyTo.length > 0 ? { ...decision, inReplyTo } : decision),
-      metrics: lastMetrics,
-      ...(toolTrace.length > 0 ? { toolTrace: [...toolTrace] } : {}),
-    },
-    flushInfo: contextResult.flushInfo,
-  })
+  const makeResult = (decision: Decision): EvalResult => {
+    // Emit `eval_completed` exactly once per evaluate() call. This is the
+    // single source of truth for "this agent is done" — subscribers (scenario
+    // runner's wait-for-llm-response arranger, anything that previously polled
+    // agent.state) can rely on this firing on every terminal path because
+    // every `return` in evaluate() routes through makeResult.
+    onEvent?.({ kind: 'eval_completed', outcome: decision.response.action })
+    return {
+      decision: {
+        ...(inReplyTo && inReplyTo.length > 0 ? { ...decision, inReplyTo } : decision),
+        metrics: lastMetrics,
+        ...(toolTrace.length > 0 ? { toolTrace: [...toolTrace] } : {}),
+      },
+      flushInfo: contextResult.flushInfo,
+    }
+  }
 
   // Track the latest non-empty text the model emitted across tool rounds.
   // When the loop hits maxToolIterations we surface this to the user along

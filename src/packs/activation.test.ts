@@ -4,16 +4,16 @@ import { effectiveActivePacks, effectiveActivePackSet, isPackActiveInRoom } from
 const room = (packs: string[]) => ({ getActivePacks: () => packs })
 
 describe('effectiveActivePacks', () => {
-  test('empty room → core + local only', () => {
-    expect(effectiveActivePacks(room([]))).toEqual(['core', 'local'])
+  test('empty room → implicit packs only', () => {
+    expect(effectiveActivePacks(room([]))).toEqual(['core', 'local', 'welcome', 'demos'])
   })
 
-  test('one explicit pack → core + local + pack', () => {
-    expect(effectiveActivePacks(room(['aviation']))).toEqual(['core', 'local', 'aviation'])
+  test('one explicit pack → implicit + pack', () => {
+    expect(effectiveActivePacks(room(['aviation']))).toEqual(['core', 'local', 'welcome', 'demos', 'aviation'])
   })
 
   test('preserves explicit order', () => {
-    expect(effectiveActivePacks(room(['z', 'a', 'm']))).toEqual(['core', 'local', 'z', 'a', 'm'])
+    expect(effectiveActivePacks(room(['z', 'a', 'm']))).toEqual(['core', 'local', 'welcome', 'demos', 'z', 'a', 'm'])
   })
 })
 

@@ -16,6 +16,7 @@ import type {
 import type { SummaryScheduler, SummaryTarget } from './core/summaries/summary-scheduler.ts'
 import { createSummaryEngine } from './core/summaries/summary-engine.ts'
 import { scanPackSubdirs } from './packs/scanner.ts'
+import { effectiveActivePackSet } from './packs/activation.ts'
 import { createSummaryScheduler } from './core/summaries/summary-scheduler.ts'
 import { createTriggerScheduler, type TriggerScheduler } from './core/triggers/scheduler.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
@@ -65,6 +66,10 @@ import { dirname } from 'node:path'
 import { type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/scripts/script-store.ts'
 import { createScriptRunner, type ScriptRunner, type ScriptEventEmitter } from './core/scripts/script-runner.ts'
+import { createScenarioStore, type ScenarioStore } from './core/scenarios/store.ts'
+import { createScenarioRunner, type ScenarioRunner, type ScenarioEventEmitter } from './core/scenarios/runner.ts'
+import { buildWelcomeExtraSource } from './packs/synthetic-welcome/index.ts'
+import { buildDemosExtraSource } from './packs/synthetic-demos/index.ts'
 import { createWriteScriptTool } from './tools/built-in/script-codegen.ts'
 import { sharedPaths } from './core/paths.ts'
 
@@ -126,6 +131,13 @@ export interface System {
   readonly scriptsDir: string
   readonly scriptRunner: ScriptRunner
   readonly setOnScriptEvent: (cb: ScriptEventEmitter) => void
+  // Multi-subscriber observer slot (lateBinding.add). The scenario runner's
+  // `start-script` op uses this to await `script_completed` instead of polling.
+  // Returns an unsubscribe function.
+  readonly addScriptEventListener: (cb: ScriptEventEmitter) => () => void
+  readonly scenarioStore: ScenarioStore
+  readonly scenarioRunner: ScenarioRunner
+  readonly setOnScenarioEvent: (cb: ScenarioEventEmitter) => void
   readonly packsDir: string
   readonly knowledgeDir: string
   readonly providersStorePath: string
@@ -167,6 +179,11 @@ export interface System {
   // scheduleSave so edits don't stay in memory until the next message-post.
   readonly notifyAgentSettingsChanged: () => void
   readonly setOnEvalEvent: (callback: OnEvalEvent) => void
+  // Multi-subscriber observer slot (lateBinding.add). Used by the scenario
+  // runner's `wait-for-llm-response` arranger so it can subscribe without
+  // displacing the wire-system-events primary subscriber. Returns an
+  // unsubscribe function.
+  readonly addEvalEventListener: (cb: OnEvalEvent) => () => void
   readonly setOnProviderBound: (callback: OnProviderBound) => void
   readonly setOnProviderAllFailed: (callback: OnProviderAllFailed) => void
   readonly setOnProviderStreamFailed: (callback: OnProviderStreamFailed) => void
@@ -329,6 +346,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>('summaryRunFailed')
   const scriptHook = lateBinding<(roomId: string, message: import('./core/types/messaging.ts').Message) => void>('scriptHook')
   const scriptEvent = lateBinding<ScriptEventEmitter>('scriptEvent')
+  const scenarioEvent = lateBinding<ScenarioEventEmitter>('scenarioEvent')
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
@@ -598,7 +616,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const getSkillsForRoom = (roomId: string): string => {
     const room = house.getRoom(roomId)
     if (!room) return ''
-    const active = new Set(['core', 'local', ...room.getActivePacks()])
+    const active = effectiveActivePackSet(room)
     const inScope = skillStore.forScope(room.profile.name)
     const visible = inScope.filter(s => active.has(s.pack ?? 'local'))
     if (visible.length === 0) return ''
@@ -618,7 +636,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     if (!room) return null
     // Same activation gate as getSkillsForRoom — a pack-bundled skill's
     // allowed-tools list shouldn't constrain rooms where its pack is inactive.
-    const active = new Set(['core', 'local', ...room.getActivePacks()])
+    const active = effectiveActivePackSet(room)
     const skills = skillStore.forScope(room.profile.name)
       .filter(s => active.has(s.pack ?? 'local'))
     const declaring = skills.filter(s => s.allowedToolNames.length > 0)
@@ -665,6 +683,36 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // history (no further messages arrive in a deleted room, so the
   // findMissingCast defensive abort never fires).
   roomDeleted.add((roomId) => { void scriptRunner.stop(roomId) })
+
+  // Scenario engine — per-instance store + runner. The store discovers
+  // scenarios from installed packs (<pack>/scenarios/) and from the bundled
+  // synthetic 'welcome' pack which ships with the binary.
+  //
+  // The runner shares the per-instance message hook so 'guide-tooltip' /
+  // 'guide-modal' ops with `waitFor: post` resolve when the user sends a
+  // message in the named room.
+  const scenarioStore = createScenarioStore({
+    resolvePackDirs: () => scanPackSubdirs(packsDir, 'scenarios'),
+    // Lazy: called per reload so the welcome pack's default-model resolution
+    // (which reads from live provider state) happens after System is fully
+    // constructed and providers are wired.
+    extraSources: () => systemRef.current
+      ? [
+          buildWelcomeExtraSource(systemRef.current),
+          buildDemosExtraSource(systemRef.current),
+        ]
+      : [],
+  })
+  // Initial reload deferred until after systemRef.current is assigned (see
+  // the post-construction `void scenarioStore.reload()` near the bottom of
+  // createSystem). Scripts can reload eagerly because they have no
+  // System-bound bundled sources.
+  const scenarioRunner = createScenarioRunner({
+    getSystem: () => systemRef.current as System,
+    emit: (runId, event, detail) => scenarioEvent.proxy(runId, event, detail),
+  })
+  // Pipe message events into scenarioRunner so post-wait guides can resume.
+  messagePosted.add((roomId, message) => scenarioRunner.onRoomMessage(roomId, message))
 
   // --- Effective-model cache (Phase 4: derive-on-read) ---
   // Cache of currently-available models from llm.models(), refreshed in the
@@ -854,6 +902,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     scriptStore, scriptsDir,
     scriptRunner,
     setOnScriptEvent: scriptEvent.set,
+    addScriptEventListener: scriptEvent.add,
+    scenarioStore,
+    scenarioRunner,
+    setOnScenarioEvent: scenarioEvent.set,
     packsDir,
     knowledgeDir: sharedPaths.knowledge(),
     providersStorePath: sharedPaths.providers(),
@@ -878,6 +930,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     setOnAgentSettingsChanged: agentSettingsChanged.set,
     notifyAgentSettingsChanged: () => agentSettingsChanged.proxy(),
     setOnEvalEvent: evalEvent.set,
+    addEvalEventListener: evalEvent.add,
     setOnProviderBound: providerBound.set,
     setOnProviderAllFailed: providerAllFailed.set,
     setOnProviderStreamFailed: providerStreamFailed.set,
@@ -903,6 +956,9 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     limitMetrics: shared.limitMetrics,
   }
   systemRef.current = system
+  // Deferred scenario-store load: needs systemRef set first so the lazy
+  // extraSources getter (welcome pack model resolution) can read providerKeys.
+  void scenarioStore.reload().catch(err => console.error('[scenarios] reload failed:', err))
   // Kick off the cache refresh. Race with the very first eval is benign —
   // an empty cache returns `{ model: preferred, ... }` and the router can
   // route bare cloud names by trying each provider in order. The cache

@@ -12,5 +12,11 @@ export type EvalEvent =
   // preferred model recovers and then becomes unavailable again. Drives a
   // non-blocking UI notice ("Falling back to X — preferred Y unavailable").
   | { readonly kind: 'model_fallback'; readonly preferred: string; readonly effective: string; readonly reason: string }
+  // Emitted exactly once per evaluate() call, at the terminal point — whether
+  // the agent responded, passed, errored, or hit the iteration cap. Subscribers
+  // can use this as a reliable "this agent is done" signal without polling
+  // agent.state. Used by the scenario runner's `wait-for-llm-response` arranger
+  // and (after refactor) the `start-script` op's wait loop.
+  | { readonly kind: 'eval_completed'; readonly outcome: 'respond' | 'pass' | 'error' }
 
 export type OnEvalEvent = (agentName: string, event: EvalEvent) => void

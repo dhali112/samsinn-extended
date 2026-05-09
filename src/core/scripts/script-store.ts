@@ -18,11 +18,12 @@
 // parsed into a Script via parseScriptMd.
 // ============================================================================
 
-import { readdir, readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises'
+import { writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Script } from '../types/script.ts'
 import { parseScriptMd, VALID_NAME } from './script-md-parser.ts'
 import { createSerialiseChain } from '../serialise-chain.ts'
+import { scanMarkdownDir } from '../markdown-fs.ts'
 
 // Hard cap on script source size. Scripts are markdown — the largest realistic
 // hand-written one is a few KB. 256 KB is well above that and small enough
@@ -158,6 +159,10 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
 }
 
 // === Filesystem scan ===
+//
+// Delegates to the shared scanMarkdownDir helper. The helper returns
+// `{ value, name, sourcePath }` per file; we adapt to the local ScanEntry
+// shape so the collision-diagnostic codepath above stays unchanged.
 
 interface ScanEntry {
   readonly script: Script
@@ -165,59 +170,12 @@ interface ScanEntry {
 }
 
 const scanScriptDir = async (baseDir: string): Promise<ReadonlyArray<ScanEntry>> => {
-  let entries: string[]
-  try {
-    entries = await readdir(baseDir)
-  } catch {
-    return []
-  }
-
-  const out: ScanEntry[] = []
-  for (const entry of entries) {
-    const full = join(baseDir, entry)
-    let info
-    try { info = await stat(full) } catch { continue }
-
-    let name: string
-    let raw: string
-    let sourcePath: string
-    if (info.isDirectory()) {
-      if (!VALID_NAME.test(entry)) {
-        console.warn(`[scripts] "${entry}": directory name not a valid script name — skipping`)
-        continue
-      }
-      sourcePath = join(full, 'script.md')
-      try {
-        raw = await readFile(sourcePath, 'utf-8')
-      } catch {
-        continue
-      }
-      name = entry
-    } else if (info.isFile() && entry.endsWith('.md')) {
-      const stem = entry.slice(0, -'.md'.length)
-      if (!VALID_NAME.test(stem)) {
-        console.warn(`[scripts] "${entry}": filename not a valid script name — skipping`)
-        continue
-      }
-      sourcePath = full
-      try {
-        raw = await readFile(sourcePath, 'utf-8')
-      } catch (err) {
-        console.warn(`[scripts] "${entry}": read failed — ${err instanceof Error ? err.message : err}`)
-        continue
-      }
-      name = stem
-    } else {
-      continue
-    }
-
-    try {
-      const parsed = parseScriptMd(name, raw)
-      out.push({ script: parsed, sourcePath })
-    } catch (err) {
-      console.warn(`[scripts] "${name}" (${sourcePath}): invalid — ${err instanceof Error ? err.message : err}`)
-    }
-  }
-
-  return out
+  const results = await scanMarkdownDir<Script>({
+    dir: baseDir,
+    innerFilename: 'script.md',
+    validNameRe: VALID_NAME,
+    logPrefix: 'scripts',
+    parse: (name, raw) => parseScriptMd(name, raw),
+  })
+  return results.map(r => ({ script: r.value, sourcePath: r.sourcePath }))
 }

@@ -12,7 +12,11 @@
 // would just be a b660b3e-pattern landmine waiting to drift out of sync
 // with install/uninstall/activation events.
 
-const IMPLICIT_ACTIVE: ReadonlyArray<string> = ['core', 'local']
+// 'welcome' is the synthetic pack that bundles the first-run scenario.
+// 'demos' is the synthetic pack that bundles the capability-showcase
+// tutorials surfaced in Settings → Scenarios + the empty-state strip.
+// Both ship in the binary and are always implicitly active.
+const IMPLICIT_ACTIVE: ReadonlyArray<string> = ['core', 'local', 'welcome', 'demos']
 
 export interface RoomActivation {
   readonly getActivePacks: () => ReadonlyArray<string>

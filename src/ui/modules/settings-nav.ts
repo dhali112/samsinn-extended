@@ -4,7 +4,7 @@
 
 import { domRefs } from './app-dom.ts'
 
-type SettingsRow = 'prompt' | 'providers' | 'tools' | 'skills' | 'scripts' | 'packs' | 'geodata' | 'logging' | 'instances' | 'bug'
+type SettingsRow = 'prompt' | 'providers' | 'tools' | 'skills' | 'scripts' | 'scenarios' | 'packs' | 'geodata' | 'logging' | 'instances' | 'bug'
 
 const openers: Record<SettingsRow, () => Promise<void> | void> = {
   prompt: async () => {
@@ -26,6 +26,10 @@ const openers: Record<SettingsRow, () => Promise<void> | void> = {
   scripts: async () => {
     const m = await import('./modals/scripts-list-modal.ts')
     await m.openScriptsListModal()
+  },
+  scenarios: async () => {
+    const m = await import('./modals/scenarios-list-modal.ts')
+    await m.openScenariosListModal()
   },
   packs: async () => {
     const m = await import('./modals/packs-modal.ts')
