@@ -363,19 +363,39 @@
 </head>
 <body class="h-screen flex flex-col">
 
-  <!-- file:// detector — when the page is opened by double-clicking
-       index.html (instead of via http://localhost:3000), nothing works:
-       /dist.css 404s, /modules/*.ts 404s, /api/* 404s. Recurring source of
-       "the UI is broken" reports. Show a loud banner so the cause is
-       immediately obvious instead of "the styling looks weird, try
-       reloading". Removes itself when served over http(s). -->
+  <!-- file:// self-correction.
+       Recurring source of "the UI is broken" reports: editor preview panels
+       (Claude Code's Launch preview, VS Code's HTML preview, double-click
+       in Finder) open this file via file://. With no server, /dist.css
+       404s, /modules/*.ts 404s, /api/* 404s — the page renders unstyled
+       with no rooms / no agents.
+       Self-heal: if a dev server is reachable on port 3000, navigate there
+       automatically (the editor's preview pane lands on the real app).
+       If not, paint a loud red banner with recovery instructions.
+       No-op when served over http(s). -->
   <script>
-    if (location.protocol === 'file:') {
+    (function () {
+      if (location.protocol !== 'file:') return;
+      var DEV_URL = 'http://localhost:3000/';
+      // Banner first so SOMETHING is visible during the probe and stays up
+      // if the redirect fails (e.g., server not running).
       var b = document.createElement('div');
       b.style.cssText = 'position:fixed;inset:0 0 auto 0;padding:14px 20px;background:#dc2626;color:#fff;font:600 14px/1.4 system-ui,-apple-system,sans-serif;z-index:2147483647;text-align:center;';
-      b.innerHTML = '⚠ samsinn loaded via <code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px">file://</code> — nothing will work. Open <a href="http://localhost:3000" style="color:#fff;text-decoration:underline">http://localhost:3000</a> after starting the server (<code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px">bun run dev</code>).';
+      b.innerHTML = '⚠ samsinn loaded via <code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px">file://</code>. Probing dev server at <code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px">' + DEV_URL + '</code>…';
       document.documentElement.appendChild(b);
-    }
+      // Probe with a short timeout. If reachable, navigate to it — the
+      // editor preview pane then shows the real app instead of a 404'd
+      // skeleton. mode:'no-cors' so we don't need CORS headers; the goal
+      // is just "did the connection succeed."
+      var ctrl = new AbortController();
+      var timeout = setTimeout(function () { ctrl.abort(); }, 1500);
+      fetch(DEV_URL, { mode: 'no-cors', signal: ctrl.signal })
+        .then(function () { clearTimeout(timeout); location.replace(DEV_URL); })
+        .catch(function () {
+          clearTimeout(timeout);
+          b.innerHTML = '⚠ samsinn loaded via <code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px">file://</code> and the dev server isn\'t reachable. Run <code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px">bun run dev</code> then open <a href="' + DEV_URL + '" style="color:#fff;text-decoration:underline">' + DEV_URL + '</a>.';
+        });
+    })();
   </script>
 
   <!-- Toast container (bottom-right) -->
