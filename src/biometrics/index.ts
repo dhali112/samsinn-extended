@@ -1,0 +1,122 @@
+// Public API for the biometrics package.
+//
+// COUPLING RULE: this package imports nothing from src/core/, src/agents/,
+// src/api/, src/ui/. It is a leaf package designed for future extraction
+// to its own repository. Don't add Samsinn-specific imports here.
+//
+// Lifecycle:
+//   const session = createBiometricSession({ videoEl, canvasEl, resolution })
+//   await session.start()         // requests getUserMedia, loads MediaPipe,
+//                                  // begins rAF loop
+//   const signal = session.read() // sync; latest snapshot or null
+//   await session.stop()           // releases stream + tears down loop
+//
+// Resolution defaults to 320×240. Callers can override per the design doc;
+// higher resolution costs more CPU per frame.
+
+import { createFaceDriver, type FaceDriver } from './modules/face.ts'
+import {
+  type CaptureConfig,
+  type CaptureSession,
+  type BiometricSignal,
+  DEFAULT_RESOLUTION,
+} from './types.ts'
+
+export type {
+  CaptureConfig,
+  CaptureSession,
+  BiometricSignal,
+  ExpressionScores,
+  HeadPose,
+  CaptureResolution,
+} from './types.ts'
+
+export { DEFAULT_RESOLUTION } from './types.ts'
+
+export const createBiometricSession = (config: CaptureConfig): CaptureSession => {
+  const resolution = config.resolution ?? DEFAULT_RESOLUTION
+  let driver: FaceDriver | null = null
+  let stream: MediaStream | null = null
+  let rafHandle: number | null = null
+  let latest: BiometricSignal | null = null
+  let started = false
+  let stopped = false
+
+  const errorListeners = new Set<(e: Error) => void>()
+  const emitError = (e: Error): void => {
+    for (const cb of errorListeners) {
+      try { cb(e) } catch { /* ignore */ }
+    }
+  }
+
+  const loop = (): void => {
+    if (stopped || !driver) return
+    rafHandle = requestAnimationFrame(loop)
+    try {
+      const ts = performance.now()
+      const signal = driver.run(config.videoEl, ts)
+      if (signal) latest = signal
+      driver.drawOverlay(config.canvasEl, config.videoEl)
+    } catch (err) {
+      emitError(err instanceof Error ? err : new Error(String(err)))
+    }
+  }
+
+  return {
+    start: async (): Promise<void> => {
+      if (started) return
+      started = true
+      try {
+        const constraints: MediaStreamConstraints = {
+          video: {
+            width: { ideal: resolution.width },
+            height: { ideal: resolution.height },
+            ...(config.deviceId ? { deviceId: { exact: config.deviceId } } : {}),
+          },
+          audio: false,
+        }
+        stream = await navigator.mediaDevices.getUserMedia(constraints)
+        config.videoEl.srcObject = stream
+        config.videoEl.muted = true
+        // playsInline keeps the video element from going full-screen on iOS;
+        // harmless on desktop and consistent across platforms.
+        config.videoEl.setAttribute('playsinline', '')
+        await config.videoEl.play()
+        // Match canvas intrinsic size to the negotiated track size where
+        // possible — falls back to requested resolution if videoWidth is
+        // not yet available (some browsers report 0 until first frame).
+        config.canvasEl.width = config.videoEl.videoWidth || resolution.width
+        config.canvasEl.height = config.videoEl.videoHeight || resolution.height
+        driver = await createFaceDriver()
+        loop()
+      } catch (err) {
+        stopped = true
+        const e = err instanceof Error ? err : new Error(String(err))
+        emitError(e)
+        throw e
+      }
+    },
+    read: () => latest,
+    stop: async (): Promise<void> => {
+      if (stopped) return
+      stopped = true
+      if (rafHandle !== null) {
+        cancelAnimationFrame(rafHandle)
+        rafHandle = null
+      }
+      try { driver?.close() } catch { /* ignore */ }
+      driver = null
+      if (stream) {
+        for (const track of stream.getTracks()) {
+          try { track.stop() } catch { /* ignore */ }
+        }
+        stream = null
+      }
+      try { config.videoEl.srcObject = null } catch { /* ignore */ }
+    },
+    onError: (cb) => {
+      errorListeners.add(cb)
+      return () => errorListeners.delete(cb)
+    },
+  }
+}

@@ -16,6 +16,6 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "include": ["src/ui/**/*.ts"],
-  "exclude": ["src/ui/**/*.test.ts"]
+  "include": ["src/ui/**/*.ts", "src/biometrics/**/*.ts"],
+  "exclude": ["src/ui/**/*.test.ts", "src/biometrics/**/*.test.ts"]
 }
