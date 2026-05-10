@@ -54,6 +54,7 @@ export const sharedPaths = {
   packs: (): string => join(samsinnHome(), 'packs'),
   skills: (): string => join(localPack(), 'skills'),
   scripts: (): string => join(localPack(), 'scripts'),
+  scenarios: (): string => join(localPack(), 'scenarios'),
   tools: (): string => join(localPack(), 'tools'),
   knowledge: (): string => join(samsinnHome(), 'knowledge'),
   geodata: (): string => join(localPack(), 'geodata'),

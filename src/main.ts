@@ -71,6 +71,7 @@ import { createScenarioRunner, type ScenarioRunner, type ScenarioEventEmitter } 
 import { buildWelcomeExtraSource } from './packs/synthetic-welcome/index.ts'
 import { buildDemosExtraSource } from './packs/synthetic-demos/index.ts'
 import { createWriteScriptTool } from './tools/built-in/script-codegen.ts'
+import { createWriteScenarioTool } from './tools/built-in/scenario-codegen.ts'
 import { sharedPaths } from './core/paths.ts'
 
 import { createOllamaUrlRegistry, type OllamaUrlRegistry } from './core/ollama-urls.ts'
@@ -715,7 +716,9 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // The runner shares the per-instance message hook so 'guide-tooltip' /
   // 'guide-modal' ops with `waitFor: post` resolve when the user sends a
   // message in the named room.
+  const scenariosDir = sharedPaths.scenarios()
   const scenarioStore = createScenarioStore({
+    baseDir: scenariosDir,
     resolvePackDirs: () => scanPackSubdirs(packsDir, 'scenarios'),
     // Lazy: called per reload so the welcome pack's default-model resolution
     // (which reads from live provider state) happens after System is fully
@@ -741,6 +744,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   scenarioRunnerRef = scenarioRunner
   // Pipe message events into scenarioRunner so post-wait guides can resume.
   messagePosted.add((roomId, message) => scenarioRunner.onRoomMessage(roomId, message))
+
+  // write_scenario — pure data (writes markdown files under
+  // $SAMSINN_HOME/packs/local/scenarios/). Mirror of write_script. Validation
+  // happens server-side via scenarioStore.upsert.
+  toolRegistry.register(createWriteScenarioTool(scenarioStore, () => { /* onChange already broadcasts */ }))
 
   // --- Effective-model cache (Phase 4: derive-on-read) ---
   // Cache of currently-available models from llm.models(), refreshed in the
