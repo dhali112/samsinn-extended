@@ -160,6 +160,11 @@ export interface HouseCallbacks {
   readonly onSummaryConfigChanged?: OnSummaryConfigChanged
   readonly onSummaryUpdated?: OnSummaryUpdated
   readonly callSystemLLM?: (options: LLMCallOptions) => Promise<string>
+  // Script-engine hook. Direct callback (not via lateBinding) — fires after
+  // onMessagePosted on every chat message. Replaces the prior `scriptHook`
+  // lateBinding in main.ts; the runner is always present at room-construction
+  // time, so the warn-once-on-missing-subscriber benefit doesn't apply here.
+  readonly onScriptMessage?: OnMessagePosted
 }
 
 // === House — room collection + bookmarks + system-level LLM ===

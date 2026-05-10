@@ -47,6 +47,15 @@ export interface RoomCallbacks {
   readonly onModeAutoSwitched?: (roomId: string, toMode: DeliveryMode, reason: 'second-ai-joined') => void
   readonly onSummaryConfigChanged?: OnSummaryConfigChanged
   readonly onSummaryUpdated?: OnSummaryUpdated
+  // Script handler — invoked synchronously after onMessagePosted and after
+  // schedulerRef. Direct call instead of a lateBinding because the runner is
+  // always wired by the time rooms exist, and the script observer status
+  // is an inherent room concern (the runner *runs* the room when active),
+  // not an external subscriber. Pre-Phase-3 this was main.ts's `scriptHook`
+  // lateBinding. Replaced with this callback so the dispatch is visible at
+  // its actual call site (room.post → callback) instead of hidden behind a
+  // proxy.
+  readonly onScriptMessage?: OnMessagePosted
 }
 
 export const createRoom = (
@@ -127,6 +136,7 @@ export const createRoom = (
     messages.push(message)
 
     callbacks?.onMessagePosted?.(profile.id, message)
+    callbacks?.onScriptMessage?.(profile.id, message)
 
     if (params.senderId !== SYSTEM_SENDER_ID && params.type !== 'join' && params.type !== 'leave') {
       members.add(params.senderId)

@@ -32,7 +32,7 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
     deliver, resolveAgentName, resolveTag, resolveKind, onMessagePosted, onTurnChanged,
     onDeliveryModeChanged, onRoomCreated, onRoomDeleted,
     onBookmarksChanged, onManualModeEntered, onModeAutoSwitched,
-    onSummaryConfigChanged, onSummaryUpdated, callSystemLLM,
+    onSummaryConfigChanged, onSummaryUpdated, callSystemLLM, onScriptMessage,
   } = callbacks
 
   const rooms = new Map<string, Room>()
@@ -49,7 +49,7 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
     nameIndex.has(name.toLowerCase())
 
   const makeRoomCallbacks = (): RoomCallbacks => ({
-    deliver, resolveAgentName, resolveTag, resolveKind, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onManualModeEntered, onModeAutoSwitched, onSummaryConfigChanged, onSummaryUpdated,
+    deliver, resolveAgentName, resolveTag, resolveKind, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onManualModeEntered, onModeAutoSwitched, onSummaryConfigChanged, onSummaryUpdated, onScriptMessage,
   })
 
   const storeRoom = (config: RoomConfig, name: string): Room => {

@@ -147,3 +147,23 @@ WebSocket events broadcast to room subscribers:
   advance, the Pressure block tells you which agent is holding back. Use
   the operator force-advance button (▶▶) sparingly — it bypasses
   readiness and may produce uneven scenes.
+
+## Internals: the message hook
+
+The runner attaches to the room via the `onScriptMessage` callback in
+`RoomCallbacks` (see `src/core/rooms/room.ts`). The dispatch fires inside
+`room.post()` immediately after `onMessagePosted`. This is a direct
+callback, not a `lateBinding` proxy: the runner is always wired by the
+time rooms exist, so the warn-once-on-missing-subscriber benefit doesn't
+apply, and a direct callback keeps the dispatch site visible at the call
+location instead of hiding it behind a proxy.
+
+`ScriptRun` state (per-room script execution: current step, readiness,
+dialogue log, role overrides) lives RAM-only inside the runner closure.
+It is **not persisted** across restarts — by design, matching v1 (see
+`src/core/storage/snapshot.ts` versioning notes). A server restart mid-
+script ends the run; the cast agents are torn down with their room as
+usual. This is a deliberate scope choice, not an accident; revisit only
+if a concrete use case for resumable scripts emerges (the obvious case —
+long-running improv scenes that survive a deploy — has not been
+requested).
