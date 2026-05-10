@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createScenarioStore } from '../../core/scenarios/store.ts'
 import { createWriteScenarioTool } from './scenario-codegen.ts'
+import type { ToolContext } from '../../core/types/tool.ts'
 
 const validSource = `---
 title: Demo Scenario
@@ -17,6 +18,8 @@ title: Demo Scenario
     name: TestRoom
 \`\`\`
 `
+
+const ctx: ToolContext = { callerId: 'test', callerName: 'test' }
 
 describe('write_scenario tool', () => {
   let baseDir: string
@@ -33,11 +36,10 @@ describe('write_scenario tool', () => {
     const store = createScenarioStore({ baseDir })
     let changed = 0
     const tool = createWriteScenarioTool(store, () => { changed++ })
-    const result = await tool.execute({ name: 'demo', source: validSource })
+    const result = await tool.execute({ name: 'demo', source: validSource }, ctx)
     expect(result.success).toBe(true)
     expect(result.data).toEqual({ name: 'demo', title: 'Demo Scenario' })
     expect(changed).toBe(1)
-    // Persisted: store.get returns it under id `local:demo`.
     const all = store.list()
     expect(all.length).toBe(1)
     expect(all[0]!.name).toBe('demo')
@@ -50,7 +52,7 @@ describe('write_scenario tool', () => {
     const result = await tool.execute({
       name: 'broken',
       source: '---\ntitle: Bad\n---\n\n```scenario\n- not-a-real-op:\n    foo: bar\n```\n',
-    })
+    }, ctx)
     expect(result.success).toBe(false)
     expect(typeof result.error).toBe('string')
   })
@@ -58,15 +60,15 @@ describe('write_scenario tool', () => {
   test('rejects missing name or source', async () => {
     const store = createScenarioStore({ baseDir })
     const tool = createWriteScenarioTool(store, () => {})
-    expect((await tool.execute({ name: '', source: validSource })).success).toBe(false)
-    expect((await tool.execute({ name: 'x', source: '' })).success).toBe(false)
+    expect((await tool.execute({ name: '', source: validSource }, ctx)).success).toBe(false)
+    expect((await tool.execute({ name: 'x', source: '' }, ctx)).success).toBe(false)
   })
 
   test('rejects oversized source', async () => {
     const store = createScenarioStore({ baseDir })
     const tool = createWriteScenarioTool(store, () => {})
     const huge = 'X'.repeat(300_000)
-    const result = await tool.execute({ name: 'huge', source: huge })
+    const result = await tool.execute({ name: 'huge', source: huge }, ctx)
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/too large/)
   })
@@ -74,9 +76,9 @@ describe('write_scenario tool', () => {
   test('upsert overwrites prior version with same name', async () => {
     const store = createScenarioStore({ baseDir })
     const tool = createWriteScenarioTool(store, () => {})
-    await tool.execute({ name: 'rev', source: validSource })
+    await tool.execute({ name: 'rev', source: validSource }, ctx)
     const updatedSource = validSource.replace('Demo Scenario', 'Demo v2')
-    const r2 = await tool.execute({ name: 'rev', source: updatedSource })
+    const r2 = await tool.execute({ name: 'rev', source: updatedSource }, ctx)
     expect(r2.success).toBe(true)
     expect(r2.data).toEqual({ name: 'rev', title: 'Demo v2' })
     expect(store.list().length).toBe(1)

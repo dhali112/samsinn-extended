@@ -17,6 +17,7 @@ import type { ScenarioOp, ScenarioRun, RunOptions, GuideWait } from './types.ts'
 import type { ScenarioEventName } from './runner-types.ts'
 import type { ExternalWaitArgs } from './waits.ts'
 import { SYSTEM_SENDER_ID } from '../types/constants.ts'
+import { parseScriptMd } from '../scripts/script-md-parser.ts'
 
 export interface OpContext {
   readonly system: System
@@ -29,6 +30,11 @@ export interface OpContext {
   // llm-response / script-completed). Used by `wait` and `start-script`.
   readonly arrangeExternal: (args: ExternalWaitArgs) => Promise<void>
   readonly trackTimer: (handle: ReturnType<typeof setTimeout>) => void
+  // Register a cleanup callback fired when the run reaches terminal status
+  // (completed/failed/stopped) or is evicted. Used by ops that own out-of-
+  // band resources the runner can't see (e.g. inline-script needs to stop
+  // its launched script if the scenario aborts mid-wait).
+  readonly trackCleanup: (fn: () => void) => void
   readonly fire: (event: ScenarioEventName, detail: Record<string, unknown>) => void
 }
 
@@ -139,6 +145,33 @@ export const opHandlers: HandlerMap = {
       type: 'script-completed',
       room: op.room,
       scriptName: op.scriptName,
+    })
+  },
+
+  'inline-script': async (op, { system, arrangeExternal, trackCleanup }) => {
+    const room = system.house.getRoom(op.room)
+    if (!room) throw new Error(`inline-script: room "${op.room}" not found`)
+    // Synthetic name surfaces in error messages + UI; deterministic per
+    // scenario+op-line so abort-loops aren't confusing.
+    const inlineName = `__inline_${op.line}`
+    let parsed
+    try {
+      parsed = parseScriptMd(inlineName, op.source)
+    } catch (err) {
+      throw new Error(`inline-script (line ${op.line}) parse failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    const startResult = await system.scriptRunner.startWith(room.profile.id, parsed)
+    if (!startResult.ok) {
+      throw new Error(`inline-script (line ${op.line}) failed to start: ${startResult.reason ?? 'unknown'}`)
+    }
+    // If the scenario is stopped/failed mid-wait, propagate the stop to
+    // the launched script. Without this the script would keep running
+    // after its parent scenario aborted.
+    trackCleanup(() => { void system.scriptRunner.stop(room.profile.id) })
+    await arrangeExternal({
+      type: 'script-completed',
+      room: op.room,
+      scriptName: inlineName,
     })
   },
 

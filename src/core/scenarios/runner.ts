@@ -186,6 +186,7 @@ export const createScenarioRunner = (deps: ScenarioRunnerDeps): ScenarioRunner =
     arrangeWait: (waitFor) => arrangeWait(state, waitFor),
     arrangeExternal: (args) => arrangeExternal(state, args),
     trackTimer: (handle) => trackTimer(state.runId, handle),
+    trackCleanup: (fn) => trackCleanup(state.runId, fn),
     fire: (event, detail) => fire(state.runId, event, detail),
   })
 

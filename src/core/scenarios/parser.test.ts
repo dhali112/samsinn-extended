@@ -173,3 +173,46 @@ describe('scenario parser — line tracking', () => {
     expect(() => parseScenario('p', 'n', src)).toThrow(/line 7:.*Ghost/)
   })
 })
+
+describe('scenario parser — inline-script op', () => {
+  test('parses inline-script with block-scalar source', () => {
+    const src = wrap([
+      '```scenario',
+      '- create-room: { name: Cafe }',
+      '- inline-script:',
+      '    room: Cafe',
+      '    source: |',
+      '      # SCRIPT: Tiny exchange',
+      '      ## Cast',
+      '      ### Alice',
+      '      - model: x',
+      '      - persona: |',
+      '          friendly',
+      '      ### Bob',
+      '      - model: x',
+      '      - persona: |',
+      '          curious',
+      '      ## Step 1 — Hello',
+      '      - alice: greet bob',
+      '      - bob: respond',
+      '```',
+    ].join('\n'))
+    const s = parseScenario('p', 'n', src)
+    expect(s.ops).toHaveLength(2)
+    const inline = s.ops[1]!
+    expect(inline.kind).toBe('inline-script')
+    expect(inline).toMatchObject({ kind: 'inline-script', room: 'Cafe' })
+  })
+
+  test('rejects inline-script referencing undeclared room', () => {
+    const src = wrap([
+      '```scenario',
+      '- inline-script:',
+      '    room: Ghost',
+      '    source: |',
+      '      # SCRIPT: x',
+      '```',
+    ].join('\n'))
+    expect(() => parseScenario('p', 'n', src)).toThrow(/inline-script.*Ghost/)
+  })
+})

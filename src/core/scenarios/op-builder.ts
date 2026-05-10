@@ -110,6 +110,14 @@ export const buildOp = (
         scriptName: requireStr('scriptName'),
       }
     }
+    case 'inline-script': {
+      return {
+        kind: 'inline-script',
+        line,
+        room: requireStr('room'),
+        source: requireStr('source'),
+      }
+    }
     case 'guide-tooltip': {
       const wait = optWait()
       const base = {
@@ -211,6 +219,7 @@ export const validateNameReferences = (ops: ReadonlyArray<ScenarioOp>): void => 
         break
       case 'activate-pack':
       case 'start-script':
+      case 'inline-script':
         if (!declaredRooms.has(op.room)) {
           throw new ScenarioParseError(
             `${op.kind} references undeclared room "${op.room}"`,

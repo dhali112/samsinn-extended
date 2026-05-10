@@ -49,6 +49,13 @@ export type ScenarioOp =
       readonly body: string
     })
   | (OpBase & { readonly kind: 'start-script'; readonly room: string; readonly scriptName: string })
+  // Inline-script: parses + starts a script literal embedded in the scenario
+  // body (no separate script file). Useful for one-off compositions inside a
+  // scenario. Source must be a valid script markdown body matching the
+  // grammar in docs/scripts.md (starting with `# SCRIPT: <title>`).
+  // Bypasses pack-activation gating (the scenario itself is the source of
+  // truth). Cleanup on scenario abort/stop is registered automatically.
+  | (OpBase & { readonly kind: 'inline-script'; readonly room: string; readonly source: string })
   | (OpBase & {
       readonly kind: 'guide-tooltip'
       readonly selector: string              // CSS selector against existing data-*

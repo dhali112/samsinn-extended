@@ -26,6 +26,11 @@ import { effectiveActivePackSet } from '../../packs/activation.ts'
 
 export interface ScriptRunner {
   readonly start: (roomId: string, scriptName: string) => Promise<{ ok: boolean; reason?: string }>
+  // Start with an already-parsed Script object, bypassing the store + pack-
+  // activation gate. Used by the scenario engine's inline-script op so a
+  // scenario can include a script literal without registering it in the
+  // store. The Script must already be parsed (caller's responsibility).
+  readonly startWith: (roomId: string, script: Script) => Promise<{ ok: boolean; reason?: string }>
   readonly stop: (roomId: string) => Promise<{ ok: boolean; reason?: string }>
   readonly forceAdvance: (roomId: string) => Promise<{ ok: boolean; reason?: string }>
   readonly getRun: (roomId: string) => ScriptRun | undefined
@@ -175,6 +180,40 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
         reason: `script "${scriptName}" belongs to pack "${owningPack}" which is not active in this room`,
       }
     }
+
+    return startScriptInternal(roomId, script)
+  }
+
+  // Skip-the-store / skip-the-pack-gate variant. The caller already has a
+  // parsed Script (e.g. a scenario inlined the body in an inline-script op).
+  // The room + already-running checks still apply; everything else is the
+  // shared internal flow.
+  const startWith = async (roomId: string, script: Script): Promise<{ ok: boolean; reason?: string }> => {
+    if (runs.has(roomId)) return { ok: false, reason: 'a script is already running in this room' }
+    const system = getSystem()
+    const room = system.house.getRoom(roomId)
+    if (!room) return { ok: false, reason: 'room not found' }
+    void room
+    return startScriptInternal(roomId, script)
+  }
+
+  // Shared body of start / startWith. Caller has already validated:
+  //   - room exists
+  //   - no run already in this room
+  //   - (start only) script came from store + pack is active
+  // This function:
+  //   - validates cast names not taken
+  //   - spawns cast
+  //   - switches delivery to manual
+  //   - builds + registers ScriptRun
+  //   - posts stage card + emits script_started
+  //   - activates first speaker
+  const startScriptInternal = async (
+    roomId: string,
+    script: Script,
+  ): Promise<{ ok: boolean; reason?: string }> => {
+    const system = getSystem()
+    const room = system.house.getRoom(roomId)!  // checked by caller
 
     for (const member of script.cast) {
       if (system.team.getAgent(member.name)) {
@@ -516,6 +555,7 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
 
   return {
     start,
+    startWith,
     stop,
     forceAdvance,
     getRun: (roomId) => runs.get(roomId),
