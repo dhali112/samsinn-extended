@@ -741,9 +741,22 @@ bun run dev          # Start with hot-reload
 bun test             # Full test suite (requires Ollama running)
 bun run test:unit    # Unit tests only (no Ollama needed)
 bun run check        # TypeScript type check
+bun run health       # Codebase health audit → .health/YYYY-MM-DD.md
 ```
 
 Tests cover: room logic, delivery modes, agent behaviour, tool execution, snapshot persistence, HTTP routes, WebSocket handler, MCP server, filesystem tool loader.
+
+### Hooks (one-time setup)
+
+A pre-push hook validates typecheck + dependency boundaries (~5s). Install once:
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+This sets `git config core.hooksPath scripts/hooks/`, so the hook is version-controlled and works across worktrees. Bypass when you must with `git push --no-verify`.
+
+The full health audit (`bun run health`) compares against `.health/baseline.md` and writes a dated report. The Claude Code session also auto-runs it weekly via `.claude/settings.json` Stop hook.
 
 ---
 

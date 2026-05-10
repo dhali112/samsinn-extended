@@ -19,7 +19,8 @@
     "test:unit": "bun test -t '^(?!.*Ollama)'",
     "headless": "bun run src/main.ts --headless",
     "deploy": "bun run scripts/deploy.ts",
-    "smoke": "bun run scripts/smoke-streaming.ts"
+    "smoke": "bun run scripts/smoke-streaming.ts",
+    "health": "bash scripts/health.sh"
   },
   "keywords": ["agents", "multi-agent", "llm", "ollama", "communication", "rooms", "bun", "typescript"],
   "license": "MIT",

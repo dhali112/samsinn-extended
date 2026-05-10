@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Pre-push hook — fast subset of the health audit. ~4-5s on this codebase.
+#
+# Runs:
+#   1. tsc --noEmit (server only — UI tsc is in `bun run check` but skipped
+#      here because UI errors surface in dev server, not in deployment)
+#   2. escape-hatch grep (warns; does not block — counts can drop only via
+#      deliberate edits)
+#   3. dependency-cruiser --validate (BLOCKS on rule violations: cycles,
+#      ui→core internals, core→ui, mcp→ui)
+#
+# Bypassable in genuine emergency:  git push --no-verify
+# But: doing this without a follow-up fix is what leads to drift. The /health
+# slash command + .health/ baseline are how you stay honest.
+
+set -u
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+FAILED=0
+
+echo "→ Pre-push: tsc --noEmit (server)"
+if ! bun run check:server >/dev/null 2>&1; then
+  echo "  ❌ typecheck failed. Run: bun run check"
+  FAILED=1
+fi
+
+echo "→ Pre-push: escape-hatch grep"
+ESCAPE_COUNT=$(grep -rnE '@ts-(ignore|expect-error|nocheck)|\bas any\b|as unknown as' src/ 2>/dev/null | wc -l | tr -d ' ')
+BASELINE_ESCAPE=64  # update via .health/suppressed.md when intentional drift
+if [ "$ESCAPE_COUNT" -gt "$BASELINE_ESCAPE" ]; then
+  echo "  ⚠️  escape-hatch count is $ESCAPE_COUNT (baseline: $BASELINE_ESCAPE). New 'as any' / @ts-ignore added?"
+  echo "     Not blocking — run /health for details."
+fi
+
+echo "→ Pre-push: dependency-cruiser --validate"
+if ! bunx -y dependency-cruiser@latest --config .dependency-cruiser.cjs "src/**/*.ts" --output-type err >/tmp/depcruise-pre-push.txt 2>&1; then
+  # Tool ran but found violations. Check whether they include hard-error rules
+  # (boundary violations are hard errors; cycles are also hard errors here but
+  # currently grandfathered via .health/suppressed.md). For now: only block on
+  # boundary violations, which would be NEW (no boundary violations exist in
+  # the current baseline). If dep-cruiser reports any of the boundary rule
+  # names, fail.
+  if grep -qE 'ui-must-not-import-core-internals|core-must-not-import-ui|mcp-must-not-import-ui' /tmp/depcruise-pre-push.txt; then
+    echo "  ❌ boundary violation. Details:"
+    grep -A 3 -E 'ui-must-not-import-core-internals|core-must-not-import-ui|mcp-must-not-import-ui' /tmp/depcruise-pre-push.txt
+    FAILED=1
+  else
+    # Cycles + orphans are pre-existing; don't block, but report the count.
+    SUMMARY=$(tail -3 /tmp/depcruise-pre-push.txt | grep -E '[0-9]+ dependency violations' || true)
+    echo "  ⚠️  $SUMMARY (pre-existing — see .health/suppressed.md)"
+  fi
+fi
+
+if [ "$FAILED" = 1 ]; then
+  echo
+  echo "Pre-push checks failed. Fix the issues, or bypass with --no-verify if you must."
+  exit 1
+fi
+
+echo "→ Pre-push: ✅ passed"
+exit 0

@@ -1,0 +1,200 @@
+Resolving dependencies
+Resolved, downloaded and extracted [2]
+Saved lockfile
+Unused files (103)
+.dependency-cruiser.cjs: .dependency-cruiser.cjs
+experiments/cli.ts: experiments/cli.ts
+experiments/examples/ablation.ts: experiments/examples/ablation.ts
+experiments/examples/hello-world.ts: experiments/examples/hello-world.ts
+experiments/examples/two-agent-debate.ts: experiments/examples/two-agent-debate.ts
+experiments/examples/zero-agent-reset.ts: experiments/examples/zero-agent-reset.ts
+experiments/examples/zero-agent-subprocess.ts: experiments/examples/zero-agent-subprocess.ts
+experiments/examples/zero-agent.ts: experiments/examples/zero-agent.ts
+scripts/streaming-probe.ts: scripts/streaming-probe.ts
+skills/knowledge-base/tools/kb_ingest.ts: skills/knowledge-base/tools/kb_ingest.ts
+skills/knowledge-base/tools/kb_lint.ts: skills/knowledge-base/tools/kb_lint.ts
+skills/knowledge-base/tools/kb_query.ts: skills/knowledge-base/tools/kb_query.ts
+skills/skill-builder/tools/generate_tool_code.ts: skills/skill-builder/tools/generate_tool_code.ts
+src/tools/__fixtures__/_helper.ts: src/tools/__fixtures__/_helper.ts
+src/tools/__fixtures__/invalid-bad-name.ts: src/tools/__fixtures__/invalid-bad-name.ts
+src/tools/__fixtures__/invalid-no-execute.ts: src/tools/__fixtures__/invalid-no-execute.ts
+src/tools/__fixtures__/multi-tool.ts: src/tools/__fixtures__/multi-tool.ts
+src/tools/__fixtures__/single-tool.ts: src/tools/__fixtures__/single-tool.ts
+src/tools/__fixtures__/throws-on-import.ts: src/tools/__fixtures__/throws-on-import.ts
+src/ui/input.css: src/ui/input.css
+src/ui/lib/format-retry.ts: src/ui/lib/format-retry.ts
+src/ui/modules/agent-inspector.ts: src/ui/modules/agent-inspector.ts
+src/ui/modules/agent-selection.ts: src/ui/modules/agent-selection.ts
+src/ui/modules/app-dom.ts: src/ui/modules/app-dom.ts
+src/ui/modules/app-thinking.ts: src/ui/modules/app-thinking.ts
+src/ui/modules/app.ts: src/ui/modules/app.ts
+src/ui/modules/auth.ts: src/ui/modules/auth.ts
+src/ui/modules/icon.ts: src/ui/modules/icon.ts
+src/ui/modules/identity-lookups.ts: src/ui/modules/identity-lookups.ts
+src/ui/modules/inline-number.ts: src/ui/modules/inline-number.ts
+src/ui/modules/map/api.ts: src/ui/modules/map/api.ts
+src/ui/modules/map/fallback.ts: src/ui/modules/map/fallback.ts
+src/ui/modules/map/icons.ts: src/ui/modules/map/icons.ts
+src/ui/modules/map/index.ts: src/ui/modules/map/index.ts
+src/ui/modules/mermaid/api.ts: src/ui/modules/mermaid/api.ts
+src/ui/modules/mermaid/fallback.ts: src/ui/modules/mermaid/fallback.ts
+src/ui/modules/mermaid/index.ts: src/ui/modules/mermaid/index.ts
+src/ui/modules/message-header-prefs.ts: src/ui/modules/message-header-prefs.ts
+src/ui/modules/modals/agent-detail-modal.ts: src/ui/modules/modals/agent-detail-modal.ts
+src/ui/modules/modals/bug-modal.ts: src/ui/modules/modals/bug-modal.ts
+src/ui/modules/modals/context-modal.ts: src/ui/modules/modals/context-modal.ts
+src/ui/modules/modals/detail-modal.ts: src/ui/modules/modals/detail-modal.ts
+src/ui/modules/modals/geodata-import-modal.ts: src/ui/modules/modals/geodata-import-modal.ts
+src/ui/modules/modals/geodata-modal.ts: src/ui/modules/modals/geodata-modal.ts
+src/ui/modules/modals/instances-modal.ts: src/ui/modules/modals/instances-modal.ts
+src/ui/modules/modals/logging-modal.ts: src/ui/modules/modals/logging-modal.ts
+src/ui/modules/modals/packs-modal.ts: src/ui/modules/modals/packs-modal.ts
+src/ui/modules/modals/providers-modal.ts: src/ui/modules/modals/providers-modal.ts
+src/ui/modules/modals/scenarios-list-modal.ts: src/ui/modules/modals/scenarios-list-modal.ts
+src/ui/modules/modals/scripts-list-modal.ts: src/ui/modules/modals/scripts-list-modal.ts
+src/ui/modules/modals/skill-detail-modal.ts: src/ui/modules/modals/skill-detail-modal.ts
+src/ui/modules/modals/skills-list-modal.ts: src/ui/modules/modals/skills-list-modal.ts
+src/ui/modules/modals/system-prompt-modal.ts: src/ui/modules/modals/system-prompt-modal.ts
+src/ui/modules/modals/tool-detail-modal.ts: src/ui/modules/modals/tool-detail-modal.ts
+src/ui/modules/modals/tools-list-modal.ts: src/ui/modules/modals/tools-list-modal.ts
+src/ui/modules/model-select.ts: src/ui/modules/model-select.ts
+src/ui/modules/models-popover.ts: src/ui/modules/models-popover.ts
+src/ui/modules/ollama-dashboard.ts: src/ui/modules/ollama-dashboard.ts
+src/ui/modules/panels/bookmarks-panel.ts: src/ui/modules/panels/bookmarks-panel.ts
+src/ui/modules/panels/geodata-panel.ts: src/ui/modules/panels/geodata-panel.ts
+src/ui/modules/panels/logging-panel.ts: src/ui/modules/panels/logging-panel.ts
+src/ui/modules/panels/packs-panel.ts: src/ui/modules/panels/packs-panel.ts
+src/ui/modules/panels/providers/api.ts: src/ui/modules/panels/providers/api.ts
+src/ui/modules/panels/providers/index.ts: src/ui/modules/panels/providers/index.ts
+src/ui/modules/panels/providers/row.ts: src/ui/modules/panels/providers/row.ts
+src/ui/modules/panels/script-doc-panel.ts: src/ui/modules/panels/script-doc-panel.ts
+src/ui/modules/panels/script-panel.ts: src/ui/modules/panels/script-panel.ts
+src/ui/modules/panels/summary-panel.ts: src/ui/modules/panels/summary-panel.ts
+src/ui/modules/panels/triggers-panel.ts: src/ui/modules/panels/triggers-panel.ts
+src/ui/modules/prompt-model-editors.ts: src/ui/modules/prompt-model-editors.ts
+src/ui/modules/prompt-toggles.ts: src/ui/modules/prompt-toggles.ts
+src/ui/modules/prompt-toggles/context-group.ts: src/ui/modules/prompt-toggles/context-group.ts
+src/ui/modules/prompt-toggles/index.ts: src/ui/modules/prompt-toggles/index.ts
+src/ui/modules/prompt-toggles/model-group.ts: src/ui/modules/prompt-toggles/model-group.ts
+src/ui/modules/prompt-toggles/prompts-group.ts: src/ui/modules/prompt-toggles/prompts-group.ts
+src/ui/modules/prompt-toggles/shared.ts: src/ui/modules/prompt-toggles/shared.ts
+src/ui/modules/prompt-toggles/tools-group.ts: src/ui/modules/prompt-toggles/tools-group.ts
+src/ui/modules/render/render-agents.ts: src/ui/modules/render/render-agents.ts
+src/ui/modules/render/render-message.ts: src/ui/modules/render/render-message.ts
+src/ui/modules/render/render-room-members.ts: src/ui/modules/render/render-room-members.ts
+src/ui/modules/render/render-room-switcher.ts: src/ui/modules/render/render-room-switcher.ts
+src/ui/modules/render/render-rooms.ts: src/ui/modules/render/render-rooms.ts
+src/ui/modules/render/render-thinking.ts: src/ui/modules/render/render-thinking.ts
+src/ui/modules/reset-button.ts: src/ui/modules/reset-button.ts
+src/ui/modules/room-fetchers.ts: src/ui/modules/room-fetchers.ts
+src/ui/modules/scenario-consent.ts: src/ui/modules/scenario-consent.ts
+src/ui/modules/scenario-share-link.ts: src/ui/modules/scenario-share-link.ts
+src/ui/modules/scenario-strip.ts: src/ui/modules/scenario-strip.ts
+src/ui/modules/send-as-picker.ts: src/ui/modules/send-as-picker.ts
+src/ui/modules/settings-nav.ts: src/ui/modules/settings-nav.ts
+src/ui/modules/sidebar-resize.ts: src/ui/modules/sidebar-resize.ts
+src/ui/modules/theme.ts: src/ui/modules/theme.ts
+src/ui/modules/thinking-display.ts: src/ui/modules/thinking-display.ts
+src/ui/modules/thinking-state.ts: src/ui/modules/thinking-state.ts
+src/ui/modules/visibility-popover.ts: src/ui/modules/visibility-popover.ts
+src/ui/modules/whisper-badge.ts: src/ui/modules/whisper-badge.ts
+src/ui/modules/ws-client.ts: src/ui/modules/ws-client.ts
+src/ui/modules/ws-dispatch/dedup.ts: src/ui/modules/ws-dispatch/dedup.ts
+src/ui/modules/ws-dispatch/handlers/runs.ts: src/ui/modules/ws-dispatch/handlers/runs.ts
+src/ui/modules/ws-dispatch/handlers/state.ts: src/ui/modules/ws-dispatch/handlers/state.ts
+src/ui/modules/ws-dispatch/handlers/system.ts: src/ui/modules/ws-dispatch/handlers/system.ts
+src/ui/modules/ws-dispatch/index.ts: src/ui/modules/ws-dispatch/index.ts
+src/ui/modules/ws-send.ts: src/ui/modules/ws-send.ts
+Unused devDependencies (1)
+package.json: tailwindcss
+Unlisted dependencies (5)
+src/integrations/mcp/tools/agent-tools.ts: zod
+src/integrations/mcp/tools/message-tools.ts: zod
+src/integrations/mcp/tools/room-tools.ts: zod
+src/integrations/mcp/tools/system-tools.ts: zod
+src/integrations/mcp/tools/web-tools.ts: zod
+Unlisted binaries (4)
+package.json: tsc
+src/core/migrate-local-pack.ts: tar
+src/tools/built-in/pack-tools.test.ts: init, branch
+src/tools/built-in/pack-tools.ts: pull
+Unresolved imports (4)
+tools/compute.ts: ../src/core/types.ts
+tools/memory.ts: ../src/core/types.ts
+tools/research.ts: ../src/core/types.ts
+tools/web.ts: ../src/core/types.ts
+Unused exports (30)
+src/agents/context-builder.ts: getParticipantsForRoom, buildSystemMessage
+src/api/auth.ts: sessionCookieName
+src/api/routes/documents.ts: initDocumentsLimiter
+src/api/routes/instances.ts: getInstanceLimiter
+src/api/ws-handler.ts: SESSION_STALE_MS
+src/core/render-validators/map-schema.ts: truncateForDisplay
+src/core/scenarios/ops.ts: opHandlers
+src/core/scenarios/store.ts: MAX_SCENARIO_SOURCE_BYTES
+src/core/scenarios/yaml-mini.ts: parseInlineValue, splitTopLevel, findUnquotedColon
+src/core/scripts/script-md-parser.ts: VALID_CAST_NAME, RESERVED_CAST_NAMES, __test
+src/core/storage/snapshot.ts: isEmptySnapshot
+src/core/types/messaging.ts: isAgentDecisionMessage
+src/embed/embedder.ts: EmbedError
+src/embed/vector-store.ts: VECTOR_STORE_LINE_VERSION
+src/geo/categories.ts: loadRegistry
+src/geo/pack-source.ts: getPackCategories, getPackGeoState
+src/geo/types.ts: MARKER_ICONS
+src/geo/upstream.ts: __resetUpstreamGates
+src/llm/gateway.ts: createProviderGateway, GATEWAY_DEFAULTS, createLLMGateway
+src/llm/llm-policy-store.ts: POLICY_VERSION, loadPolicy, savePolicy
+src/llm/llm-service.ts: FALLBACKABLE_AGENT_CODES
+src/llm/provider-probe.ts: p95, computeStatus
+src/llm/providers-config.ts: DEFAULT_PROVIDER_ORDER
+src/packs/synthetic-demos/index.ts: DEMOS_PACK_NAMESPACE
+src/packs/synthetic-welcome/index.ts: WELCOME_PACK_NAMESPACE, WELCOME_DEFAULT_SCENARIO
+src/tools/built-in/pack-tools.ts: __resetPackChains, createListAvailablePacksTool
+src/ui/modules/fetch-helpers.ts: safeFetchJson
+src/ui/modules/map/normalise.ts: MARKER_ICONS, isMarkerIcon, parseMapBody, validateMapEnvelope, formatMapErrors, collectEnvelopeLatLngs, truncateForDisplay
+src/ui/modules/scenario-overlay.ts: handleScenarioStarted, handleScenarioGuideShown, handleScenarioCompleted, handleScenarioFailed, handleScenarioStopped
+src/ui/modules/stores.ts: $myAgentId, $myName, $sessionToken, $connected, $selectedAgentId, $selectedHumanByRoom, $rooms, $pausedRooms, $unreadCounts, $roomIdByName, $agentIdByName, $roomMembers, $mutedAgents, $generatingRoomIds, $roomMessages, $thinkingPreviews, $thinkingTools, $agentContexts, $agentWarnings, $messageContexts, $messageWarnings, $currentDeliveryMode, $roomPaused, $turnInfo, $scriptCatalog, $activeScriptByRoom, $ollamaHealth, $lastProviderEvent, $pendingModelChanges, $sidebarWidth, $roomListView, $agentListView
+Unused exported types (42)
+experiments/types.ts: IncludePromptsSpec, IncludeContextSpec, RoomSpec, TriggerSpec, WaitConfig, BaseMessageSpec, IsolationMode, RunStatus
+src/agents/context-builder.ts: SystemSectionKey, ContextStrategy
+src/agents/evaluation.ts: LLMCallMetrics
+src/api/rate-limit.ts: RateLimitOk, RateLimitFail, RateLimitResult
+src/api/routes/types.ts: ResetInstanceOk, ResetInstanceFail, ResetInstanceResult, EvictInstanceResult, InstanceAdmin, DiagnosticsCapability
+src/api/ws-commands/types.ts: CommandHandler
+src/core/instances/system-registry.ts: InstanceMeta, InstanceOnDisk
+src/core/limit-metrics.ts: LimitMetricsSnapshot
+src/core/render-validators/map-schema.ts: MapView, MapFeature
+src/core/scenarios/runner.ts: ScenarioEventName
+src/core/scenarios/types.ts: RunStatus
+src/core/scenarios/waits.ts: ExternalWaitType
+src/core/scripts/script-runner.ts: ScriptEventName
+src/core/storage/snapshot.ts: RoomSnapshot, AgentSnapshot, HumanAgentSnapshot, EmbedderBindingSnapshot, DocumentStatus, DocumentSnapshot
+src/core/summaries/summary-scheduler.ts: TriggerOptions
+src/core/types/agent.ts: ContextPreviewSection, ContextPreview, AgentMemoryStats
+src/core/types/messaging.ts: MessageErrorCode, RoomContext, AgentDeliveryStatus
+src/core/types/summary.ts: SummarySchedule
+src/core/types/tool.ts: ToolLLMRequest, ToolSourceKind
+src/documents/types.ts: DocumentStatus
+src/embed/vector-store.ts: VectorNamespace, EmbedderBinding, SearchHit, SearchOptions
+src/geo/import.ts: ImportError
+src/geo/types.ts: GeoProperties, GeoPoint
+src/integrations/mcp/client.ts: MCPServerConfig
+src/llm/circuit-breaker.ts: CircuitState
+src/llm/errors.ts: OllamaErrorCode, CloudErrorCode
+src/llm/gateway.ts: CircuitState, RequestStatus, RequestRecord, GatewayMetrics, LoadedModel, OllamaHealth, ProviderHealth, OllamaHealthExtra, ProviderGateway, ChatCallOptions
+src/llm/llm-policy-store.ts: LLMPolicyFileShape, PolicyLoadResult
+src/llm/llm-service.ts: LLMSource, LLMServiceBindOptions, LLMServiceFailure
+src/llm/provider-gateway.ts: CircuitState, RequestStatus, RequestRecord, GatewayMetrics, ProviderHealth, IsPermanentError
+src/llm/provider-monitor.ts: MonitorListener
+src/llm/provider-probe.ts: ProviderStatus
+src/llm/providers-config.ts: CloudProviderConfig, CloudProviderConfigWithSource
+src/llm/providers-store.ts: StoredOllamaEntry
+src/llm/router.ts: ProviderAttemptCode, ProviderBoundEvent, ProviderAllFailedEvent, ProviderStreamFailedEvent, ProviderRoutingListener, ContextLookupFn, RouterMetrics
+src/packs/bundled-scenario-loader.ts: BundledScenarioSpec, TokenMap
+src/skills/loader.ts: Skill
+src/tools/built-in/index.ts: PackToolsDeps, RecallToolDeps, QueryDocumentsToolDeps
+src/tools/built-in/pack-tools.ts: NotifyPacksChanged
+src/ui/lib/nanostores.ts: Listener, Unsubscribe
+src/ui/modules/map/normalise.ts: MarkerIcon, MapView, MapFeature, MapEnvelope, MapValidationError, ValidatedMap, EnvelopeFeature
+src/ui/modules/stores.ts: StateValue, UIMessage, AgentInfo, RoomProfile, AgentContext, TurnInfo, ScriptCatalogEntry, UIWhisperRecord, UIDialogueEntry, UIScriptCastMember, UIScriptStep, ActiveScript, ProviderUIEvent, PendingModelChange
+Duplicate exports (1)
