@@ -72,6 +72,7 @@ import type { Trigger } from '../triggers/types.ts'
 import { asAIAgent } from '../../agents/shared.ts'
 import { DEFAULT_HOUSE_PROMPT, DEFAULT_RESPONSE_FORMAT } from '../house.ts'
 import { createSerialiseChain } from '../serialise-chain.ts'
+import { redactBiometricMessages } from './snapshot-redact.ts'
 import { mkdir, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
@@ -202,7 +203,9 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
     const state = room.getRoomState()
     rooms.push({
       profile: room.profile,
-      messages: room.getRecent(room.getMessageCount()),
+      // redactBiometricMessages strips ephemeral biometric capture content
+      // before write — see snapshot-redact.ts for the policy rationale.
+      messages: redactBiometricMessages(room.getRecent(room.getMessageCount())),
       members: [...room.getParticipantIds()],
       deliveryMode: state.mode,
       paused: state.paused,

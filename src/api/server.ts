@@ -305,7 +305,7 @@ export const createServer = (config: ServerConfig) => {
         // and stale-sweep work the same.
         await registry.getOrLoad(ws.data.instanceId)
         const existing = wsManager.sessions.get(ws.data.sessionToken)
-        const session = existing ?? { instanceId: ws.data.instanceId, lastActivity: Date.now() }
+        const session = existing ?? { instanceId: ws.data.instanceId, sessionToken: ws.data.sessionToken, lastActivity: Date.now() }
         if (!existing) wsManager.sessions.set(ws.data.sessionToken, session)
         else session.lastActivity = Date.now()
         wsManager.wsConnections.set(ws.data.sessionToken, ws)

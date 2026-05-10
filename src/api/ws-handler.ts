@@ -18,6 +18,7 @@ import { asAIAgent } from '../agents/shared.ts'
 import { handleRoomCommand } from './ws-commands/room-commands.ts'
 import { handleAgentCommand } from './ws-commands/agent-commands.ts'
 import { handleMessageCommand } from './ws-commands/message-commands.ts'
+import { handleBiometricCommand } from './ws-commands/biometric-commands.ts'
 import { sendError } from './ws-commands/types.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
 
@@ -54,6 +55,7 @@ export interface WSConnection {
 // The session map exists only for connection lifecycle (reconnect, sweep).
 export interface ClientSession {
   readonly instanceId: string         // which per-tenant House this session belongs to
+  readonly sessionToken: string       // per-WS-connection unique id, matches the wsConnections map key
   lastActivity: number
 }
 
@@ -261,6 +263,7 @@ const commandHandlers = [
   handleMessageCommand,
   handleRoomCommand,
   handleAgentCommand,
+  handleBiometricCommand,
 ]
 
 // === Message Handler ===

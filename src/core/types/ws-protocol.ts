@@ -42,6 +42,25 @@ export type WSInbound =
   // Summary + compression
   | { readonly type: 'set_summary_config'; readonly roomName: string; readonly config: SummaryConfig }
   | { readonly type: 'regenerate_summary'; readonly roomName: string; readonly target: 'summary' | 'compression' | 'both' }
+  // Biometric capture lifecycle — samsinn-biometrics pack. All ephemeral.
+  | { readonly type: 'biometric_capture_started'; readonly captureId: string }
+  | { readonly type: 'biometric_capture_signal'; readonly captureId: string; readonly snapshot: BiometricSignalWire }
+  | { readonly type: 'biometric_capture_stopped'; readonly captureId: string; readonly reason: 'user' | 'agent' | 'unmount' | 'disconnect' | 'error' }
+  | { readonly type: 'biometric_capture_denied'; readonly captureId: string }
+  | { readonly type: 'biometric_capture_failed'; readonly captureId: string; readonly error: string }
+
+// Wire shape for biometric signal snapshots. Mirrors biometrics/types.ts
+// BiometricSignal but duplicated here so the WS protocol module doesn't
+// depend on the browser-only biometrics package.
+export interface BiometricSignalWire {
+  readonly ts: number
+  readonly presence: boolean
+  readonly faceCount: number
+  readonly attention: number
+  readonly expression: { readonly smile: number; readonly surprise: number; readonly frown: number; readonly concentration: number }
+  readonly headPose: { readonly yaw: number; readonly pitch: number; readonly roll: number }
+  readonly blinkRate: number
+}
 
 export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
@@ -138,3 +157,7 @@ export type WSOutbound =
       readonly chunkCount?: number
       readonly pageCount?: number
     }
+  // Biometric capture: another tab claimed the captureId first. Late tabs
+  // swap their pending widget to a "active in another tab" placeholder and
+  // release any MediaStream they had opened.
+  | { readonly type: 'biometric_capture_claimed'; readonly captureId: string; readonly claimedBy: string }

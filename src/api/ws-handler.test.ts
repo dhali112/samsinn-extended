@@ -121,7 +121,7 @@ describe('WS Handler', () => {
     const human = createHumanAgent({ name: 'Human' }, () => {})
     system.team.addAgent(human)
     humanId = human.id
-    session = { instanceId: 'test0123456789ab', lastActivity: Date.now() }
+    session = { instanceId: 'test0123456789ab', sessionToken: 'tok-test', lastActivity: Date.now() }
     wsManager = createWSManager({
       getSystem: () => system,
     })
@@ -313,18 +313,21 @@ describe('WSManager.safeSend backpressure', () => {
     wsManager.sessions.set('stale-token', {
 
       instanceId: 'test0123456789ab',
+      sessionToken: 'stale-token',
       lastActivity: TEN_DAYS_AGO,
     })
     // Recent + no live ws — should NOT be swept.
     wsManager.sessions.set('recent-token', {
 
       instanceId: 'test0123456789ab',
+      sessionToken: 'recent-token',
       lastActivity: Date.now() - 60_000,
     })
     // Old but live connection — should NOT be swept.
     wsManager.sessions.set('live-token', {
 
       instanceId: 'test0123456789ab',
+      sessionToken: 'live-token',
       lastActivity: TEN_DAYS_AGO,
     })
     wsManager.wsConnections.set('live-token', {
@@ -352,6 +355,7 @@ describe('WSManager.safeSend backpressure', () => {
     wsManager.sessions.set('orphan-token', {
 
       instanceId: 'test0123456789ab',
+      sessionToken: 'orphan-token',
       lastActivity: Date.now() - 10 * 24 * 60 * 60 * 1000,
     })
     const dropped = wsManager.sweepStaleSessions()

@@ -57,6 +57,8 @@ import {
   createRecallTool,
   createQueryDocumentsTool,
 } from './tools/built-in/index.ts'
+import { createBiometricsTools, BIOMETRICS_PACK_NAMESPACE } from './tools/built-in/biometric-tools.ts'
+import { getCaptureRegistry } from './core/biometrics/registry.ts'
 import { createVectorStore, type VectorStore } from './embed/vector-store.ts'
 import { createMemoryIndexer, buildEmbeddingProvidersFromKeys } from './embed/memory-indexer.ts'
 import { createDocumentManager, type DocumentManager } from './documents/manager.ts'
@@ -610,6 +612,17 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     ...(vectorStore ? [createRecallTool({ vectorStore, providerKeys, house })] : []),
     ...(vectorStore ? [createQueryDocumentsTool({ vectorStore, providerKeys })] : []),
   ])
+
+  // Biometrics tools — implementation lives in core (needs House + capture
+  // registry), but registered with source.pack='biometrics' so the per-room
+  // activePacks filter (effectiveActivePackSet) gates them exactly like a
+  // pack-bundled tool. Users discover and activate biometrics via the
+  // samsinn-biometrics pack repo; activating it in a room makes these
+  // tools visible to agents in that room. See docs in
+  // src/tools/built-in/biometric-tools.ts for the rationale.
+  for (const tool of createBiometricsTools({ house, registry: getCaptureRegistry() })) {
+    toolRegistry.registerWithSource(tool, { kind: 'pack-bundled', pack: BIOMETRICS_PACK_NAMESPACE })
+  }
 
   // Skill system — file-based behavioral templates with bundled tools.
   // skillStore is process-shared (populated by bootstrap). scriptStore is
