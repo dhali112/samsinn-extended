@@ -2,6 +2,8 @@
 // by provider with status tags. The show-all toggle is persisted in
 // localStorage so the UI remembers the user's last filter.
 
+import { retryRemainingSeconds } from '../lib/format-retry.ts'
+
 interface ModelCatalogModel {
   id: string
   contextMax: number
@@ -55,7 +57,7 @@ const statusLabel = (provider: ModelCatalogProvider): string => {
   if (provider.status === 'no_key') return ' (no API key)'
   if (provider.status === 'cooldown') {
     if (provider.retryAt !== null && provider.retryAt !== undefined) {
-      const remaining = Math.max(0, Math.round((provider.retryAt - Date.now()) / 1000))
+      const remaining = retryRemainingSeconds(provider.retryAt)
       return ` (cooldown — ${remaining}s)`
     }
     return ' (cooldown)'

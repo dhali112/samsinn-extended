@@ -325,6 +325,12 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     }
   }
 
+  // 22 typed lateBinding slots — referenced as a "rejected refactor" in
+  // CLAUDE.md (do not replace with an event bus; do not split createSystem).
+  // The trailing three (scriptHook, scriptEvent, scenarioEvent) were added
+  // post-decision for the script + scenario subsystems and follow the same
+  // pattern intentionally. If a future-you is tempted to "clean this up",
+  // re-read the rejected-refactors section before proposing it.
   const messagePosted = lateBinding<OnMessagePosted>('messagePosted')
   const turnChanged = lateBinding<OnTurnChanged>('turnChanged')
   const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>('deliveryModeChanged')

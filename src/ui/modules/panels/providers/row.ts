@@ -3,6 +3,8 @@
 // event wiring; callers attach listeners after render.
 // ============================================================================
 
+import { retryRemainingSeconds } from '../../../lib/format-retry.ts'
+
 export type Status = 'ok' | 'no_key' | 'cooldown' | 'down' | 'disabled'
 
 export interface MonitorPayload {
@@ -80,7 +82,7 @@ const statusTooltip = (status: Status, monitor: MonitorPayload | null): string =
   // the bare status word for older payloads or unknown providers.
   if (monitor) {
     if (monitor.sub === 'backoff' && monitor.retryAt !== null) {
-      const remainingS = Math.max(0, Math.round((monitor.retryAt - Date.now()) / 1000))
+      const remainingS = retryRemainingSeconds(monitor.retryAt)
       const reason = monitor.reason || 'cooldown'
       return `${reason} — retries allowed in ${remainingS}s · click to disable`
     }

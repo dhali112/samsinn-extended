@@ -8,6 +8,15 @@
 //
 // Full history is preserved in AgentHistory; only a historyLimit-sized
 // window is passed to the LLM on each context build.
+//
+// --- Section assembly order (system prompt) ---
+// 1. House prompt + agent persona
+// 2. Skills (from getSkills, skill-store) — may be empty
+// 3. Active script context (from getScriptContext) — only when in a running script
+// 4. Wiki bindings + pack-bundled context — empty when none active
+// 5. Room participant profiles + room running summary
+// Each source can return empty; the assembled prompt skips empty sections.
+// Token budgeting is a single pass at the end (contextTokenBudget).
 // ============================================================================
 
 import type { AgentHistory, AgentProfile, Message } from '../core/types/messaging.ts'

@@ -16,6 +16,7 @@
 // ============================================================================
 
 import { fetchWithTimeout } from '../core/fetch-utils.ts'
+import { parseRetryAfterSeconds } from '../llm/errors.ts'
 
 export type EmbedProvider = 'openai' | 'gemini'
 
@@ -51,15 +52,6 @@ export const DEFAULT_GEMINI_MODEL = 'text-embedding-004'
 
 const DEFAULT_TIMEOUT_MS = 60_000
 const MAX_INPUTS_PER_BATCH = 100  // both providers support at least 100 per call
-
-const parseRetryAfter = (header: string | null): number | null => {
-  if (!header) return null
-  const n = Number.parseInt(header, 10)
-  if (Number.isFinite(n) && n >= 0) return n
-  const date = Date.parse(header)
-  if (Number.isFinite(date)) return Math.max(0, Math.round((date - Date.now()) / 1000))
-  return null
-}
 
 export const embedTexts = async (req: EmbedRequest): Promise<EmbedResult> => {
   if (req.texts.length === 0) {
@@ -110,7 +102,7 @@ const embedOpenAI = async (req: EmbedRequest): Promise<EmbedResult> => {
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    const retryAfterSec = parseRetryAfter(res.headers.get('retry-after'))
+    const retryAfterSec = parseRetryAfterSeconds(res.headers.get('retry-after'))
     throw new EmbedError(
       `openai embedding ${res.status}: ${text.slice(0, 300)}`,
       { provider: 'openai', status: res.status, retryAfterSec },
@@ -162,7 +154,7 @@ const embedGemini = async (req: EmbedRequest): Promise<EmbedResult> => {
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    const retryAfterSec = parseRetryAfter(res.headers.get('retry-after'))
+    const retryAfterSec = parseRetryAfterSeconds(res.headers.get('retry-after'))
     throw new EmbedError(
       `gemini embedding ${res.status}: ${text.slice(0, 300)}`,
       { provider: 'gemini', status: res.status, retryAfterSec },

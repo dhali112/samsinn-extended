@@ -203,6 +203,14 @@ export const createAIAgent = (
     getCompressedIds: (roomId: string) => getCompressedIds?.(roomId) ?? new Set<string>(),
     getRoomMembers,
   })
+  // buildContext walks five sources to assemble the LLM context. Order in
+  // src/agents/context-builder.ts top header. Quick map of sources here so
+  // a debugger can find the cost without spelunking:
+  //   • skills      → getSkills() (skill-store)
+  //   • script ctx  → getScriptContext() (script-runner, only in running scripts)
+  //   • room hist   → AgentHistory window (historyLimit-sized)
+  //   • members     → getRoomMembers (participant profiles + running summary)
+  //   • compression → getCompressedIds (folded into single room_summary)
 
   // --- Evaluation loop: per-room generation with pending queue ---
 

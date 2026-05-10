@@ -107,3 +107,11 @@ export const parseRetryAfterMs = (header: string | null, now: () => number = Dat
   }
   return undefined
 }
+
+// Convenience: same parse but returns seconds (rounded). Used by the embedder
+// where the upstream EmbedError contract carries `retryAfterSec`. Single source
+// of truth for the parse logic — divergence here was the prior duplication.
+export const parseRetryAfterSeconds = (header: string | null, now: () => number = Date.now): number | null => {
+  const ms = parseRetryAfterMs(header, now)
+  return ms === undefined ? null : Math.round(ms / 1000)
+}
