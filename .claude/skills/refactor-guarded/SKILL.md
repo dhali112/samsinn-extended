@@ -5,6 +5,8 @@ description: Lightweight speed-bump for refactors that match the rejected-refact
 
 # Refactor Speed-Bump
 
+> **First-time setup:** project-local skills are loaded at Claude Code session start. If this skill doesn't fire on rejected-pattern keywords right after pulling this repo, **restart Claude Code** to register.
+
 Lightweight pattern check before proposing or implementing a refactor. Encodes the discipline of CLAUDE.md's `## Rejected refactors` section so it survives across sessions.
 
 ## What this skill does

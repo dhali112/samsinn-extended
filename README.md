@@ -758,6 +758,13 @@ This sets `git config core.hooksPath scripts/hooks/`, so the hook is version-con
 
 The full health audit (`bun run health`) compares against `.health/baseline.md` and writes a dated report. The Claude Code session also auto-runs it weekly via `.claude/settings.json` Stop hook.
 
+### Claude Code skills (project-local)
+
+`.claude/skills/health-audit/` and `.claude/skills/refactor-guarded/` are project-versioned skills. After cloning this repo (or after `git pull` brings new skill files in), **restart Claude Code** to pick them up. Live-detection of new skills is documented but not always reliable mid-session.
+
+- `/health` invokes the audit skill (delta vs baseline, suppressions applied, finding-disposition table).
+- `refactor-guarded` triggers automatically when refactor-request keywords match the rejected-list in this repo's CLAUDE.md.
+
 ---
 
 ## Architecture Notes

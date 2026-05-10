@@ -30,7 +30,6 @@ export type { UIMessage, AgentInfo, RoomProfile }
 // === Identity ===
 
 export const $myAgentId = atom<string | null>(null)
-export const $myName = atom('')
 export const $sessionToken = atom(
   typeof localStorage !== 'undefined' ? localStorage.getItem('ta_session') ?? '' : '',
 )

@@ -162,5 +162,3 @@ export type ResolveTagFn = (tag: string) => ReadonlyArray<string>    // tag → 
 // humans can see them, but they must not pollute LLM context, trigger summary
 // runs, or kick off another agent's evaluation.
 
-export const isAgentDecisionMessage = (msg: Pick<Message, 'type'>): boolean =>
-  msg.type === 'pass' || msg.type === 'error'

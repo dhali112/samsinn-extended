@@ -96,18 +96,3 @@ const knownCloudNames: ReadonlySet<string> = new Set(Object.keys(PROVIDER_PROFIL
 
 export const isCloud = (name: string): name is CloudProviderName => knownCloudNames.has(name)
 
-export type ProviderStatus = 'ok' | 'no_key' | 'cooldown' | 'down' | 'disabled'
-
-export const computeStatus = (
-  kind: 'cloud' | 'ollama',
-  hasKey: boolean,
-  userEnabled: boolean,
-  cooldown: { coldUntilMs: number; reason: string } | null,
-  circuitOpen: boolean,
-): ProviderStatus => {
-  if (!userEnabled) return 'disabled'
-  if (circuitOpen) return 'down'
-  if (cooldown) return 'cooldown'
-  if (kind === 'cloud' && !hasKey) return 'no_key'
-  return 'ok'
-}

@@ -1,4 +1,4 @@
-# Samsinn health — 2026-05-10 11:52:05
+# Samsinn health — 2026-05-10 12:14:27
 
 ## Summary
 
@@ -15,7 +15,7 @@ $ tsc --noEmit && tsc --noEmit -p tsconfig.ui.json
 ## 2. Type coverage
 ```
 Saved lockfile
-(84659 / 85846) 98.61%
+(84612 / 85799) 98.61%
 type-coverage success.
 ```
 
@@ -123,19 +123,12 @@ x 71 dependency violations (65 errors, 6 warnings). 603 modules, 1433 dependenci
 Resolving dependencies
 Resolved, downloaded and extracted [2]
 Saved lockfile
-Unlisted dependencies (5)
-src/integrations/mcp/tools/agent-tools.ts: zod
-src/integrations/mcp/tools/message-tools.ts: zod
-src/integrations/mcp/tools/room-tools.ts: zod
-src/integrations/mcp/tools/system-tools.ts: zod
-src/integrations/mcp/tools/web-tools.ts: zod
 Unlisted binaries (3)
 src/core/migrate-local-pack.ts: tar
 src/tools/built-in/pack-tools.test.ts: init, branch
 src/tools/built-in/pack-tools.ts: pull
-Unused exports (41)
-src/agents/context-builder.ts: getParticipantsForRoom, buildSystemMessage
-src/api/auth.ts: sessionCookieName
+Unused exports (34)
+src/agents/context-builder.ts: getParticipantsForRoom
 src/api/routes/documents.ts: initDocumentsLimiter
 src/api/routes/instances.ts: getInstanceLimiter
 src/api/ws-handler.ts: SESSION_STALE_MS
@@ -144,38 +137,32 @@ src/core/scenarios/store.ts: MAX_SCENARIO_SOURCE_BYTES
 src/core/scenarios/yaml-mini.ts: parseInlineValue, splitTopLevel, findUnquotedColon
 src/core/scripts/script-md-parser.ts: VALID_CAST_NAME, RESERVED_CAST_NAMES, __test
 src/core/storage/snapshot.ts: isEmptySnapshot
-src/core/types/messaging.ts: isAgentDecisionMessage
 src/embed/embedder.ts: EmbedError
 src/embed/vector-store.ts: VECTOR_STORE_LINE_VERSION
 src/geo/categories.ts: loadRegistry
-src/geo/pack-source.ts: getPackCategories, getPackGeoState
 src/geo/types.ts: MARKER_ICONS
 src/geo/upstream.ts: __resetUpstreamGates
 src/llm/gateway.ts: createProviderGateway, GATEWAY_DEFAULTS, createLLMGateway
 src/llm/llm-policy-store.ts: POLICY_VERSION, loadPolicy, savePolicy
 src/llm/llm-service.ts: FALLBACKABLE_AGENT_CODES
-src/llm/provider-probe.ts: p95, computeStatus
+src/llm/provider-probe.ts: p95
 src/llm/providers-config.ts: DEFAULT_PROVIDER_ORDER
 src/packs/synthetic-demos/index.ts: DEMOS_PACK_NAMESPACE
 src/packs/synthetic-welcome/index.ts: WELCOME_PACK_NAMESPACE, WELCOME_DEFAULT_SCENARIO
 src/tools/built-in/pack-tools.ts: __resetPackChains, createListAvailablePacksTool
-src/ui/modules/map/api.ts: getLeafletApi
 src/ui/modules/map/normalise.ts: isMarkerIcon, parseMapBody, validateMapEnvelope, formatMapErrors, collectEnvelopeLatLngs
 src/ui/modules/mermaid/api.ts: mermaidThemeForCurrentMode
 src/ui/modules/message-header-prefs.ts: applyPrefs
 src/ui/modules/modals/detail-modal.ts: escapeHtml
 src/ui/modules/modals/skill-detail-modal.ts: openSkillDetailModal
-src/ui/modules/models-popover.ts: closeModelsPopover
 src/ui/modules/ollama-dashboard.ts: updateOllamaMetricsUI, refreshOllamaUrls
 src/ui/modules/panels/providers/index.ts: renderProvidersPanel
 src/ui/modules/panels/summary-panel.ts: toggleSummaryGroup, openSummarySettingsModal, openSummaryInspectModal
 src/ui/modules/panels/triggers-panel.ts: openTriggerForm, openAgentTriggers
 src/ui/modules/prompt-toggles/shared.ts: mkGlass, applyGroupDisabled
 src/ui/modules/send-as-picker.ts: createHumanInline
-src/ui/modules/stores.ts: $myName
 src/ui/modules/theme.ts: getTheme, setTheme, toggleTheme
-src/ui/modules/ws-dispatch/dedup.ts: shouldEmitAllFailed
-Unused exported types (44)
+Unused exported types (43)
 src/agents/context-builder.ts: SystemSectionKey, ContextStrategy
 src/agents/evaluation.ts: LLMCallMetrics
 src/api/rate-limit.ts: RateLimitOk, RateLimitFail, RateLimitResult
@@ -200,19 +187,32 @@ src/geo/import.ts: ImportError
 src/geo/types.ts: GeoProperties, GeoPoint
 src/integrations/mcp/client.ts: MCPServerConfig
 src/llm/circuit-breaker.ts: CircuitState
+src/llm/errors.ts: OllamaErrorCode, CloudErrorCode
+src/llm/gateway.ts: CircuitState, RequestStatus, RequestRecord, GatewayMetrics, LoadedModel, OllamaHealth, ProviderHealth, OllamaHealthExtra, ProviderGateway, ChatCallOptions
+src/llm/llm-policy-store.ts: LLMPolicyFileShape, PolicyLoadResult
+src/llm/llm-service.ts: LLMSource, LLMServiceBindOptions, LLMServiceFailure
+src/llm/provider-gateway.ts: CircuitState, RequestStatus, RequestRecord, GatewayMetrics, ProviderHealth, IsPermanentError
+src/llm/provider-monitor.ts: MonitorListener
+src/llm/providers-config.ts: CloudProviderConfig, CloudProviderConfigWithSource
+src/llm/providers-store.ts: StoredOllamaEntry
+src/llm/router.ts: ProviderAttemptCode, ProviderBoundEvent, ProviderAllFailedEvent, ProviderStreamFailedEvent, ProviderRoutingListener, ContextLookupFn, RouterMetrics
+src/packs/bundled-scenario-loader.ts: BundledScenarioSpec, TokenMap
+src/skills/loader.ts: Skill
+src/tools/built-in/index.ts: PackToolsDeps, RecallToolDeps, QueryDocumentsToolDeps
+src/tools/built-in/pack-tools.ts: NotifyPacksChanged
 ```
 
 ## 6. Largest source files
 ```
-   45876 total
-    1003 src/main.ts
+   45806 total
+     981 src/main.ts
      860 src/ui/modules/app.ts
      798 src/bootstrap.ts
      793 src/llm/router.ts
      740 src/agents/ai-agent.ts
      679 src/llm/openai-compatible.ts
      674 src/tools/built-in/pack-tools.ts
-     656 src/agents/context-builder.ts
+     649 src/agents/context-builder.ts
      609 src/core/storage/snapshot.ts
      601 src/core/instances/system-registry.ts
      559 src/core/scripts/script-runner.ts

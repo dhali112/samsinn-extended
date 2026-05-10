@@ -246,4 +246,3 @@ export const openModelsPopover = async (
   renderList(popover, providerName, data, pinnedSet, onTogglePin)
 }
 
-export const closeModelsPopover = (): void => closePopover()

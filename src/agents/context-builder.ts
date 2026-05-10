@@ -446,13 +446,6 @@ const buildSystemBlocks = (
   return blocks
 }
 
-// Flat system message — joins all blocks. Kept for exports consumed by the
-// context preview API; buildContext inlines the join directly.
-export const buildSystemMessage = (
-  deps: BuildContextDeps,
-  triggerRoomId: string,
-): string => buildSystemBlocks(deps, triggerRoomId).map(b => b.text).filter(Boolean).join('\n\n')
-
 // === Token estimation ===
 // Rough heuristic: ~4 characters per token for English text.
 // Tool definitions with JSON schema are denser; this is a conservative estimate.

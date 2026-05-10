@@ -325,21 +325,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     }
   }
 
-  // 21 typed lateBinding slots — referenced as a "rejected refactor" in
-  // CLAUDE.md (do not replace with an event bus; do not split createSystem).
-  // The trailing two (scriptEvent, scenarioEvent) are post-decision additions
-  // for the script + scenario UI broadcast events; they kept lateBinding
-  // because UI subscribers may not be connected at boot.
-  //
-  // Note: a `scriptHook` lateBinding existed pre-Phase-3 audit work. It was
-  // dropped because the scriptRunner is always wired by the time rooms exist
-  // (the warn-once benefit didn't apply), and hiding the dispatch behind a
-  // proxy made the call site invisible. The script handler now lives as a
-  // direct `onScriptMessage` callback in HouseCallbacks → RoomCallbacks →
-  // room.post, matching the pattern of the other room hooks.
-  //
-  // If a future-you is tempted to "clean these up", re-read the
-  // rejected-refactors section before proposing it.
+  // 21 typed lateBinding slots. See CLAUDE.md "Rejected refactors" before
+  // proposing an event-bus replacement or createSystem split.
   const messagePosted = lateBinding<OnMessagePosted>('messagePosted')
   const turnChanged = lateBinding<OnTurnChanged>('turnChanged')
   const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>('deliveryModeChanged')
@@ -359,17 +346,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const summaryRunDelta = lateBinding<(roomId: string, target: SummaryTarget, delta: string) => void>('summaryRunDelta')
   const summaryRunCompleted = lateBinding<(roomId: string, target: SummaryTarget, text: string) => void>('summaryRunCompleted')
   const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>('summaryRunFailed')
-  // scriptHook lateBinding removed in Phase 3 of audit work — replaced with
-  // a direct `onScriptMessage` callback in HouseCallbacks below. The runner
-  // is always wired by the time rooms exist, so the warn-once-on-missing
-  // benefit didn't apply, and the dispatch site is now visible at room.post()
-  // instead of hidden behind a proxy.
   const scriptEvent = lateBinding<ScriptEventEmitter>('scriptEvent')
   const scenarioEvent = lateBinding<ScenarioEventEmitter>('scenarioEvent')
 
-  // Forward-declared: scriptRunner is built later (after House). Same pattern
-  // as schedulerRef. The HouseCallbacks.onScriptMessage closes over this
-  // mutable slot.
+  // Forward-declared (matches schedulerRef pattern). HouseCallbacks.onScriptMessage closes over this.
   let scriptRunnerRef: ScriptRunner | undefined
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
@@ -392,9 +372,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       messagePosted.proxy(roomId, message)
       schedulerRef?.onMessagePosted(roomId, message)
     },
-    onScriptMessage: (roomId, message) => {
-      scriptRunnerRef?.onRoomMessage(roomId, message)
-    },
+    onScriptMessage: (roomId, message) => scriptRunnerRef?.onRoomMessage(roomId, message),
     onTurnChanged: turnChanged.proxy,
     onDeliveryModeChanged: deliveryModeChanged.proxy,
     onRoomCreated: roomCreated.proxy,

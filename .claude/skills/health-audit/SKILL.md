@@ -5,6 +5,8 @@ description: Codebase health audit for Samsinn. Runs scripts/health.sh if stale 
 
 # Samsinn Health Audit
 
+> **First-time setup:** project-local skills are loaded at Claude Code session start. If `Skill('health-audit')` returns "Unknown skill" right after pulling this repo, **restart Claude Code** to register. The `bun run health` command and pre-push git hook work without skill registration; only the skill-driven flow needs the restart.
+
 Apply this skill for periodic state-of-the-codebase audits. NOT for plan critique (use `claude-toolbox:stress-test` for that). NOT for refactor gating (use `refactor-guarded` for that).
 
 ## Flow

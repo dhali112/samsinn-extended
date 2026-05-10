@@ -126,4 +126,3 @@ export const ensureLeaflet = (): Promise<LeafletApi | null> => {
   return leafletReady
 }
 
-export const getLeafletApi = (): LeafletApi | null => leafletApi

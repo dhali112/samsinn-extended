@@ -74,8 +74,6 @@ export const parseCookie = (header: string | null, name: string): string | null 
 export const buildSessionCookie = (sessionId: string): string =>
   `${SESSION_COOKIE}=${sessionId}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`
 
-export const sessionCookieName = SESSION_COOKIE
-
 // Read session id from a request's Cookie header.
 export const sessionFromRequest = (req: Request): string | null =>
   parseCookie(req.headers.get('cookie'), SESSION_COOKIE)

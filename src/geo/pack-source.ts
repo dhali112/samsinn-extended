@@ -210,10 +210,6 @@ export const getAllPackFeatures = (): ReadonlyArray<GeoFeature> => {
   return out
 }
 
-export const getPackCategories = (): ReadonlyMap<string, CategoryMeta> => state.categoriesById
-
-export const getPackGeoState = (): PackGeoState => state
-
 // Test seam — clears the cached state so the next refresh runs fresh.
 export const __resetPackGeodataCache = (): void => {
   state = EMPTY_STATE
