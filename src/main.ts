@@ -351,6 +351,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
 
   // Forward-declared (matches schedulerRef pattern). HouseCallbacks.onScriptMessage closes over this.
   let scriptRunnerRef: ScriptRunner | undefined
+  // Forward-decl for trigger-scheduler (start-script / start-scenario modes).
+  // Both runners + scenarioStore are constructed below; triggerScheduler is
+  // built earlier.
+  let scenarioRunnerRef: ScenarioRunner | undefined
+  let scenarioStoreRef: ScenarioStore | undefined
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
@@ -461,6 +466,20 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const triggerScheduler: TriggerScheduler = createTriggerScheduler({
     team,
     house,
+    startScript: (roomId, name) =>
+      scriptRunnerRef
+        ? scriptRunnerRef.start(roomId, name)
+        : Promise.resolve({ ok: false, reason: 'scriptRunner not yet wired' }),
+    startScenario: async (name) => {
+      if (!scenarioRunnerRef) return { ok: false, reason: 'scenarioRunner not yet wired' }
+      const sc = scenarioStoreRef?.get(name)
+      if (!sc) return { ok: false, reason: `scenario "${name}" not found` }
+      const r = await scenarioRunnerRef.run(sc)
+      return { ok: r.ok, ...(r.reason ? { reason: r.reason } : {}) }
+    },
+    isScriptRunningInRoom: (roomId) => scriptRunnerRef?.getRun(roomId) !== undefined,
+    isScenarioRunning: () =>
+      (scenarioRunnerRef?.listRuns() ?? []).some(r => r.status === 'running' || r.status === 'awaiting'),
   })
 
   // System-level membership operations — extracted to core/room-operations.ts.
@@ -716,6 +735,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     getSystem: () => systemRef.current as System,
     emit: (runId, event, detail) => scenarioEvent.proxy(runId, event, detail),
   })
+  // Wire forward-refs so the trigger-scheduler (built earlier) can dispatch
+  // start-script / start-scenario triggers via narrow capabilities.
+  scenarioStoreRef = scenarioStore
+  scenarioRunnerRef = scenarioRunner
   // Pipe message events into scenarioRunner so post-wait guides can resume.
   messagePosted.add((roomId, message) => scenarioRunner.onRoomMessage(roomId, message))
 

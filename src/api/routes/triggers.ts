@@ -42,14 +42,17 @@ export const triggerRoutes: RouteEntry[] = [
       const roomId = (body as { roomId: string }).roomId
       if (!system.house.getRoom(roomId)) return errorResponse(`room "${roomId}" not found`, 404)
 
+      const mode = (body as { mode: TriggerMode }).mode
+      const targetName = (body as { targetName?: string }).targetName?.trim()
       const trigger: Trigger = {
         id: crypto.randomUUID(),
         name: ((body as { name: string }).name).trim(),
-        prompt: ((body as { prompt: string }).prompt).trim(),
-        mode: (body as { mode: TriggerMode }).mode,
+        prompt: ((body as { prompt?: string }).prompt ?? '').trim(),
+        mode,
         intervalSec: (body as { intervalSec: number }).intervalSec,
         enabled: (body as { enabled?: boolean }).enabled ?? true,
         roomId,
+        ...(targetName ? { targetName } : {}),
       }
       agent.addTrigger(trigger)
       system.triggerScheduler.invalidate()
@@ -83,6 +86,7 @@ export const triggerRoutes: RouteEntry[] = [
         intervalSec: patch.intervalSec ?? existing.intervalSec,
         enabled: patch.enabled ?? existing.enabled,
         roomId: patch.roomId ?? existing.roomId,
+        targetName: patch.targetName ?? existing.targetName,
       }
       const err = validateTriggerInput(merged as Record<string, unknown>, agent.kind)
       if (err) return errorResponse(err, 400)
@@ -95,6 +99,7 @@ export const triggerRoutes: RouteEntry[] = [
         intervalSec: merged.intervalSec,
         enabled: merged.enabled,
         roomId: merged.roomId,
+        ...(merged.targetName ? { targetName: merged.targetName.trim() } : {}),
       })
       system.triggerScheduler.invalidate()
       system.notifyAgentSettingsChanged()

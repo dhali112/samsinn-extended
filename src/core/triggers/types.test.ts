@@ -61,6 +61,36 @@ describe('validateTriggerInput', () => {
   test('rejects non-numeric intervalSec', () => {
     expect(validateTriggerInput({ ...validBody(), intervalSec: 'fast' }, 'ai')).toMatch(/intervalSec/)
   })
+
+  // start-script + start-scenario modes (Phase A of automation extension)
+
+  test('start-script accepts when targetName provided', () => {
+    expect(validateTriggerInput(
+      { ...validBody(), mode: 'start-script', prompt: undefined, targetName: 'my-script' },
+      'ai',
+    )).toBeNull()
+  })
+
+  test('start-script rejects when targetName missing', () => {
+    expect(validateTriggerInput(
+      { ...validBody(), mode: 'start-script', prompt: undefined },
+      'ai',
+    )).toMatch(/targetName/)
+  })
+
+  test('start-scenario accepts for human agent (no execute restriction)', () => {
+    expect(validateTriggerInput(
+      { ...validBody(), mode: 'start-scenario', prompt: undefined, targetName: 'welcome' },
+      'human',
+    )).toBeNull()
+  })
+
+  test('start-* modes do not require prompt', () => {
+    expect(validateTriggerInput(
+      { ...validBody(), mode: 'start-script', prompt: '', targetName: 'x' },
+      'ai',
+    )).toBeNull()
+  })
 })
 
 const mkTrigger = (overrides: Partial<Trigger> = {}): Trigger => ({

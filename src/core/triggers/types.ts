@@ -1,29 +1,39 @@
 // ============================================================================
-// Triggers — per-agent scheduled prompts.
+// Triggers — per-agent scheduled actions.
 //
-// Each trigger fires every `intervalSec` and either:
-//   - mode='execute' (AI only): runs the prompt as a transient trailing user
-//     message in a normal eval; the response posts to `roomId`. action='pass'
-//     suppresses posting (handles "report only changes" cleanly).
-//   - mode='post' (AI or human): posts the prompt verbatim to `roomId` as the
-//     agent. Acts as a verbal trigger — other agents respond as usual.
+// Each trigger fires every `intervalSec` and dispatches based on `mode`:
+//   - 'execute'        (AI only): run prompt as trailing user message; reply
+//                      posts to `roomId`. action='pass' suppresses posting.
+//   - 'post'           (AI or human): post `prompt` verbatim to `roomId` as
+//                      the agent.
+//   - 'start-script'   (any kind): start script `targetName` in `roomId`.
+//                      Skipped silently if a script is already running there.
+//   - 'start-scenario' (any kind): start scenario `targetName` instance-wide.
+//                      Skipped silently if a scenario run is active. roomId
+//                      may still be relevant for scenarios with room-scoped
+//                      ops; pass it through.
 //
 // Storage: lives on the agent (AIAgent.triggers, HumanAgent.triggers).
 // Pinned to a single roomId; cascade-deleted when the room is removed.
 // `lastFiredAt` mutates on each fire and rides the existing snapshot debounce.
+//
+// Snapshot back-compat: the new modes are additive. Old snapshots load as
+// before; new triggers in old code degrade to no-op (unknown mode) without
+// crashing — the dispatch switch falls through.
 // ============================================================================
 
-export type TriggerMode = 'execute' | 'post'
+export type TriggerMode = 'execute' | 'post' | 'start-script' | 'start-scenario'
 
 export interface Trigger {
   readonly id: string                  // crypto.randomUUID()
   readonly name: string                // human-readable label
-  readonly prompt: string              // verbal text; user message in execute mode
-  readonly mode: TriggerMode           // forced 'post' for human agents
+  readonly prompt: string              // verbal text (execute/post); ignored for start-* modes
+  readonly mode: TriggerMode           // forced 'post' for human agents (unless start-*)
   readonly intervalSec: number         // bounded [60, 86400]
   readonly enabled: boolean
   readonly roomId: string              // pinned target; cascade-cleaned on room delete
   readonly lastFiredAt?: number        // epoch ms; persists across restart
+  readonly targetName?: string         // script or scenario name (start-* modes)
 }
 
 // Bounds. 60s minimum prevents runaway spam; 24h maximum keeps the UI's
@@ -42,19 +52,32 @@ export interface TriggerInput {
   readonly intervalSec?: unknown
   readonly enabled?: unknown
   readonly roomId?: unknown
+  readonly targetName?: unknown
 }
+
+const VALID_MODES: ReadonlySet<string> = new Set(['execute', 'post', 'start-script', 'start-scenario'])
 
 export const validateTriggerInput = (input: TriggerInput, agentKind: 'ai' | 'human'): string | null => {
   if (typeof input.name !== 'string' || input.name.trim() === '') return 'name is required'
-  if (typeof input.prompt !== 'string' || input.prompt.trim() === '') return 'prompt is required'
   if (typeof input.roomId !== 'string' || input.roomId.trim() === '') return 'roomId is required'
   if (typeof input.intervalSec !== 'number' || !Number.isFinite(input.intervalSec)) return 'intervalSec must be a number'
   if (input.intervalSec < MIN_INTERVAL_SEC || input.intervalSec > MAX_INTERVAL_SEC) {
     return `intervalSec must be between ${MIN_INTERVAL_SEC} and ${MAX_INTERVAL_SEC}`
   }
-  if (input.mode !== 'execute' && input.mode !== 'post') return `mode must be 'execute' or 'post'`
+  if (typeof input.mode !== 'string' || !VALID_MODES.has(input.mode)) {
+    return `mode must be one of: execute, post, start-script, start-scenario`
+  }
   if (agentKind === 'human' && input.mode === 'execute') return `human agents cannot use mode 'execute'`
   if (input.enabled !== undefined && typeof input.enabled !== 'boolean') return 'enabled must be a boolean'
+  // Mode-specific requirements.
+  if (input.mode === 'execute' || input.mode === 'post') {
+    if (typeof input.prompt !== 'string' || input.prompt.trim() === '') return 'prompt is required for execute/post modes'
+  } else {
+    // start-script / start-scenario
+    if (typeof input.targetName !== 'string' || input.targetName.trim() === '') {
+      return `targetName is required for ${input.mode} mode`
+    }
+  }
   return null
 }
 

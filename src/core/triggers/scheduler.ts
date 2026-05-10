@@ -41,6 +41,13 @@ export interface SchedulerDeps {
   // Optional: callback after a trigger is dispatched. Tests use it as a
   // signal; production might surface a "trigger fired" log line. Best-effort.
   readonly onFired?: (agentId: string, triggerId: string) => void
+  // Narrow capabilities for the start-script / start-scenario trigger modes.
+  // Wired in main.ts where scriptRunner + scenarioRunner exist. Optional so
+  // tests + headless boots that never use these modes can omit them.
+  readonly startScript?: (roomId: string, name: string) => Promise<{ ok: boolean; reason?: string }>
+  readonly startScenario?: (name: string) => Promise<{ ok: boolean; reason?: string }>
+  readonly isScriptRunningInRoom?: (roomId: string) => boolean
+  readonly isScenarioRunning?: () => boolean
 }
 
 export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler => {
@@ -98,6 +105,11 @@ export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler =>
     const room = deps.house.getRoom(trigger.roomId)
     if (!room) return  // Skip silently — room deletion between tick and dispatch is a normal race; cascade-clean in room-operations.ts:65-71 deletes orphaned triggers on the same path.
 
+    // Per-mode busy gate. Skip without marking lastFiredAt so the trigger
+    // re-evaluates next tick (target frees up → trigger fires).
+    if (trigger.mode === 'start-script' && deps.isScriptRunningInRoom?.(trigger.roomId)) return
+    if (trigger.mode === 'start-scenario' && deps.isScenarioRunning?.()) return
+
     // Mark fired BEFORE dispatch (overrun protection).
     agent.markTriggerFired?.(triggerId, now())
 
@@ -112,10 +124,22 @@ export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler =>
       } catch (err) {
         console.error(`[trigger ${trigger.name}] post failed:`, err)
       }
-    } else if (agent.kind === 'ai') {
+    } else if (trigger.mode === 'execute' && agent.kind === 'ai') {
       const ai = asAIAgent(agent)
       ai?.fireTriggerExecute?.(trigger.prompt, trigger.roomId)
         .catch(err => console.error(`[trigger ${trigger.name}] execute failed:`, err))
+    } else if (trigger.mode === 'start-script') {
+      const target = trigger.targetName
+      if (!target) return
+      deps.startScript?.(trigger.roomId, target)
+        .then(r => { if (!r.ok) console.warn(`[trigger ${trigger.name}] start-script "${target}" failed: ${r.reason ?? ''}`) })
+        .catch(err => console.error(`[trigger ${trigger.name}] start-script threw:`, err))
+    } else if (trigger.mode === 'start-scenario') {
+      const target = trigger.targetName
+      if (!target) return
+      deps.startScenario?.(target)
+        .then(r => { if (!r.ok) console.warn(`[trigger ${trigger.name}] start-scenario "${target}" failed: ${r.reason ?? ''}`) })
+        .catch(err => console.error(`[trigger ${trigger.name}] start-scenario threw:`, err))
     }
     deps.onFired?.(agentId, triggerId)
   }
