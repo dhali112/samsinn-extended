@@ -1,0 +1,5 @@
+{
+  "name": "biometrics",
+  "description": "Webcam-based face / attention / expression tracking. Agent-triggered, per-capture user consent, ephemeral. Implementation lives in samsinn core; this pack is the install switch.",
+  "ui_extensions": ["biometrics"]
+}
