@@ -54,6 +54,11 @@ export interface CaptureSession {
   readonly start: () => Promise<void>
   readonly read: () => BiometricSignal | null
   readonly stop: () => Promise<void>
+  // Re-bind the live MediaStream + face-landmark overlay to a different
+  // pair of video/canvas elements without restarting the session. Used
+  // by the widget when the chat re-renders and the original video
+  // element is detached.
+  readonly retarget: (videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement) => Promise<void>
   // Push channel for mid-stream errors (loader failure, model fetch, lost
   // device). Returns an unsubscribe function. The widget surfaces these as
   // inline-error states.

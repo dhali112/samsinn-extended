@@ -189,9 +189,10 @@ const parsePayload = (raw: string): FencedPayload | null => {
 // Wire a wrapper to an already-live session. Used both on fresh-capture
 // success and on widget re-mount for an existing captureId. Sets up the
 // view-side timers and Stop button; the session itself keeps streaming.
-const wireActiveView = (wrapper: HTMLElement, payload: FencedPayload, session: CaptureSession, startedAt: number): void => {
-  const ui = renderActive(wrapper, payload)
-
+// Internal: same body as wireActiveView but accepts a pre-rendered
+// ActiveUI. Used by the re-mount path so we can render the UI once,
+// retarget the live stream onto it, then wire timers + listeners.
+const wireActiveViewWithUI = (wrapper: HTMLElement, payload: FencedPayload, session: CaptureSession, startedAt: number, ui: ActiveUI): void => {
   const elapsedTimer = setInterval(() => {
     if (!wrapper.isConnected) {
       clearInterval(elapsedTimer)
@@ -217,6 +218,14 @@ const wireActiveView = (wrapper: HTMLElement, payload: FencedPayload, session: C
   })
 }
 
+// Convenience wrapper for the fresh-consent path: render the active UI
+// and wire it. Re-mount paths use wireActiveViewWithUI directly so they
+// can retarget the live stream onto the freshly-rendered video element.
+const wireActiveView = (wrapper: HTMLElement, payload: FencedPayload, session: CaptureSession, startedAt: number): void => {
+  const ui = renderActive(wrapper, payload)
+  wireActiveViewWithUI(wrapper, payload, session, startedAt, ui)
+}
+
 const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
   ensurePageListeners()
 
@@ -234,7 +243,12 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
   const existing = sessionRegistry.get(payload.captureId)
   if (existing) {
     sessionRegistry.setWrapper(payload.captureId, wrapper)
-    wireActiveView(wrapper, payload, existing.session, performance.now())
+    const ui = renderActive(wrapper, payload)
+    // Re-bind the live stream to the new video/canvas. Without this the
+    // MediaStream keeps painting the old (detached) video element and
+    // the user sees a black box in the new wrapper while REC ticks.
+    void existing.session.retarget(ui.videoEl, ui.canvasEl)
+    wireActiveViewWithUI(wrapper, payload, existing.session, performance.now(), ui)
     return
   }
 

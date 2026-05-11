@@ -41,6 +41,13 @@ export const createBiometricSession = (config: CaptureConfig): CaptureSession =>
   let latest: BiometricSignal | null = null
   let started = false
   let stopped = false
+  // Mutable view-side bindings. retarget() swaps these when the widget
+  // gets re-mounted into a fresh DOM (chat re-render, room switch back).
+  // The rAF loop reads these every frame instead of capturing config.*
+  // in its closure, so the live MediaStream keeps painting the
+  // currently-attached video element.
+  let currentVideoEl: HTMLVideoElement = config.videoEl
+  let currentCanvasEl: HTMLCanvasElement = config.canvasEl
 
   const errorListeners = new Set<(e: Error) => void>()
   const emitError = (e: Error): void => {
@@ -54,9 +61,9 @@ export const createBiometricSession = (config: CaptureConfig): CaptureSession =>
     rafHandle = requestAnimationFrame(loop)
     try {
       const ts = performance.now()
-      const signal = driver.run(config.videoEl, ts)
+      const signal = driver.run(currentVideoEl, ts)
       if (signal) latest = signal
-      driver.drawOverlay(config.canvasEl, config.videoEl)
+      driver.drawOverlay(currentCanvasEl, currentVideoEl)
     } catch (err) {
       emitError(err instanceof Error ? err : new Error(String(err)))
     }
@@ -76,17 +83,17 @@ export const createBiometricSession = (config: CaptureConfig): CaptureSession =>
           audio: false,
         }
         stream = await navigator.mediaDevices.getUserMedia(constraints)
-        config.videoEl.srcObject = stream
-        config.videoEl.muted = true
+        currentVideoEl.srcObject = stream
+        currentVideoEl.muted = true
         // playsInline keeps the video element from going full-screen on iOS;
         // harmless on desktop and consistent across platforms.
-        config.videoEl.setAttribute('playsinline', '')
-        await config.videoEl.play()
+        currentVideoEl.setAttribute('playsinline', '')
+        await currentVideoEl.play()
         // Match canvas intrinsic size to the negotiated track size where
         // possible — falls back to requested resolution if videoWidth is
         // not yet available (some browsers report 0 until first frame).
-        config.canvasEl.width = config.videoEl.videoWidth || resolution.width
-        config.canvasEl.height = config.videoEl.videoHeight || resolution.height
+        currentCanvasEl.width = currentVideoEl.videoWidth || resolution.width
+        currentCanvasEl.height = currentVideoEl.videoHeight || resolution.height
         driver = await createFaceDriver()
         loop()
       } catch (err) {
@@ -94,6 +101,23 @@ export const createBiometricSession = (config: CaptureConfig): CaptureSession =>
         const e = err instanceof Error ? err : new Error(String(err))
         emitError(e)
         throw e
+      }
+    },
+    // Re-attach the live MediaStream to a different pair of video/canvas
+    // elements without restarting the session. Used by the widget when
+    // the chat re-renders and the original video element is detached —
+    // without retargeting, the stream keeps playing into the orphaned
+    // node and the user sees a black box in the new wrapper.
+    retarget: async (videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement): Promise<void> => {
+      currentVideoEl = videoEl
+      currentCanvasEl = canvasEl
+      if (stream) {
+        videoEl.srcObject = stream
+        videoEl.muted = true
+        videoEl.setAttribute('playsinline', '')
+        canvasEl.width = videoEl.videoWidth || resolution.width
+        canvasEl.height = videoEl.videoHeight || resolution.height
+        try { await videoEl.play() } catch { /* autoplay may reject; live tracks still drive frames */ }
       }
     },
     read: () => latest,
@@ -117,7 +141,7 @@ export const createBiometricSession = (config: CaptureConfig): CaptureSession =>
         }
         stream = null
       }
-      try { config.videoEl.srcObject = null } catch { /* ignore */ }
+      try { currentVideoEl.srcObject = null } catch { /* ignore */ }
     },
     onError: (cb) => {
       errorListeners.add(cb)
