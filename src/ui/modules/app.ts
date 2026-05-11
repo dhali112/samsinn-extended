@@ -852,17 +852,19 @@ const connect = () => {
 void (async () => {
   const { ensureAuthenticated } = await import('./auth.ts')
   await ensureAuthenticated()
+  // UI extension reconciliation runs BEFORE connect() so any post-render
+  // processors a pack-declared extension registers (e.g. biometrics) are in
+  // place when the WS snapshot arrives and historical messages render.
+  // Re-runs on every packs-changed event (install/uninstall/update) so the
+  // extension surface tracks pack lifecycle. Pack-declared but unknown
+  // names are silently ignored (forward-compat — see
+  // src/ui/modules/extensions/registry.ts).
+  const { refreshExtensions } = await import('./extensions/registry.ts')
+  await refreshExtensions()
+  window.addEventListener('packs-changed', () => { void refreshExtensions() })
   connect()
   // Share-link scenario boot: runs after WS connect so guide events
   // emitted by the started run reach the overlay subscribers.
   const { initScenarioShareLink } = await import('./scenario-share-link.ts')
   void initScenarioShareLink()
-  // UI extension reconciliation: read declared ui_extensions across installed
-  // packs from /api/packs and mount the matching modules. Re-runs on every
-  // packs-changed event (install/uninstall/update) so the extension surface
-  // tracks pack lifecycle. Pack-declared but unknown names are silently
-  // ignored (forward-compat — see src/ui/modules/extensions/registry.ts).
-  const { refreshExtensions } = await import('./extensions/registry.ts')
-  void refreshExtensions()
-  window.addEventListener('packs-changed', () => { void refreshExtensions() })
 })()

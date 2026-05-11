@@ -135,8 +135,17 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     div.className = 'msg-system text-xs py-1 px-2 text-text-muted'
     div.textContent = msg.content
   } else if (isSystem || isRoomSummary) {
-    div.className = 'msg-system text-xs py-1 px-2'
-    div.textContent = msg.content
+    // System messages are normally plain text (compact, muted). Biometric-
+    // caused system messages carry a ```biometric fenced block that must
+    // go through the markdown + post-processor pipeline so the inline
+    // widget can replace it — otherwise the user sees raw JSON.
+    if (msg.cause?.kind === 'biometric') {
+      div.className = 'msg-system text-xs py-1 px-2'
+      renderMarkdownContent(div, msg.content)
+    } else {
+      div.className = 'msg-system text-xs py-1 px-2'
+      div.textContent = msg.content
+    }
   } else {
     // Tint by sender kind so the room reads as a conversation between two
     // distinct populations: humans (blue) vs AI (green). Falls back to the
