@@ -140,7 +140,12 @@ const renderOverview = async (container: HTMLElement): Promise<void> => {
   container.querySelectorAll<HTMLButtonElement>('button.cat-del-btn').forEach((btn) => {
     btn.onclick = async (): Promise<void> => {
       const id = btn.dataset.cat!
-      if (!confirm(`Delete category "${id}" and all its features? This cannot be undone.`)) return
+      const { confirmModal } = await import('../modals/confirm-modal.ts')
+      if (!(await confirmModal({
+        title: 'Delete category',
+        body: `Delete category "${id}" and all its features? This cannot be undone.`,
+        confirmLabel: 'Delete',
+      }))) return
       const ok = await deleteCategoryRequest(id)
       if (ok) {
         showToast(document.body, `Deleted ${id}`, { type: 'success', position: 'fixed' })

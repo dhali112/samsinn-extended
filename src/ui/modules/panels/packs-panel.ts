@@ -283,7 +283,12 @@ const renderInstalledSection = (
         })
       })
       row.querySelector<HTMLButtonElement>('.pack-uninstall')?.addEventListener('click', async () => {
-        if (!confirm(`Uninstall pack "${pack.namespace}"? Its tools and skills will be unregistered.`)) return
+        const { confirmModal } = await import('../modals/confirm-modal.ts')
+        if (!(await confirmModal({
+          title: 'Uninstall pack',
+          body: `Uninstall pack "${pack.namespace}"? Its tools and skills will be unregistered.`,
+          confirmLabel: 'Uninstall',
+        }))) return
         const res = await fetch(`/api/packs/${encodeURIComponent(pack.namespace)}`, { method: 'DELETE' })
         const ok = res.ok
         showToast(document.body, `${pack.namespace}: ${ok ? 'uninstalled' : 'uninstall failed'}`, {

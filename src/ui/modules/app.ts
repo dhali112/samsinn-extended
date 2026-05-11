@@ -122,8 +122,14 @@ let client: WSClient | null = null
 
 // === Action helpers ===
 
-const handleDeleteRoom = (roomId: string, roomName: string): void => {
-  if (!confirm(`Delete room "${roomName}"? This cannot be undone.`)) return
+const handleDeleteRoom = async (roomId: string, roomName: string): Promise<void> => {
+  void roomId
+  const { confirmModal } = await import('./modals/confirm-modal.ts')
+  if (!(await confirmModal({
+    title: 'Delete room',
+    body: `Delete room "${roomName}"? This cannot be undone.`,
+    confirmLabel: 'Delete',
+  }))) return
   send({ type: 'delete_room', roomName })
 }
 
@@ -262,8 +268,13 @@ $agentListView.subscribe(({ agents, selectedAgentId, selectedRoomId, roomMemberI
     onInspect: (agentId) => {
       $selectedAgentId.set(agentId)
     },
-    onDelete: (agentName) => {
-      if (!confirm(`Delete agent ${agentName}? This cannot be undone.`)) return
+    onDelete: async (agentName) => {
+      const { confirmModal } = await import('./modals/confirm-modal.ts')
+      if (!(await confirmModal({
+        title: 'Delete agent',
+        body: `Delete agent "${agentName}"? This cannot be undone.`,
+        confirmLabel: 'Delete',
+      }))) return
       void safeFetchJson(`/api/agents/${encodeURIComponent(agentName)}`, { method: 'DELETE' })
     },
   })
@@ -771,12 +782,17 @@ for (const dlg of Array.from(document.querySelectorAll<HTMLDialogElement>('dialo
 startLoggingStateDot()
 
 const btnClearMessages = $('#btn-clear-messages') as HTMLButtonElement
-btnClearMessages.onclick = () => {
+btnClearMessages.onclick = async () => {
   const roomId = $selectedRoomId.get()
   if (!roomId) return
   const roomName = roomIdToName(roomId)
   if (!roomName) return
-  if (!confirm(`Clear all messages in "${roomName}"?`)) return
+  const { confirmModal } = await import('./modals/confirm-modal.ts')
+  if (!(await confirmModal({
+    title: 'Clear messages',
+    body: `Clear all messages in "${roomName}"? This cannot be undone.`,
+    confirmLabel: 'Clear',
+  }))) return
   send({ type: 'clear_messages', roomName })
 }
 

@@ -276,7 +276,12 @@ const handleShare = async (id: string): Promise<void> => {
 }
 
 const handlePurgeTrash = async (btn: HTMLButtonElement): Promise<void> => {
-  if (!confirm('Permanently purge all trashed instances? This cannot be undone.')) return
+  const { confirmModal } = await import('./confirm-modal.ts')
+  if (!(await confirmModal({
+    title: 'Purge trashed instances',
+    body: 'Permanently purge all trashed instances? This cannot be undone.',
+    confirmLabel: 'Purge',
+  }))) return
   btn.disabled = true
   try {
     const res = await fetch('/api/instances/purge-trash', { method: 'POST' })

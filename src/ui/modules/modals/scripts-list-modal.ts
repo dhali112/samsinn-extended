@@ -4,6 +4,7 @@
 
 import { createMasterDetailModal, createButton, createInput } from '../modals/detail-modal.ts'
 import { icon } from '../icon.ts'
+import { showToast } from '../toast.ts'
 
 interface ScriptListItem {
   readonly id: string
@@ -136,13 +137,18 @@ export const openScriptsListModal = async (): Promise<void> => {
       del.textContent = '×'
       del.title = `Delete "${s.title}"`
       del.onclick = async () => {
-        if (!confirm(`Delete script "${s.title}"? Running scripts are not affected.`)) return
+        const { confirmModal } = await import('./confirm-modal.ts')
+        if (!(await confirmModal({
+          title: 'Delete script',
+          body: `Delete script "${s.title}"? Running scripts are not affected.`,
+          confirmLabel: 'Delete',
+        }))) return
         const res = await fetch(`/api/scripts/${encodeURIComponent(s.name)}`, { method: 'DELETE' })
         if (res.ok) {
           if (selectedName === s.name) { selectedName = null; renderEmpty() }
           await loadCatalog()
         } else {
-          alert('Delete failed')
+          showToast(document.body, 'Delete failed', { type: 'error', position: 'fixed' })
         }
       }
       row.appendChild(del)

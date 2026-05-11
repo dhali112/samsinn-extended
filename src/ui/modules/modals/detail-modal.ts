@@ -194,18 +194,33 @@ export const createModal = (config: ModalConfig): ModalElements => {
   overlay.className = 'fixed inset-0 flex items-center justify-center z-[1100] p-4'
   overlay.style.background = 'var(--shadow-overlay)'
 
+  // Base z-index — confirmModal stacks above existing modals by overriding
+  // this to a higher value. Modals built without an override stack by DOM
+  // order at z:50.
+  overlay.style.zIndex = '50'
+
   const card = document.createElement('div')
   // `modal-card` hooks the global form-control theming in input.css so any
   // <input>, <select>, or <textarea> rendered inside this modal picks up the
   // theme tokens (no per-element class sprawl).
   card.className = `modal-card rounded-lg shadow-xl w-full ${config.width ?? 'max-w-lg'} flex flex-col overflow-hidden bg-surface text-text`
   card.style.maxHeight = config.maxHeight ?? '90vh'
+  // ARIA base — every modal advertises as a dialog with the title as its
+  // accessible name. confirmModal upgrades role to 'alertdialog' for
+  // destructive confirmations so screen readers raise attention.
+  card.setAttribute('role', 'dialog')
+  card.setAttribute('aria-modal', 'true')
 
   const header = document.createElement('div')
   header.className = 'flex items-center justify-between px-6 py-3 border-b border-border flex-shrink-0'
   const title = document.createElement('h3')
   title.className = 'text-lg font-semibold'
   title.textContent = config.title
+  // Stable id so callers can wire aria-describedby to their own body if
+  // they want; main use is the aria-labelledby below.
+  const titleId = `modal-title-${Math.random().toString(36).slice(2, 9)}`
+  title.id = titleId
+  card.setAttribute('aria-labelledby', titleId)
   header.appendChild(title)
   const close = (): void => { overlay.remove() }
   // No × button. Click outside or Escape closes. Some callers used to look

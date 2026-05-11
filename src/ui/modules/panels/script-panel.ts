@@ -152,7 +152,12 @@ export const initScriptPanel = (deps: ScriptPanelDeps): void => {
   btnScriptStop.onclick = async () => {
     const name = await getSelectedRoomName()
     if (!name) return
-    if (!confirm('Stop the running script and despawn its cast?')) return
+    const { confirmModal } = await import('../modals/confirm-modal.ts')
+    if (!(await confirmModal({
+      title: 'Stop script',
+      body: 'Stop the running script and despawn its cast?',
+      confirmLabel: 'Stop',
+    }))) return
     const res = await fetch(`/api/rooms/${encodeURIComponent(name)}/script/stop`, { method: 'POST' })
     if (!res.ok) {
       const data = await res.json().catch(() => ({ error: 'unknown' }))

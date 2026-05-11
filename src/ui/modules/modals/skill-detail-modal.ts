@@ -73,7 +73,12 @@ export const renderSkillDetailInto = (
       variant: 'danger',
       label: 'Delete',
       onClick: async () => {
-        if (!confirm(`Delete skill "${skillName}"? This removes the skill directory.`)) return
+        const { confirmModal } = await import('./confirm-modal.ts')
+        if (!(await confirmModal({
+          title: 'Delete skill',
+          body: `Delete skill "${skillName}"? This removes the skill directory.`,
+          confirmLabel: 'Delete',
+        }))) return
         await safeFetch(`/api/skills/${encodeURIComponent(skillName)}`, { method: 'DELETE' })
         onDone?.()
       },

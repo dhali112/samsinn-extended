@@ -415,7 +415,12 @@ export const openAgentTriggers = async (
       rowMain.appendChild(editBtn)
       const delBtn = mkBtn('x', 'Delete', true)
       delBtn.onclick = async () => {
-        if (!confirm(`Delete trigger "${t.name}"?`)) return
+        const { confirmModal } = await import('../modals/confirm-modal.ts')
+        if (!(await confirmModal({
+          title: 'Delete trigger',
+          body: `Delete trigger "${t.name}"?`,
+          confirmLabel: 'Delete',
+        }))) return
         const res = await fetch(`/api/agents/${encodeURIComponent(agentName)}/triggers/${encodeURIComponent(t.id)}`, { method: 'DELETE' })
         if (res.ok) {
           showToast(document.body, 'Trigger deleted', { type: 'success', position: 'fixed' })

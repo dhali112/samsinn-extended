@@ -99,9 +99,15 @@ export const openSendAsPicker = async (
     tagSpan.textContent = needsAdd ? 'add to room' : 'in room'
     row.appendChild(nameSpan)
     row.appendChild(tagSpan)
-    row.onclick = () => {
+    row.onclick = async () => {
       if (needsAdd) {
-        if (!confirm(`Add ${h.name} to ${roomName}?`)) return
+        const { confirmModal } = await import('./modals/confirm-modal.ts')
+        if (!(await confirmModal({
+          title: 'Add to room',
+          body: `Add ${h.name} to ${roomName}?`,
+          confirmLabel: 'Add',
+          variant: 'normal',
+        }))) return
         send({ type: 'add_to_room', roomName, agentName: h.name })
       }
       $selectedHumanByRoom.setKey(roomId, h.id)
