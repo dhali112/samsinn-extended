@@ -304,21 +304,13 @@ describe('biometrics capture flow (no mocks)', () => {
       providerSetup: makeSetup(makeStubGateway()),
     })
     let wsManager!: WSManager
-    const broadcasts: Array<{ instanceId: string; msg: { type: string; captureId?: string; claimedBy?: string } }> = []
     const registry = createSystemRegistry({
       shared,
       onSystemCreated: async (system, id, autoSaver) => {
         wireSystemEvents(system, wsManager, autoSaver, id)
       },
     })
-    const baseWs = createWSManager({ getSystem: (id) => registry.tryGetLive(id) })
-    wsManager = {
-      ...baseWs,
-      broadcast: (msg) => {
-        broadcasts.push({ instanceId: 'global', msg: msg as { type: string; captureId?: string; claimedBy?: string } })
-        baseWs.broadcast(msg)
-      },
-    }
+    wsManager = createWSManager({ getSystem: (id) => registry.tryGetLive(id) })
 
     const cookieId = 'claimtest1234abc'
     const system = await registry.getOrLoad(cookieId)
@@ -334,21 +326,37 @@ describe('biometrics capture flow (no mocks)', () => {
     )
     const captureId = (startResult.data as { captureId: string }).captureId
 
-    // Two tabs both attempt to claim.
-    const tabA: WSConnection = { send: () => {}, getBufferedAmount: () => 0, close: () => {} }
-    const tabB: WSConnection = { send: () => {}, getBufferedAmount: () => 0, close: () => {} }
+    // Two tabs both attempt to claim. We instrument send() per-tab so the
+    // assertion can verify the non-claimer received the event and the
+    // claimer did NOT (winner gets silent success; losers get the
+    // claimed-elsewhere notification).
+    const sentA: string[] = []
+    const sentB: string[] = []
+    const tabA: WSConnection = { send: (d) => sentA.push(d), getBufferedAmount: () => 0, close: () => {} }
+    const tabB: WSConnection = { send: (d) => sentB.push(d), getBufferedAmount: () => 0, close: () => {} }
     const sessA = { instanceId: cookieId, sessionToken: 'tab-A', lastActivity: Date.now() }
     const sessB = { instanceId: cookieId, sessionToken: 'tab-B', lastActivity: Date.now() }
+
+    // Register both connections so wsManager.wsConnections can find them by token.
+    wsManager.wsConnections.set('tab-A', tabA)
+    wsManager.wsConnections.set('tab-B', tabB)
 
     await handleWSMessage(tabA, sessA, JSON.stringify({ type: 'biometric_capture_started', captureId }), system, wsManager)
     await handleWSMessage(tabB, sessB, JSON.stringify({ type: 'biometric_capture_started', captureId }), system, wsManager)
 
-    // Only the first claim succeeds. Registry shows tab-A as claimedBy.
+    // First claim wins. Registry shows tab-A as claimedBy.
     const captureRegistry = getCaptureRegistry()
     expect(captureRegistry.get(captureId)?.claimedBy).toBe('tab-A')
-    // Exactly one biometric_capture_claimed broadcast went out.
-    const claimed = broadcasts.filter(b => b.msg.type === 'biometric_capture_claimed' && b.msg.captureId === captureId)
-    expect(claimed.length).toBe(1)
-    expect(claimed[0]!.msg.claimedBy).toBe('tab-A')
+
+    // Tab B (the non-claimer) received the biometric_capture_claimed event.
+    const claimedAtB = sentB.filter(s => s.includes('biometric_capture_claimed') && s.includes(captureId))
+    expect(claimedAtB.length).toBe(1)
+    expect(claimedAtB[0]).toContain('"claimedBy":"tab-A"')
+
+    // Tab A (the winner) did NOT receive its own claim — otherwise it would
+    // mistake the broadcast for someone else claiming and tear down right
+    // after consent.
+    const claimedAtA = sentA.filter(s => s.includes('biometric_capture_claimed') && s.includes(captureId))
+    expect(claimedAtA.length).toBe(0)
   })
 })

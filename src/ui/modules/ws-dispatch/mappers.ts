@@ -22,6 +22,11 @@ export const toUIMessage = (m: Message): UIMessage => ({
   ...(m.model !== undefined ? { model: m.model } : {}),
   ...(m.errorCode !== undefined ? { errorCode: m.errorCode } : {}),
   ...(m.errorProvider !== undefined ? { errorProvider: m.errorProvider } : {}),
+  // Causality metadata drives the "via script: X" caption and biometric
+  // system-message markdown routing. Without this, every live message
+  // arrives at the UI with cause=undefined regardless of what the server
+  // stamped.
+  ...(m.cause ? { cause: m.cause } : {}),
 })
 
 export const toUIRoomProfile = (r: ServerRoomProfile): RoomProfile => ({

@@ -21,10 +21,17 @@ export const handleBiometricCommand = (msg: WSInbound, ctx: CommandContext): boo
       const sessionId = ctx.session.sessionToken
       const claimed = registry.claim(msg.captureId, sessionId)
       if (claimed) {
-        // Broadcast to every connected WS so other tabs (which may be
-        // showing the same fenced block in the same room) swap to the
-        // claimed-elsewhere placeholder.
-        ctx.broadcast({ type: 'biometric_capture_claimed', captureId: msg.captureId, claimedBy: sessionId } satisfies WSOutbound)
+        // Notify OTHER sessions (not the winner) so their pending widgets
+        // swap to a "claimed-elsewhere" placeholder. Sending to the winner
+        // too would race with the widget's own onAllow path and the widget
+        // would mistake its own success for another tab's claim — leaving
+        // it stuck in the terminal state immediately after consent.
+        const payload: WSOutbound = { type: 'biometric_capture_claimed', captureId: msg.captureId, claimedBy: sessionId }
+        const data = JSON.stringify(payload)
+        for (const [token, conn] of ctx.wsManager.wsConnections) {
+          if (token === sessionId) continue
+          ctx.wsManager.safeSend(conn, data)
+        }
       }
       return true
     }
