@@ -151,6 +151,54 @@ describe('tool surface integration', () => {
   })
 })
 
+describe('regression: dispatcher round-trip never produces duplicate function declarations', () => {
+  // Bug shipped in v0.13.0 and broke the biometrics demo on prod: when the
+  // dispatcher gets registered into the global registry (so the executor
+  // can route subcommand calls by name), the NEXT agent that spawns sees
+  // it in its requestedTools. Inside compressFamilies, the dispatcher's
+  // name doesn't match any family's underlying-tool regex (e.g.
+  // 'geo_tools' doesn't match /^geo_(lookup|add|remove|...)$/), so it
+  // falls through to passthroughEntries. Combined with the freshly
+  // synthesised dispatcher, the projection had TWO tools named
+  // 'geo_tools'. Gemini rejected with HTTP 400 INVALID_ARGUMENT.
+  //
+  // Fix: exclude FAMILY_DISPATCHER_NAMES from candidates universally.
+  // Dispatchers are synthesised at projection time; the stored registry
+  // copy is for executor routing only.
+  test('compressed path: no duplicate dispatcher names after dispatcher is in registry', () => {
+    const r = createToolRegistry()
+    for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
+    // Simulate previous spawn having registered the dispatcher already.
+    const surface1 = createToolSurface({ registry: r, requestedTools: r.list().map(t => t.name) })
+    for (const d of surface1.getDispatchers()) {
+      if (!r.has(d.name)) r.register(d)
+    }
+    // Second spawn now sees 'geo_tools' in registry.list().
+    const surface2 = createToolSurface({ registry: r, requestedTools: r.list().map(t => t.name) })
+    const compressed = surface2.project(undefined, 'openai')
+    const names = compressed.map(d => d.function.name)
+    const dupes = names.filter((n, i) => names.indexOf(n) !== i)
+    expect(dupes).toEqual([])
+    // Exactly one geo_tools survives — the freshly synthesised dispatcher.
+    expect(names.filter(n => n === 'geo_tools').length).toBe(1)
+  })
+
+  test('flat path (strict provider): the registered dispatcher is hidden, underlying tools surface', () => {
+    const r = createToolRegistry()
+    for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
+    const surface1 = createToolSurface({ registry: r, requestedTools: r.list().map(t => t.name) })
+    for (const d of surface1.getDispatchers()) {
+      if (!r.has(d.name)) r.register(d)
+    }
+    const surface2 = createToolSurface({ registry: r, requestedTools: r.list().map(t => t.name) })
+    const flat = surface2.project(undefined, 'gemini')
+    const names = flat.map(d => d.function.name)
+    // Gemini sees the original 3 geo_* tools, NOT the dispatcher.
+    expect(names.sort()).toEqual(['geo_add', 'geo_lookup', 'geo_remove'])
+    expect(names).not.toContain('geo_tools')
+  })
+})
+
 describe('getDispatchers', () => {
   test('returns one dispatcher per compressible family in the full registry', () => {
     const r = createToolRegistry()

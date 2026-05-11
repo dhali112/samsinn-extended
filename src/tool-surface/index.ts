@@ -23,7 +23,7 @@
 import type { Tool, ToolDefinition, ToolRegistry, ToolRegistryEntry } from '../core/types/tool.ts'
 import { toolsToDefinitions } from '../llm/tool-capability.ts'
 import { effectiveActivePackSet } from '../packs/activation.ts'
-import { compressFamilies, BUILT_IN_FAMILIES, type ToolFamily } from './families.ts'
+import { compressFamilies, BUILT_IN_FAMILIES, FAMILY_DISPATCHER_NAMES, type ToolFamily } from './families.ts'
 import { fitProjection, logBudgetTriggerOnce, DEFAULT_TOOL_TOKEN_BUDGET } from './budget.ts'
 import { isStrictProvider } from './strict-providers.ts'
 
@@ -80,8 +80,17 @@ export const createToolSurface = (deps: CreateToolSurfaceDeps): ToolSurface => {
   const buildCandidates = (roomId: string | undefined): ReadonlySet<string> => {
     // Start from the agent's requested tool set, intersected with what's
     // currently registered (a tool may have been unregistered after spawn).
+    // CRITICAL: exclude previously-registered family dispatcher names. The
+    // registry holds them so the executor can route tool calls by name, but
+    // they must NOT appear in the projection — the compressed path
+    // re-synthesises them fresh, and the flat path wants the underlying
+    // tools (not the dispatcher). Including a stored dispatcher caused
+    // Gemini to reject with "Duplicate function declaration found:
+    // geo_tools" — the synthesised dispatcher plus the stored one share a
+    // name. Filtering here makes both paths safe.
     const present = new Set<string>()
     for (const name of requestedSet) {
+      if (FAMILY_DISPATCHER_NAMES.has(name)) continue
       if (deps.registry.has(name)) present.add(name)
     }
     // Per-room pack activation filter — pre-existing behavior, now living
