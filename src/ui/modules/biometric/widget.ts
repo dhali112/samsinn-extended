@@ -2,28 +2,30 @@
 // `\`\`\`biometric` fenced code block. One widget per fenced block instance
 // (per captureId).
 //
+// Architecture: the MediaStream is owned by the module-scoped
+// SessionRegistry, NOT by this widget. Widgets are *views* into a live
+// session; they can come and go (room switches, markdown re-renders) and
+// the camera stays correctly owned. The registry's 2 s sweep timer
+// guarantees that any session whose wrapper is no longer in the document
+// gets stopped — no race condition with MutationObserver attachment,
+// no dependence on any specific mutation event firing.
+//
 // State machine: requested → active → stopped (terminal).
 // Off-paths: denied / failed / unavailable / claimed-elsewhere (all terminal).
 //
 // Lifecycle invariants:
-//   - The widget is the SOLE owner of any MediaStream it opens. Cleanup is
-//     guaranteed via three independent paths:
-//       (a) explicit user click on Stop
-//       (b) DOM removal observed via MutationObserver on the wrapper
-//       (c) page-level samsinn:biometric-stop-all event
-//     All three end in `await session.stop()` before any state swap.
+//   - All camera teardown funnels through sessionRegistry.release().
+//     Multiple paths (Stop button, agent stop, claim loss, page unload,
+//     orphan sweep) all call release; the registry handles idempotency.
+//   - On widget re-mount for an existing captureId, the wrapper is swapped
+//     onto the existing live session — no re-consent, no second
+//     getUserMedia. The old wrapper detaches naturally.
 //   - Re-mount after stop is idempotent: `state: 'stopped'` in the fenced
 //     block payload renders a static summary; never reopens the camera.
-//   - Multi-tab claim race: late tab receives biometric_capture_claimed
-//     and MUST `await session.stop()` to release its own MediaStream
-//     before swapping to the claimed-elsewhere placeholder.
-//
-// All rendering is plain DOM — no framework. Tailwind utility classes
-// match the rest of src/ui/modules/. Theme colours come from the
-// CSS variables defined globally.
 
 import { createBiometricSession, type CaptureSession, type BiometricSignal } from '../../../biometrics/index.ts'
 import { send as sendWS } from '../ws-send.ts'
+import { createSessionRegistry, type ReleaseReason } from './session-registry.ts'
 
 interface FencedPayload {
   readonly captureId: string
@@ -34,22 +36,51 @@ interface FencedPayload {
 }
 
 const SIGNAL_PUSH_INTERVAL_MS = 2000
-const REGISTERED_WIDGETS = new Set<HTMLElement>()
-let stopAllListenerAttached = false
 
-const ensureStopAllListener = (): void => {
-  if (stopAllListenerAttached) return
-  stopAllListenerAttached = true
+const sessionRegistry = createSessionRegistry({
+  onRelease: (captureId, reason) => {
+    // Tell the server the capture is done. Server uses this to transition
+    // its registry entry to 'stopped' so biometrics_read returns the
+    // frozen last snapshot rather than appearing live.
+    sendWS({ type: 'biometric_capture_stopped', captureId, reason })
+  },
+})
+
+// Page-level fan-outs. Set up once at module load; cheap to keep live.
+// These trigger registry releases — the registry handles the actual
+// camera teardown.
+let pageListenersAttached = false
+const ensurePageListeners = (): void => {
+  if (pageListenersAttached) return
+  pageListenersAttached = true
+
   document.addEventListener('samsinn:biometric-stop-all', () => {
-    for (const w of REGISTERED_WIDGETS) {
-      const stop = (w as HTMLElement & { __biometricStop?: () => void }).__biometricStop
-      try { stop?.() } catch { /* ignore */ }
+    for (const entry of sessionRegistry._entries()) {
+      void sessionRegistry.release(entry.captureId, 'agent')
     }
   })
-  window.addEventListener('beforeunload', () => {
-    for (const w of REGISTERED_WIDGETS) {
-      const stop = (w as HTMLElement & { __biometricStop?: () => void }).__biometricStop
-      try { stop?.() } catch { /* ignore */ }
+  // pagehide covers bfcache + mobile better than beforeunload. Keep both
+  // because some browsers fire only one or the other reliably.
+  const releaseAll = (): void => {
+    for (const entry of sessionRegistry._entries()) {
+      void sessionRegistry.release(entry.captureId, 'disconnect')
+    }
+  }
+  window.addEventListener('beforeunload', releaseAll)
+  window.addEventListener('pagehide', releaseAll)
+
+  // Agent called biometrics_stop while a widget was still live. The WS
+  // dispatcher fans this out as a CustomEvent keyed by captureId.
+  window.addEventListener('biometric:stop-requested', (e: Event) => {
+    const detail = (e as CustomEvent<{ captureId: string }>).detail
+    if (detail?.captureId) void sessionRegistry.release(detail.captureId, 'agent')
+  })
+
+  // Another tab won the claim. Drop our local session.
+  window.addEventListener('biometric:claimed', (e: Event) => {
+    const detail = (e as CustomEvent<{ captureId: string }>).detail
+    if (detail?.captureId && sessionRegistry.get(detail.captureId)) {
+      void sessionRegistry.release(detail.captureId, 'disconnect')
     }
   })
 }
@@ -87,7 +118,15 @@ const renderConsent = (wrapper: HTMLElement, payload: FencedPayload, onAllow: ()
   wrapper.querySelector('[data-act="deny"]')?.addEventListener('click', onDeny)
 }
 
-const renderActive = (wrapper: HTMLElement, payload: FencedPayload): { videoEl: HTMLVideoElement; canvasEl: HTMLCanvasElement; signalsEl: HTMLElement; stopBtn: HTMLButtonElement; elapsedEl: HTMLElement } => {
+interface ActiveUI {
+  readonly videoEl: HTMLVideoElement
+  readonly canvasEl: HTMLCanvasElement
+  readonly signalsEl: HTMLElement
+  readonly stopBtn: HTMLButtonElement
+  readonly elapsedEl: HTMLElement
+}
+
+const renderActive = (wrapper: HTMLElement, payload: FencedPayload): ActiveUI => {
   const w = payload.resolution?.width ?? 320
   const h = payload.resolution?.height ?? 240
   wrapper.innerHTML = `
@@ -147,47 +186,71 @@ const parsePayload = (raw: string): FencedPayload | null => {
   }
 }
 
-const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
-  ensureStopAllListener()
-  REGISTERED_WIDGETS.add(wrapper)
+// Wire a wrapper to an already-live session. Used both on fresh-capture
+// success and on widget re-mount for an existing captureId. Sets up the
+// view-side timers and Stop button; the session itself keeps streaming.
+const wireActiveView = (wrapper: HTMLElement, payload: FencedPayload, session: CaptureSession, startedAt: number): void => {
+  const ui = renderActive(wrapper, payload)
 
-  // If the fenced block already says stopped, render terminal-only and skip
-  // the camera path entirely. This is what makes re-renders idempotent.
+  const elapsedTimer = setInterval(() => {
+    if (!wrapper.isConnected) {
+      clearInterval(elapsedTimer)
+      clearInterval(pushTimer)
+      return
+    }
+    const s = Math.floor((performance.now() - startedAt) / 1000)
+    ui.elapsedEl.textContent = `${s}s`
+    ui.signalsEl.innerHTML = buildSignalCard(session.read())
+  }, 250)
+
+  const pushTimer = setInterval(() => {
+    const snap = session.read()
+    if (snap) sendWS({ type: 'biometric_capture_signal', captureId: payload.captureId, snapshot: snap })
+  }, SIGNAL_PUSH_INTERVAL_MS)
+
+  ui.stopBtn.addEventListener('click', () => { void sessionRegistry.release(payload.captureId, 'user') })
+
+  // Pull the new active view into view explicitly — chat auto-scroll
+  // fires on new messages, not on same-message resize.
+  requestAnimationFrame(() => {
+    try { wrapper.scrollIntoView({ block: 'end', behavior: 'smooth' }) } catch { /* ignore */ }
+  })
+}
+
+const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
+  ensurePageListeners()
+
+  // Terminal-state payload — render summary and bail. Never opens camera.
   if (payload.state === 'stopped') {
     renderTerminal(wrapper, payload, 'stopped')
-    REGISTERED_WIDGETS.delete(wrapper)
     return
   }
 
-  let session: CaptureSession | null = null
-  let pushTimer: ReturnType<typeof setInterval> | null = null
-  let elapsedTimer: ReturnType<typeof setInterval> | null = null
-  let claimedListener: ((e: Event) => void) | null = null
-  let stopRequestedListener: ((e: Event) => void) | null = null
-  let observer: MutationObserver | null = null
-  let stopped = false
-
-  const cleanup = async (reason: 'user' | 'agent' | 'unmount' | 'disconnect' | 'error'): Promise<void> => {
-    if (stopped) return
-    stopped = true
-    if (pushTimer) clearInterval(pushTimer)
-    if (elapsedTimer) clearInterval(elapsedTimer)
-    if (claimedListener) window.removeEventListener('biometric:claimed', claimedListener)
-    if (stopRequestedListener) window.removeEventListener('biometric:stop-requested', stopRequestedListener)
-    if (observer) observer.disconnect()
-    REGISTERED_WIDGETS.delete(wrapper)
-    let last: BiometricSignal | null = null
-    try { last = session?.read() ?? null } catch { last = null }
-    try { await session?.stop() } catch { /* ignore */ }
-    sendWS({ type: 'biometric_capture_stopped', captureId: payload.captureId, reason })
-    renderTerminal(wrapper, payload, 'stopped', undefined, last)
+  // Re-mount path: a live session already exists for this captureId
+  // (the message was re-rendered; markdown produced a fresh wrapper).
+  // Swap the wrapper onto the existing session — no re-consent, no
+  // second getUserMedia. The previous wrapper is naturally orphaned
+  // (it's no longer the registered one).
+  const existing = sessionRegistry.get(payload.captureId)
+  if (existing) {
+    sessionRegistry.setWrapper(payload.captureId, wrapper)
+    wireActiveView(wrapper, payload, existing.session, performance.now())
+    return
   }
 
-  // Expose stop hook on the DOM node for the global stop-all listener.
-  ;(wrapper as HTMLElement & { __biometricStop?: () => void }).__biometricStop = () => { void cleanup('agent') }
+  // No webcam at all on this device → bail before consent.
+  if (!navigator.mediaDevices?.getUserMedia) {
+    sendWS({ type: 'biometric_capture_failed', captureId: payload.captureId, error: 'getUserMedia unavailable' })
+    renderTerminal(wrapper, payload, 'unavailable', 'This browser/device does not expose a webcam.')
+    return
+  }
 
   const onAllow = async (): Promise<void> => {
+    // Render the active UI *before* awaiting so the user sees the video
+    // element appear immediately. The video stays black until session
+    // start() assigns srcObject.
     const ui = renderActive(wrapper, payload)
+    let session: CaptureSession | null = null
     try {
       session = createBiometricSession({
         videoEl: ui.videoEl,
@@ -197,83 +260,29 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
       session.onError((err) => {
         sendWS({ type: 'biometric_capture_failed', captureId: payload.captureId, error: err.message })
         renderTerminal(wrapper, payload, 'failed', err.message)
-        REGISTERED_WIDGETS.delete(wrapper)
-        stopped = true
+        void sessionRegistry.release(payload.captureId, 'error')
       })
       await session.start()
+
+      // CRITICAL: if the wrapper was detached during the multi-second
+      // session.start() (room switch, full re-render, etc.), stop
+      // immediately and bail. Without this the camera streams into a
+      // detached video element until the registry's next sweep tick —
+      // which IS the safety net, but the bail here is faster and avoids
+      // a momentary "active" registry entry the agent could read.
+      if (!wrapper.isConnected) {
+        try { await session.stop() } catch { /* ignore */ }
+        sendWS({ type: 'biometric_capture_failed', captureId: payload.captureId, error: 'widget detached during start' })
+        return
+      }
+
+      sessionRegistry.attach(payload.captureId, session, wrapper)
       sendWS({ type: 'biometric_capture_started', captureId: payload.captureId })
-
-      const startedAt = performance.now()
-      elapsedTimer = setInterval(() => {
-        const s = Math.floor((performance.now() - startedAt) / 1000)
-        ui.elapsedEl.textContent = `${s}s`
-        ui.signalsEl.innerHTML = buildSignalCard(session?.read() ?? null)
-      }, 250)
-
-      pushTimer = setInterval(() => {
-        const snap = session?.read()
-        if (snap) sendWS({ type: 'biometric_capture_signal', captureId: payload.captureId, snapshot: snap })
-      }, SIGNAL_PUSH_INTERVAL_MS)
-
-      ui.stopBtn.addEventListener('click', () => { void cleanup('user') })
-
-      observer = new MutationObserver(() => {
-        if (!document.contains(wrapper)) void cleanup('unmount')
-      })
-      observer.observe(document.body, { childList: true, subtree: true })
-
-      // Agent-initiated stop: server broadcasts biometric_capture_stop_requested,
-      // which the WS dispatcher fans out as a CustomEvent. Without this, the
-      // widget would keep streaming until the user manually clicks Stop.
-      stopRequestedListener = (e: Event) => {
-        const detail = (e as CustomEvent<{ captureId: string }>).detail
-        if (detail.captureId !== payload.captureId) return
-        void cleanup('agent')
-      }
-      window.addEventListener('biometric:stop-requested', stopRequestedListener)
-
-      // The widget just grew from ~120px (consent) to ~360px+ (video + overlay
-      // + signals). The chat container's auto-scroll fires only on new
-      // messages and won't follow a same-message resize, so the active
-      // capture would end up below the fold for users with the chat already
-      // pinned near the bottom. Pull ourselves into view explicitly.
-      requestAnimationFrame(() => {
-        try { wrapper.scrollIntoView({ block: 'end', behavior: 'smooth' }) } catch { /* ignore */ }
-      })
-
-      claimedListener = (e: Event) => {
-        const detail = (e as CustomEvent<{ captureId: string; claimedBy: string }>).detail
-        if (detail.captureId !== payload.captureId) return
-        // claimedBy === our session: we won, ignore. Otherwise we lost.
-        // We don't have direct access to our own session token here; the
-        // claim event arrives ONLY at the loser's tab because the dispatcher
-        // is keyed by ws session — but to keep this defensive, the widget
-        // takes the conservative path: if a claim arrives after we've sent
-        // started, we assume server-side accepted ours unless we receive
-        // a follow-up `claimed-elsewhere` semantics. Server broadcasts to
-        // all sessions; loser-path is "we receive claim where claimedBy is
-        // not us" — without our token, we treat the FIRST claim event for
-        // this captureId after our started as the indicator.
-        // Simpler invariant: only the loser's started call leaves the
-        // registry in the same state, so the server MUST have rejected
-        // ours (registry.claim returns null for late tabs). The server
-        // therefore does not broadcast claimed for the loser's own claim.
-        // The presence of claimed here means we lost.
-        // Cleanup as 'disconnect' (we never fully owned the capture).
-        void (async () => {
-          if (stopped) return
-          stopped = true
-          if (pushTimer) clearInterval(pushTimer)
-          if (elapsedTimer) clearInterval(elapsedTimer)
-          if (observer) observer.disconnect()
-          REGISTERED_WIDGETS.delete(wrapper)
-          try { await session?.stop() } catch { /* ignore */ }
-          renderTerminal(wrapper, payload, 'claimed-elsewhere', `Active in another tab (${detail.claimedBy.slice(0, 8)}…)`)
-        })()
-      }
-      window.addEventListener('biometric:claimed', claimedListener)
+      wireActiveView(wrapper, payload, session, performance.now())
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      // Make sure no half-started session leaks if start() partly succeeded.
+      try { await session?.stop() } catch { /* ignore */ }
       // Distinguish permission denial from genuine failure.
       if (/denied|not allowed|notallowed/i.test(msg)) {
         sendWS({ type: 'biometric_capture_denied', captureId: payload.captureId })
@@ -282,24 +291,12 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
         sendWS({ type: 'biometric_capture_failed', captureId: payload.captureId, error: msg })
         renderTerminal(wrapper, payload, 'failed', msg)
       }
-      REGISTERED_WIDGETS.delete(wrapper)
-      stopped = true
     }
   }
 
   const onDeny = (): void => {
     sendWS({ type: 'biometric_capture_denied', captureId: payload.captureId })
     renderTerminal(wrapper, payload, 'denied')
-    REGISTERED_WIDGETS.delete(wrapper)
-    stopped = true
-  }
-
-  // No webcam at all on this device → bail before consent.
-  if (!navigator.mediaDevices?.getUserMedia) {
-    sendWS({ type: 'biometric_capture_failed', captureId: payload.captureId, error: 'getUserMedia unavailable' })
-    renderTerminal(wrapper, payload, 'unavailable', 'This browser/device does not expose a webcam.')
-    REGISTERED_WIDGETS.delete(wrapper)
-    return
   }
 
   renderConsent(wrapper, payload, onAllow, onDeny)
@@ -323,3 +320,7 @@ export const renderBiometricBlocks = async (container: HTMLElement): Promise<voi
     mountWidget(wrapper, payload)
   }
 }
+
+// Re-exported for tests + diagnostics. Not part of the stable public API.
+export { sessionRegistry as _sessionRegistry }
+export type { ReleaseReason }

@@ -98,7 +98,12 @@ export const createBiometricSession = (config: CaptureConfig): CaptureSession =>
     },
     read: () => latest,
     stop: async (): Promise<void> => {
-      if (stopped) return
+      // Always run track teardown. The previous short-circuit on `stopped`
+      // assumed start() was the only path that allocated resources, which
+      // is fragile — if anything else flipped `stopped` (a start-failure
+      // path, a future cleanup helper) the MediaStream would leak. Track
+      // .stop() is idempotent at the browser level, so re-stopping is
+      // safe. `started` still guards start() from being re-entered.
       stopped = true
       if (rafHandle !== null) {
         cancelAnimationFrame(rafHandle)
