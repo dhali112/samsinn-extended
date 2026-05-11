@@ -12,13 +12,13 @@ import type { House, Room } from '../core/types/room.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
 import type { LLMService } from '../llm/llm-service.ts'
 import type { MessageTarget } from '../core/types/messaging.ts'
-import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolRegistryEntry, ToolResult } from '../core/types/tool.ts'
+import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult } from '../core/types/tool.ts'
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import { callLLM, streamLLM } from './evaluation.ts'
 import { addAgentToRoom } from './actions.ts'
-import { toolsToDefinitions } from '../llm/tool-capability.ts'
-import { effectiveActivePackSet } from '../packs/activation.ts'
+import { createToolSurface, inferProviderFromModelRef } from '../tool-surface/index.ts'
+import { CURATED_MODELS } from '../llm/models/catalog.ts'
 
 // --- Tool executor ---
 
@@ -40,18 +40,9 @@ export type GetAllowedToolsForRoom = (roomId: string) => ReadonlySet<string> | n
 //   skill-bundled   → 'core' if no pack, else the pack the skill came from
 //   pack-bundled    → the pack namespace (e.g. 'aviation')
 //
-// Skills installed via packs already get kind='pack-bundled' on their tools
-// in src/skills/loader.ts, so 'skill-bundled' here means a standalone skill
-// not bundled into a pack — it's part of the implicit user surface, which
-// the resolver currently maps to 'local' if a path is set, else 'core'.
-const packForToolEntry = (entry: ToolRegistryEntry): string => {
-  switch (entry.source.kind) {
-    case 'built-in': return 'core'
-    case 'external': return 'local'
-    case 'pack-bundled': return entry.source.pack ?? 'local'
-    case 'skill-bundled': return entry.source.pack ?? 'local'
-  }
-}
+// Per-room pack-activation filter moved into src/tool-surface/index.ts in
+// the v0.13.0 tool-surface refactor — see project() there. spawn.ts now
+// delegates to the surface for projection + compression + budget cap.
 
 const createToolExecutor = (
   registry: ToolRegistry,
@@ -191,31 +182,46 @@ export const buildToolSupport = async (
     }),
     maxResultChars,
   }
-  const executor = createToolExecutor(registry, allToolNames, lazyContext, getAllowedToolsForRoom)
+  // Family dispatchers registered into the global registry once — getDispatchers()
+  // is idempotent and returns the same dispatcher shapes across calls. We
+  // register here (not at bootstrap) because the surface is what knows the
+  // family rules; bootstrap shouldn't depend on tool-surface internals.
+  const surface = createToolSurface({
+    registry,
+    requestedTools: allToolNames,
+    getRoomActivation,
+    logKey: agentRef.id,
+  })
+  for (const dispatcher of surface.getDispatchers()) {
+    if (!registry.has(dispatcher.name)) registry.register(dispatcher)
+  }
 
+  // The executor must accept family-dispatcher names too — they aren't in
+  // allToolNames, but they're real tools in the registry. Inject them.
+  const dispatcherNames = surface.getDispatchers().map(d => d.name)
+  const executorAllowedNames = [...allToolNames, ...dispatcherNames.filter(n => !allToolNames.includes(n))]
+  const executor = createToolExecutor(registry, executorAllowedNames, lazyContext, getAllowedToolsForRoom)
+
+  // Initial projection — no room context yet, no provider known. project()
+  // is cheap; the per-eval resolveToolDefinitions below overrides this
+  // with the room + provider-aware projection.
   const support: { -readonly [K in keyof AgentToolSupport]: AgentToolSupport[K] } = {
     toolExecutor: executor,
-    toolDefinitions: toolsToDefinitions(availableTools),
+    toolDefinitions: surface.project(undefined, undefined),
   }
 
   if (getRoomActivation) {
-    // Per-eval resolver: filter the static availableTools by the room's
-    // active pack set. Implicit-active packs ('core', 'local') ensure
-    // built-in / drop-in tools are always present. The 'pass' tool is in
-    // 'core' and therefore always visible.
+    // Per-eval resolver: the surface owns the per-room activation filter
+    // AND family compression AND budget cap, gated on provider strictness.
+    // Returns null when the room is unknown so the caller falls back to the
+    // static toolDefinitions (which the surface also computed with no room
+    // filter — functionally equivalent, but the null contract is preserved
+    // for legacy test compatibility + clarity).
     support.resolveToolDefinitions = (roomId: string): ReadonlyArray<ToolDefinition> | null => {
-      const room = getRoomActivation(roomId)
-      if (!room) return null
-      const active = effectiveActivePackSet(room)
-      const filtered: Tool[] = []
-      for (const tool of availableTools) {
-        const entry = registry.getEntry(tool.name)
-        // Defensive: an entry should exist (we just resolved this name above),
-        // but if registry races (hot reload) drop the tool rather than crash.
-        if (!entry) continue
-        if (active.has(packForToolEntry(entry))) filtered.push(tool)
-      }
-      return toolsToDefinitions(filtered)
+      if (!getRoomActivation(roomId)) return null
+      const model = agentRef.currentModel?.() ?? ''
+      const provider = inferProviderFromModelRef(model, CURATED_MODELS)
+      return surface.project(roomId, provider)
     }
   }
 
