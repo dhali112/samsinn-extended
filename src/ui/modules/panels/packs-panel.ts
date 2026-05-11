@@ -167,7 +167,15 @@ const renderInstalledSection = (
     row.className = 'px-3 py-2 text-xs hover:bg-surface-muted flex items-center gap-2 border-b border-border'
     const label = pack.manifest.name ?? pack.namespace
     const desc = pack.manifest.description ?? ''
-    const counts = `${pack.tools.length} tool${pack.tools.length === 1 ? '' : 's'}, ${pack.skills.length} skill${pack.skills.length === 1 ? '' : 's'}`
+    // Rough decision-time signal of "what does activating this cost in
+    // tokens." ~200 tokens per tool def is the industry-standard floor
+    // for a typed-schema function declaration; verbose descriptions push
+    // higher but the order of magnitude is enough for the user to make
+    // an informed activation choice. Exact post-activation token sizes
+    // are available via GET /api/agents/:name/surface.
+    const estTokens = pack.tools.length * 200
+    const tokensSuffix = pack.tools.length > 0 ? ` · ~${estTokens >= 1000 ? `${(estTokens / 1000).toFixed(1)}k` : estTokens} tok` : ''
+    const counts = `${pack.tools.length} tool${pack.tools.length === 1 ? '' : 's'}, ${pack.skills.length} skill${pack.skills.length === 1 ? '' : 's'}${tokensSuffix}`
     const isActive = activeSet.has(pack.namespace)
 
     // Build the row body via DOM construction. pack.manifest.{name,description}
