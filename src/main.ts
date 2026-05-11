@@ -58,6 +58,7 @@ import {
   createQueryDocumentsTool,
 } from './tools/built-in/index.ts'
 import { createBiometricsTools, BIOMETRICS_PACK_NAMESPACE } from './tools/built-in/biometric-tools.ts'
+import { createEvalBuffer } from './diagnostics/eval-buffer.ts'
 import { getCaptureRegistry } from './core/biometrics/registry.ts'
 import { createVectorStore, type VectorStore } from './embed/vector-store.ts'
 import { createMemoryIndexer, buildEmbeddingProvidersFromKeys } from './embed/memory-indexer.ts'
@@ -124,6 +125,10 @@ export interface System {
   // agents picking up a fallback get the latest list. Mirrors the wiki
   // resolveActiveWikis "derive on read" pattern (no boot-time freeze).
   readonly refreshAvailableModels: () => Promise<void>
+  // Per-instance ring buffer of recent agent evals — fuel for
+  // /api/diagnostics/evals/*. Subscribes via addEvalEventListener so
+  // it coexists with the wire-system-events broadcaster.
+  readonly evalBuffer: import('./diagnostics/eval-buffer.ts').EvalBuffer
   readonly toolRegistry: ToolRegistry
   // Refresh every AI agent's ToolExecutor / ToolDefinitions to reflect the
   // current registry. Called by the tool-rescan endpoint and by write_tool.
@@ -351,6 +356,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>('summaryRunFailed')
   const scriptEvent = lateBinding<ScriptEventEmitter>('scriptEvent')
   const scenarioEvent = lateBinding<ScenarioEventEmitter>('scenarioEvent')
+
+  // Diagnostics ring buffer — subscribes to the multi-subscriber eval-event
+  // channel so it coexists with the wire-system-events broadcaster.
+  const evalBuffer = createEvalBuffer()
+  evalBuffer.attach(evalEvent.add)
 
   // Forward-declared (matches schedulerRef pattern). HouseCallbacks.onScriptMessage closes over this.
   let scriptRunnerRef: ScriptRunner | undefined
@@ -947,6 +957,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     llm, llmService, ollama, providerConfig, providerKeys, gateways, monitors,
     ...(shared.llmPolicyStore ? { llmPolicyStore: shared.llmPolicyStore } : {}),
     refreshAvailableModels,
+    evalBuffer,
     toolRegistry, refreshAllAgentTools, skillStore, skillsDir,
     scriptStore, scriptsDir,
     scriptRunner,

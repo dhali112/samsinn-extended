@@ -33,6 +33,7 @@ import { scriptRoutes } from './routes/scripts.ts'
 import { scenarioRoutes } from './routes/scenarios.ts'
 import { geodataRoutes } from './routes/geodata.ts'
 import { documentRoutes } from './routes/documents.ts'
+import { diagnosticRoutes } from './routes/diagnostics.ts'
 import type { RouteContext } from './routes/types.ts'
 
 // Route helpers live in ./routes/helpers.ts to keep http-routes.ts cycle-free.
@@ -69,6 +70,9 @@ const allRoutes = [
   // Agent-memory routes BEFORE agentRoutes so /api/agents/:name/memory
   // matches before /api/agents/:name (which would shadow it).
   ...agentMemoryRoutes,
+  // Diagnostic routes BEFORE agentRoutes so /api/agents/:name/surface
+  // matches before /api/agents/:name. Also covers /api/diagnostics/*.
+  ...diagnosticRoutes,
   ...agentRoutes,
   ...messageRoutes,
 ]

@@ -51,8 +51,29 @@ const createToolExecutor = (
   allowedTools: ReadonlyArray<string>,
   context: ToolContext,
   getAllowedToolsForRoom?: GetAllowedToolsForRoom,
+  getRoomActivation?: GetRoomActivation,
 ): ToolExecutor => {
   const allowed = new Set(allowedTools)
+
+  // Pack-active tools must be callable even if they weren't in the
+  // agent's spawn-time `allowedTools`. The surface's UNION semantics
+  // shows pack tools to the LLM dynamically; the executor must mirror
+  // that, otherwise the LLM sees the tool but the executor rejects
+  // with "not available" — exactly the bug the diagnostic API caught
+  // post-PR-1. Resolved per-call (cheap; same getRoomActivation the
+  // surface uses).
+  const allowedByActivation = (toolName: string, roomId: string | undefined): boolean => {
+    if (!roomId || !getRoomActivation) return false
+    const room = getRoomActivation(roomId)
+    if (!room) return false
+    const entry = registry.getEntry(toolName)
+    if (!entry) return false
+    const pack = entry.source.kind === 'pack-bundled' ? entry.source.pack ?? 'local'
+      : entry.source.kind === 'skill-bundled' ? entry.source.pack ?? 'local'
+      : entry.source.kind === 'built-in' ? 'core'
+      : 'local'
+    return new Set(['core', 'local', 'welcome', 'demos', ...room.getActivePacks()]).has(pack)
+  }
 
   return async (calls: ReadonlyArray<ToolCall>, roomId?: string): Promise<ReadonlyArray<ToolResult>> => {
     const results: ToolResult[] = []
@@ -63,7 +84,7 @@ const createToolExecutor = (
     const skillWhitelist = roomId && getAllowedToolsForRoom ? getAllowedToolsForRoom(roomId) : null
 
     for (const call of calls) {
-      if (!allowed.has(call.tool)) {
+      if (!allowed.has(call.tool) && !allowedByActivation(call.tool, roomId)) {
         results.push({ success: false, error: `Tool "${call.tool}" is not available` })
         continue
       }
@@ -201,7 +222,7 @@ export const buildToolSupport = async (
   // allToolNames, but they're real tools in the registry. Inject them.
   const dispatcherNames = surface.getDispatchers().map(d => d.name)
   const executorAllowedNames = [...allToolNames, ...dispatcherNames.filter(n => !allToolNames.includes(n))]
-  const executor = createToolExecutor(registry, executorAllowedNames, lazyContext, getAllowedToolsForRoom)
+  const executor = createToolExecutor(registry, executorAllowedNames, lazyContext, getAllowedToolsForRoom, getRoomActivation)
 
   // Initial projection — no room context yet, no provider known. project()
   // is cheap; the per-eval resolveToolDefinitions below overrides this

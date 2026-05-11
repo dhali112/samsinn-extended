@@ -85,7 +85,7 @@ describe('arrangeExternalWait — llm-response', () => {
       mkCtx(stub, () => { resolved = true }),
     )
     expect(emit).not.toBeNull()
-    emit!('AI', { kind: 'eval_completed', outcome: 'respond' } satisfies EvalEvent)
+    emit!('AI', { kind: 'eval_completed', outcome: 'respond', traceId: 'tr_test_1' } satisfies EvalEvent)
     expect(resolved).toBe(true)
   })
 
@@ -102,7 +102,7 @@ describe('arrangeExternalWait — llm-response', () => {
       { type: 'llm-response', agent: 'AI' },
       mkCtx(stub, () => { resolved = true }),
     )
-    emit!('OtherAgent', { kind: 'eval_completed', outcome: 'respond' } satisfies EvalEvent)
+    emit!('OtherAgent', { kind: 'eval_completed', outcome: 'respond', traceId: 'tr_test_2' } satisfies EvalEvent)
     expect(resolved).toBe(false)
   })
 
@@ -119,7 +119,7 @@ describe('arrangeExternalWait — llm-response', () => {
       { type: 'llm-response', agent: 'AI' },
       mkCtx(stub, () => { resolved = true }),
     )
-    emit!('AI', { kind: 'chunk', delta: 'hi' } satisfies EvalEvent)
+    emit!('AI', { kind: 'chunk', delta: 'hi', traceId: 'tr_test_3' } satisfies EvalEvent)
     expect(resolved).toBe(false)
   })
 

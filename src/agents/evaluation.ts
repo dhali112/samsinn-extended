@@ -8,7 +8,7 @@
 
 import type { AgentResponse, AIAgentConfig } from '../core/types/agent.ts'
 import type { ChatRequest, LLMCallOptions, LLMProvider } from '../core/types/llm.ts'
-import type { EvalEvent } from '../core/types/agent-eval.ts'
+import type { EvalEventCore } from '../core/types/agent-eval.ts'
 import type { NativeToolCall, ToolCall, ToolDefinition, ToolExecutor, ToolResult } from '../core/types/tool.ts'
 import type { ToolTraceEntry } from '../core/types/messaging.ts'
 import type { ContextResult, FlushInfo } from './context-builder.ts'
@@ -94,7 +94,7 @@ export interface LLMCallMetrics {
 const callLLMOnce = async (
   provider: LLMProvider,
   request: ChatRequest,
-  onEvent?: (e: EvalEvent) => void,
+  onEvent?: (e: EvalEventCore) => void,
   signal?: AbortSignal,
 ): Promise<{ content: string; toolCalls?: ReadonlyArray<NativeToolCall>; durationMs: number; metrics: LLMCallMetrics }> => {
   const startMs = performance.now()
@@ -178,7 +178,7 @@ const retryInvalidMapFences = async (
   config: AIAgentConfig,
   llmProvider: LLMProvider,
   signal: AbortSignal | undefined,
-  onEvent: ((event: EvalEvent) => void) | undefined,
+  onEvent: ((event: EvalEventCore) => void) | undefined,
   systemBlocks: ContextResult['systemBlocks'],
   toolDefinitions: ReadonlyArray<ToolDefinition> | undefined,
   addGenerationMs: (ms: number) => void,
@@ -229,7 +229,7 @@ const retryInvalidMapFences = async (
 export interface EvalOptions {
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
   readonly inReplyTo?: ReadonlyArray<string>
-  readonly onEvent?: (event: EvalEvent) => void
+  readonly onEvent?: (event: EvalEventCore) => void
   readonly signal?: AbortSignal
 }
 

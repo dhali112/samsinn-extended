@@ -20,7 +20,8 @@
 
 import type { AIAgent, AIAgentConfig, IncludeContext, IncludePrompts, PromptSection, ContextSection } from '../core/types/agent.ts'
 import type { AgentHistory, Message } from '../core/types/messaging.ts'
-import type { EvalEvent } from '../core/types/agent-eval.ts'
+import type { EvalEvent, EvalEventCore } from '../core/types/agent-eval.ts'
+import { generateTraceId } from '../core/types/agent-eval.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
 import type { Room } from '../core/types/room.ts'
 import type { ToolDefinition, ToolExecutor } from '../core/types/tool.ts'
@@ -229,6 +230,7 @@ export const createAIAgent = (
     effectiveModel: string,
     triggerRoomId: string,
     signal: AbortSignal,
+    traceId: string,
     inReplyTo?: ReadonlyArray<string>,
   ): Promise<EvalResult> => {
     const evalConfig = {
@@ -249,8 +251,11 @@ export const createAIAgent = (
       ? resolveToolDefinitions(triggerRoomId)
       : null
     const evalToolDefs = includeTools ? (resolvedDefs ?? toolDefinitions) : undefined
+    // Stamp traceId onto every event from the inner evaluate loop before
+    // forwarding. Internal sites work with EvalEventCore (no traceId
+    // plumbing); subscribers see a full EvalEvent.
     const evalEventCb = onEvalEvent
-      ? (event: EvalEvent) => onEvalEvent(config.name, event)
+      ? (event: EvalEventCore) => onEvalEvent(config.name, { ...event, traceId } as EvalEvent)
       : undefined
     const evalOpts = {
       ...(evalToolDefs ? { toolDefinitions: evalToolDefs } : {}),
@@ -273,6 +278,14 @@ export const createAIAgent = (
     cm.startGeneration(triggerRoomId)
     cm.notifyState('generating', triggerRoomId)
 
+    // One traceId per evaluate() call — every EvalEvent for this eval
+    // carries it so subscribers (the diagnostics ring buffer + UI) can
+    // correlate per-eval state without polling.
+    const traceId = generateTraceId()
+    const emit = onEvalEvent
+      ? (event: EvalEventCore) => onEvalEvent(config.name, { ...event, traceId } as EvalEvent)
+      : undefined
+
     const contextResult = buildContext(contextDeps(), triggerRoomId)
     const epoch = cm.epochAtStart()
 
@@ -287,8 +300,8 @@ export const createAIAgent = (
     if (resolved.fallback && effectiveModel !== currentModel) {
       // One-shot per fallback target — re-emit only when the target changes
       // (which it does when the preferred model recovers and then breaks again).
-      if (lastFallbackTarget !== effectiveModel && onEvalEvent) {
-        onEvalEvent(config.name, {
+      if (lastFallbackTarget !== effectiveModel && emit) {
+        emit({
           kind: 'model_fallback',
           preferred: currentModel,
           effective: effectiveModel,
@@ -313,8 +326,8 @@ export const createAIAgent = (
     const effectiveToolDefs = includeTools ? (evalResolvedDefs ?? toolDefinitions) : undefined
 
     // Emit context_ready + any context builder warnings before LLM call
-    if (onEvalEvent) {
-      onEvalEvent(config.name, {
+    if (emit) {
+      emit({
         kind: 'context_ready',
         messages: contextResult.messages,
         model: effectiveModel,
@@ -322,7 +335,7 @@ export const createAIAgent = (
         toolCount: effectiveToolDefs?.length ?? 0,
       })
       for (const w of contextResult.warnings) {
-        onEvalEvent(config.name, { kind: 'warning', message: w })
+        emit({ kind: 'warning', message: w })
       }
     }
     // epoch guards: each cancelGeneration() increments generationEpoch so stale
@@ -331,7 +344,7 @@ export const createAIAgent = (
       let wasRespond = false
       try {
         const { decision, flushInfo } = await runEvaluate(
-          contextResult, effectiveModel, triggerRoomId, abortController.signal, inReplyTo,
+          contextResult, effectiveModel, triggerRoomId, abortController.signal, traceId, inReplyTo,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
 
@@ -713,7 +726,7 @@ export const createAIAgent = (
         }
 
         const { decision } = await runEvaluate(
-          contextResult, effectiveModel, roomId, abortController.signal,
+          contextResult, effectiveModel, roomId, abortController.signal, generateTraceId(),
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled
         onDecision(decision)
