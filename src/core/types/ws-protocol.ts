@@ -161,3 +161,8 @@ export type WSOutbound =
   // swap their pending widget to a "active in another tab" placeholder and
   // release any MediaStream they had opened.
   | { readonly type: 'biometric_capture_claimed'; readonly captureId: string; readonly claimedBy: string }
+  // Agent has called biometrics_stop while a widget is still streaming.
+  // Live widget releases its MediaStream and renders the terminal summary.
+  // Distinct from biometric_capture_stopped (UI→server) which the widget
+  // itself sends on user-driven teardown.
+  | { readonly type: 'biometric_capture_stop_requested'; readonly captureId: string; readonly reason: 'agent' }

@@ -163,6 +163,7 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
   let pushTimer: ReturnType<typeof setInterval> | null = null
   let elapsedTimer: ReturnType<typeof setInterval> | null = null
   let claimedListener: ((e: Event) => void) | null = null
+  let stopRequestedListener: ((e: Event) => void) | null = null
   let observer: MutationObserver | null = null
   let stopped = false
 
@@ -172,6 +173,7 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
     if (pushTimer) clearInterval(pushTimer)
     if (elapsedTimer) clearInterval(elapsedTimer)
     if (claimedListener) window.removeEventListener('biometric:claimed', claimedListener)
+    if (stopRequestedListener) window.removeEventListener('biometric:stop-requested', stopRequestedListener)
     if (observer) observer.disconnect()
     REGISTERED_WIDGETS.delete(wrapper)
     let last: BiometricSignal | null = null
@@ -219,6 +221,25 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
         if (!document.contains(wrapper)) void cleanup('unmount')
       })
       observer.observe(document.body, { childList: true, subtree: true })
+
+      // Agent-initiated stop: server broadcasts biometric_capture_stop_requested,
+      // which the WS dispatcher fans out as a CustomEvent. Without this, the
+      // widget would keep streaming until the user manually clicks Stop.
+      stopRequestedListener = (e: Event) => {
+        const detail = (e as CustomEvent<{ captureId: string }>).detail
+        if (detail.captureId !== payload.captureId) return
+        void cleanup('agent')
+      }
+      window.addEventListener('biometric:stop-requested', stopRequestedListener)
+
+      // The widget just grew from ~120px (consent) to ~360px+ (video + overlay
+      // + signals). The chat container's auto-scroll fires only on new
+      // messages and won't follow a same-message resize, so the active
+      // capture would end up below the fold for users with the chat already
+      // pinned near the bottom. Pull ourselves into view explicitly.
+      requestAnimationFrame(() => {
+        try { wrapper.scrollIntoView({ block: 'end', behavior: 'smooth' }) } catch { /* ignore */ }
+      })
 
       claimedListener = (e: Event) => {
         const detail = (e as CustomEvent<{ captureId: string; claimedBy: string }>).detail

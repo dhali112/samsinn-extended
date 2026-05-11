@@ -17,6 +17,7 @@ import {
   getJoinFromQuery,
 } from './instance-cookie.ts'
 import { resolve, normalize } from 'node:path'
+import { getCaptureRegistry } from '../core/biometrics/registry.ts'
 
 // Routes that never need a per-instance system. Bypass the cookie
 // resolution + Set-Cookie path. The set is explicit; static files under
@@ -176,6 +177,15 @@ export const createServer = (config: ServerConfig) => {
 
   // Note: per-instance event wiring (broadcasts + autosave) is set up by
   // registry.onSystemCreated. createServer no longer wires anything itself.
+
+  // Biometric: when an agent calls biometrics_stop, the capture registry
+  // emits a stop request. Broadcast biometric_capture_stop_requested so any
+  // live widget for that captureId releases its MediaStream and renders
+  // its terminal summary. UI-initiated stops (widget Stop button, unmount,
+  // beforeunload) already come FROM the widget — no rebroadcast needed.
+  getCaptureRegistry().onAgentStop((captureId) => {
+    wsManager.broadcast({ type: 'biometric_capture_stop_requested', captureId, reason: 'agent' })
+  })
 
   const server = Bun.serve<WSData>({
     port,

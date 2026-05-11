@@ -40,6 +40,15 @@ export const systemHandlers: SystemHandlers = {
     }))
   },
 
+  biometric_capture_stop_requested(msg) {
+    // Agent called biometrics_stop while a widget was still live. Fan out
+    // to per-captureId listeners so the active widget tears down its
+    // MediaStream and renders the terminal summary card.
+    window.dispatchEvent(new CustomEvent('biometric:stop-requested', {
+      detail: { captureId: msg.captureId, reason: msg.reason },
+    }))
+  },
+
   pack_activation_changed(msg) {
     // A room's activePacks list was replaced. Packs panel re-renders the
     // per-room toggle column. Keyed by roomId so unrelated rooms don't

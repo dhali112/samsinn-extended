@@ -58,10 +58,15 @@ export interface CaptureRegistry {
   readonly listForRoom: (roomId: string) => ReadonlyArray<CaptureEntry>
   readonly clearForRoom: (roomId: string) => void
   readonly clearAll: () => void
+  // Subscribe to agent-initiated stop requests. The wire layer registers
+  // one listener at server boot to broadcast biometric_capture_stop_requested
+  // so any live widget for that captureId tears down its MediaStream.
+  readonly onAgentStop: (cb: (captureId: string) => void) => () => void
 }
 
 export const createCaptureRegistry = (): CaptureRegistry => {
   const entries = new Map<string, CaptureEntry>()
+  const agentStopListeners = new Set<(captureId: string) => void>()
 
   const update = (captureId: string, patch: Partial<CaptureEntry>): CaptureEntry | null => {
     const existing = entries.get(captureId)
@@ -90,8 +95,19 @@ export const createCaptureRegistry = (): CaptureRegistry => {
       return update(captureId, { claimedBy: sessionId, status: 'active' })
     },
     setSnapshot: (captureId, snapshot) => update(captureId, { lastSnapshot: snapshot }),
-    setStopped: (captureId, reason) =>
-      update(captureId, { status: 'stopped', stoppedAt: Date.now(), stoppedReason: reason }),
+    setStopped: (captureId, reason) => {
+      const updated = update(captureId, { status: 'stopped', stoppedAt: Date.now(), stoppedReason: reason })
+      // Agent-initiated stop (vs user/unmount/disconnect): notify listeners
+      // so the wire layer can broadcast biometric_capture_stop_requested to
+      // tear down the still-live widget. UI-initiated stops already came
+      // FROM the widget so a re-broadcast would be redundant.
+      if (updated && reason === 'agent') {
+        for (const l of agentStopListeners) {
+          try { l(captureId) } catch (err) { console.error('[capture] agentStop listener failed', err) }
+        }
+      }
+      return updated
+    },
     setDenied: (captureId) =>
       update(captureId, { status: 'denied', stoppedAt: Date.now() }),
     setFailed: (captureId, error) =>
@@ -102,6 +118,10 @@ export const createCaptureRegistry = (): CaptureRegistry => {
       for (const [id, e] of entries) if (e.roomId === roomId) entries.delete(id)
     },
     clearAll: () => entries.clear(),
+    onAgentStop: (cb) => {
+      agentStopListeners.add(cb)
+      return () => agentStopListeners.delete(cb)
+    },
   }
 }
 

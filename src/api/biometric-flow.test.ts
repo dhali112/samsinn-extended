@@ -295,6 +295,70 @@ describe('biometrics capture flow (no mocks)', () => {
     expect(room.getRecent(1)[0]!.content).toContain(captureId)
   })
 
+  test('agent-initiated stop emits biometric_capture_stop_requested via registry hook', async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'samsinn-bio-agentstop-'))
+    process.env.SAMSINN_HOME = homeDir
+    const shared = createSharedRuntime({
+      providerConfig: baseConfig,
+      providerSetup: makeSetup(makeStubGateway()),
+    })
+    let wsManager!: WSManager
+    const registry = createSystemRegistry({
+      shared,
+      onSystemCreated: async (system, id, autoSaver) => {
+        wireSystemEvents(system, wsManager, autoSaver, id)
+      },
+    })
+    wsManager = createWSManager({ getSystem: (id) => registry.tryGetLive(id) })
+
+    // Subscribe to the registry hook the same way api/server.ts does at boot.
+    // No mocks — real capture registry, real listener.
+    const stopRequests: string[] = []
+    const captureRegistry = getCaptureRegistry()
+    const unsubscribe = captureRegistry.onAgentStop((captureId) => {
+      stopRequests.push(captureId)
+    })
+
+    try {
+      const cookieId = 'agentstoptest12c'
+      const system = await registry.getOrLoad(cookieId)
+      const room = system.house.getRoom(system.house.listAllRooms()[0]!.id)!
+      room.setActivePacks(['biometrics'])
+      const human = system.team.listAgents().find(a => a.kind === 'human')!
+
+      // Agent flow: start → user claims → agent stops mid-capture.
+      const startResult = await system.toolRegistry.get('biometrics_start')!.execute(
+        { reason: 'will stop mid-capture' },
+        { callerId: human.id, callerName: human.name, roomId: room.profile.id },
+      )
+      const captureId = (startResult.data as { captureId: string }).captureId
+
+      const conn: WSConnection = { send: () => {}, getBufferedAmount: () => 0, close: () => {} }
+      const sess = { instanceId: cookieId, sessionToken: 'tab-1', lastActivity: Date.now() }
+      await handleWSMessage(conn, sess, JSON.stringify({ type: 'biometric_capture_started', captureId }), system, wsManager)
+
+      // Agent stops while widget would still be live.
+      const stopResult = await system.toolRegistry.get('biometrics_stop')!.execute(
+        { captureId },
+        { callerId: human.id, callerName: human.name, roomId: room.profile.id },
+      )
+      expect(stopResult.success).toBe(true)
+
+      // Registry listener fired exactly once for this captureId. This is the
+      // hook api/server.ts uses to broadcast biometric_capture_stop_requested
+      // so the live widget tears down its MediaStream.
+      expect(stopRequests).toEqual([captureId])
+
+      // User-driven stops (reason: 'user') must NOT fire the hook, otherwise
+      // the widget would re-stop itself in a loop. Reset and verify.
+      stopRequests.length = 0
+      captureRegistry.setStopped(captureId, 'user')
+      expect(stopRequests).toEqual([])
+    } finally {
+      unsubscribe()
+    }
+  })
+
   test('first-tab claim wins and broadcasts biometric_capture_claimed', async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'samsinn-bio-claim-'))
     process.env.SAMSINN_HOME = homeDir
