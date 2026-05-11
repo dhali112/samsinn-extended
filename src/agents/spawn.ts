@@ -42,7 +42,9 @@ export type GetAllowedToolsForRoom = (roomId: string) => ReadonlySet<string> | n
 //
 // Per-room pack-activation filter moved into src/tool-surface/index.ts in
 // the v0.13.0 tool-surface refactor — see project() there. spawn.ts now
-// delegates to the surface for projection + compression + budget cap.
+// delegates to the surface for projection + family compression. The
+// earlier 2000-token budget cap was removed (user-intent-authoritative —
+// no silent trimming).
 
 const createToolExecutor = (
   registry: ToolRegistry,
@@ -190,7 +192,6 @@ export const buildToolSupport = async (
     registry,
     requestedTools: allToolNames,
     getRoomActivation,
-    logKey: agentRef.id,
   })
   for (const dispatcher of surface.getDispatchers()) {
     if (!registry.has(dispatcher.name)) registry.register(dispatcher)
@@ -212,9 +213,9 @@ export const buildToolSupport = async (
 
   if (getRoomActivation) {
     // Per-eval resolver: the surface owns the per-room activation filter
-    // AND family compression AND budget cap, gated on provider strictness.
-    // Returns null when the room is unknown so the caller falls back to the
-    // static toolDefinitions (which the surface also computed with no room
+    // and family compression, gated on provider strictness. Returns null
+    // when the room is unknown so the caller falls back to the static
+    // toolDefinitions (which the surface also computed with no room
     // filter — functionally equivalent, but the null contract is preserved
     // for legacy test compatibility + clarity).
     support.resolveToolDefinitions = (roomId: string): ReadonlyArray<ToolDefinition> | null => {
@@ -228,6 +229,38 @@ export const buildToolSupport = async (
   return support
 }
 
+// Default requestedTools when an agent is spawned without an explicit
+// `tools:` list. The per-room pack-activation filter further narrows
+// this to whichever packs are active in the trigger room, so the
+// effective surface at eval time is:
+//
+//   defaultRequestedTools  ∩  active-packs(roomId)
+//
+// We default to tools owned by implicit-active packs (core/local/welcome/
+// demos) only. Explicit pack activation is the only way to add more.
+// This replaces the prior "give the agent everything in the registry"
+// default, which combined with the now-deleted budget cap produced
+// silent tool drops in production.
+//
+// Scenarios that want a specific breadth (e.g. the Cafe AI in the
+// welcome scenario) declare `tools:` explicitly in the scenario yaml.
+// Snapshot-restored agents whose persisted config has tools === undefined
+// are backfilled at load time to preserve their pre-redesign behavior
+// (see src/core/storage/snapshot.ts).
+const IMPLICIT_ACTIVE_PACKS: ReadonlySet<string> = new Set(['core', 'local', 'welcome', 'demos'])
+
+const deriveDefaultRequestedTools = (registry: ToolRegistry): ReadonlyArray<string> => {
+  const out: string[] = []
+  for (const entry of registry.listEntries()) {
+    const pack =
+      entry.source.kind === 'built-in' ? 'core' :
+      entry.source.kind === 'external' ? 'local' :
+      entry.source.pack ?? 'local'
+    if (IMPLICIT_ACTIVE_PACKS.has(pack)) out.push(entry.tool.name)
+  }
+  return out
+}
+
 const resolveAgentTools = async (
   config: AIAgentConfig,
   llmProvider: LLMProvider,
@@ -236,8 +269,8 @@ const resolveAgentTools = async (
   getAllowedToolsForRoom?: GetAllowedToolsForRoom,
   getRoomActivation?: GetRoomActivation,
 ): Promise<AgentToolSupport> => {
-  const requestedTools = config.tools ?? toolRegistry?.list().map(t => t.name) ?? []
   if (!toolRegistry) return {}
+  const requestedTools = config.tools ?? deriveDefaultRequestedTools(toolRegistry)
 
   if (requestedTools.length > 0) {
     warnMissingTools(config.name, requestedTools, toolRegistry)

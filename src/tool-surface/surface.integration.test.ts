@@ -1,28 +1,27 @@
 // End-to-end Tool Surface tests — real ToolRegistry, real tool factory
 // functions from src/tools/built-in/, real activation filter. No mocks.
 //
-// Three classes of assertion:
+// Two classes of assertion:
 //
-//   1. Token-count regressions: catches any future change that bloats the
-//      surface back to its pre-compression size. Hard ceiling per axis 1
-//      of the stress-test (verifiability requirement).
+//   1. Family compression cuts the token count vs flat (catches any future
+//      change that bloats the surface back to its pre-compression size).
 //
 //   2. Strict-provider behavior: gemini-style providers must NEVER receive
 //      a family dispatcher; they get the flat tool list.
 //
-//   3. Per-room pack activation: tools from a non-active pack must NOT
-//      appear in the projection. Existing behavior in spawn.ts moved into
-//      the surface; this test pins the migration.
+// Budget cap was removed in PR 1 of the tool-surface redesign; the
+// previous "drops tools to fit budget" test is gone with it. The surface
+// trusts user intent (pack activation) and never silently strips tools.
 
-import { describe, expect, test, beforeEach } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { createToolRegistry } from '../core/tool-registry.ts'
 import type { Tool } from '../core/types/tool.ts'
-import {
-  createToolSurface,
-  estimateTokens,
-  __resetBudgetWarnState,
-} from './index.ts'
+import { createToolSurface } from './index.ts'
+import { estimateTokens } from '../agents/context-builder.ts'
 import { createGetTimeTool, createPassTool, createPostToRoomTool } from '../tools/built-in/index.ts'
+
+const estimateDef = (def: { function: { name: string; description: string; parameters: unknown } }): number =>
+  estimateTokens(JSON.stringify(def))
 
 // Synthetic tool factory used to populate the registry with realistic
 // volumes. Description size mimics the verbose tool descriptions the
@@ -40,8 +39,6 @@ const mockTool = (name: string, descSize = 150): Tool => ({
   execute: async () => ({ success: true }),
 })
 
-beforeEach(() => { __resetBudgetWarnState() })
-
 describe('tool surface integration', () => {
   test('OpenAI projection compresses filesystem family below flat-list token count', () => {
     const r = createToolRegistry()
@@ -57,13 +54,13 @@ describe('tool surface integration', () => {
     r.register(createPassTool())
 
     const requested = r.list().map(t => t.name)
-    const surface = createToolSurface({ registry: r, requestedTools: requested, logKey: 'agent-x' })
+    const surface = createToolSurface({ registry: r, requestedTools: requested })
 
     const compressed = surface.project(undefined, 'openai')
     const flat = surface.project(undefined, 'gemini')
 
-    const compressedTokens = compressed.reduce((s, d) => s + estimateTokens(d), 0)
-    const flatTokens = flat.reduce((s, d) => s + estimateTokens(d), 0)
+    const compressedTokens = compressed.reduce((s, d) => s + estimateDef(d), 0)
+    const flatTokens = flat.reduce((s, d) => s + estimateDef(d), 0)
 
     // Compression cuts the family from 14 individual tool definitions down
     // to one dispatcher whose description embeds compact subcommand
@@ -100,24 +97,23 @@ describe('tool surface integration', () => {
     expect(result.some(d => d.function.name === 'fs')).toBe(true)
   })
 
-  test('budget cap drops non-exempt tools when exceeded', () => {
+  test('does not silently drop tools — every requested tool reaches the surface', () => {
+    // Pinned regression for the removed budget cap. Even a deliberately
+    // bloated set must all reach the LLM; the surface's job is to
+    // faithfully reflect user intent, not to trim it to fit a fictional
+    // token budget.
     const r = createToolRegistry()
-    // 50 verbose tools; budget cap will refuse most of them.
     for (let i = 0; i < 50; i++) r.register(mockTool(`noisy_tool_${i}`, 300))
     r.register(createPassTool())
     const surface = createToolSurface({
       registry: r,
       requestedTools: r.list().map(t => t.name),
-      tokenBudget: 500,
-      logKey: 'budget-test',
     })
 
     const result = surface.project(undefined, 'openai')
-    expect(result.find(d => d.function.name === 'pass')).toBeDefined()    // exempt
-    expect(result.length).toBeLessThan(50)                                 // most dropped
-    const tokens = result.reduce((s, d) => s + estimateTokens(d), 0)
-    // Cap can be exceeded by the always-keep set (pass), but not by much.
-    expect(tokens).toBeLessThan(800)
+    expect(result.length).toBe(51)                                  // every requested tool kept
+    expect(result.find(d => d.function.name === 'pass')).toBeDefined()
+    expect(result.find(d => d.function.name === 'noisy_tool_49')).toBeDefined() // last in registration order
   })
 
   test('passes through real built-in tool factories', () => {

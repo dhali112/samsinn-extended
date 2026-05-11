@@ -1,6 +1,5 @@
 import { json, errorResponse, parseBody } from './helpers.ts'
 import { asAIAgent } from '../../agents/shared.ts'
-import { buildToolSupport } from '../../agents/spawn.ts'
 import { toolsToDefinitions } from '../../llm/tool-capability.ts'
 import { modelSupportsTools } from '../../llm/models/catalog.ts'
 import { estimateTokens } from '../../agents/context-builder.ts'
@@ -238,19 +237,19 @@ export const agentRoutes: RouteEntry[] = [
         if (body.maxToolResultChars === null) aiAgent.updateMaxToolResultChars(undefined)
         else if (typeof body.maxToolResultChars === 'number') aiAgent.updateMaxToolResultChars(body.maxToolResultChars)
         if (typeof body.maxToolIterations === 'number') aiAgent.updateMaxToolIterations(body.maxToolIterations)
-        // Tool-list edits rebuild the agent's tool support so updated tools
-        // reach the next LLM request. Rejects names not in the registry.
+        // Tool-list edits rebuild every AI agent's tool support via the
+        // system helper. Routing through refreshAllAgentTools is what keeps
+        // the per-room pack-activation resolver and the per-room skill
+        // allowed-tools resolver wired — building a fresh support object
+        // here with raw buildToolSupport (no resolvers) silently erased
+        // them, so PATCH'd agents lost per-room filtering. Rejects names
+        // not in the registry before updating.
         if (Array.isArray(body.tools)) {
           const requested = (body.tools as unknown[]).filter((n): n is string => typeof n === 'string')
           const known = new Set(system.toolRegistry.list().map(t => t.name))
           const resolved = requested.filter(n => known.has(n))
           aiAgent.updateTools?.(resolved)
-          const support = await buildToolSupport(
-            resolved, system.toolRegistry,
-            { id: aiAgent.id, name: aiAgent.name, currentModel: () => aiAgent.getModel() },
-            system.llm,
-          )
-          aiAgent.refreshTools?.(support)
+          await system.refreshAllAgentTools()
         }
       }
       if (typeof body.description === 'string' && agent.updateDescription) {

@@ -312,17 +312,6 @@ export const createAIAgent = (
       : null
     const effectiveToolDefs = includeTools ? (evalResolvedDefs ?? toolDefinitions) : undefined
 
-    // TEMP DIAGNOSTIC: surface the exact tool names sent to the LLM via a
-    // warning event so we can capture them from the browser WS without
-    // SSH. Remove after biometrics-on-prod diagnosis is complete.
-    if (onEvalEvent) {
-      const names = (effectiveToolDefs ?? []).map(t => t.function?.name).filter(Boolean)
-      onEvalEvent(config.name, {
-        kind: 'warning',
-        message: `[diag] room=${triggerRoomId} usedResolver=${evalResolvedDefs ? 'yes' : 'no'} count=${names.length} tools=${names.join(',')}`,
-      })
-    }
-
     // Emit context_ready + any context builder warnings before LLM call
     if (onEvalEvent) {
       onEvalEvent(config.name, {
