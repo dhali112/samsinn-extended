@@ -312,6 +312,17 @@ export const createAIAgent = (
       : null
     const effectiveToolDefs = includeTools ? (evalResolvedDefs ?? toolDefinitions) : undefined
 
+    // TEMP DIAGNOSTIC: log per-eval tool surface so we can see whether
+    // pack-bundled tools (e.g. biometrics_*) are actually reaching the
+    // LLM. Remove after biometrics-on-prod diagnosis is complete.
+    if (effectiveToolDefs) {
+      const names = effectiveToolDefs.map(t => t.function?.name).filter(Boolean)
+      const biometric = names.filter(n => n.startsWith('biometrics_'))
+      console.log(`[diag] agent=${config.name} room=${triggerRoomId} toolDefs=${names.length} biometric=${JSON.stringify(biometric)} usedResolver=${evalResolvedDefs ? 'yes' : 'no'}`)
+    } else {
+      console.log(`[diag] agent=${config.name} room=${triggerRoomId} toolDefs=NONE includeTools=${includeTools}`)
+    }
+
     // Emit context_ready + any context builder warnings before LLM call
     if (onEvalEvent) {
       onEvalEvent(config.name, {
