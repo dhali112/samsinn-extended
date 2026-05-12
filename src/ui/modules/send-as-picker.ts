@@ -64,7 +64,7 @@ export const openSendAsPicker = async (
   }
 
   const overlay = document.createElement('div')
-  overlay.className = 'fixed inset-0 flex items-center justify-center z-50 p-4'
+  overlay.className = 'fixed inset-0 flex items-center justify-center z-[1100] p-4'
   overlay.style.background = 'var(--shadow-overlay)'
   const card = document.createElement('div')
   card.className = 'rounded-lg shadow-xl w-full max-w-md bg-surface text-text overflow-hidden'

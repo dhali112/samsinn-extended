@@ -64,7 +64,8 @@ const openers: Record<SettingsRow, () => Promise<void> | void> = {
 // (header, close, backdrop) and a sized host element.
 const openExtensionPanelModal = (spec: PanelSpec): void => {
   const backdrop = document.createElement('div')
-  backdrop.className = 'fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-12 px-4'
+  // z-[1100]: must beat Leaflet's controls (z-index 1000) so inline maps in chat don't cover the modal.
+  backdrop.className = 'fixed inset-0 z-[1100] flex items-start justify-center bg-black/60 pt-12 px-4'
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })
 
   const card = document.createElement('div')

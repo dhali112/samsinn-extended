@@ -74,7 +74,7 @@ const renderTooltip = (detail: GuideShownDetail): void => {
   removeOverlay()
   const target = detail.selector ? safeQuerySelector(detail.selector) : null
   const wrap = document.createElement('div')
-  wrap.className = 'fixed z-50 bg-surface-strong border border-border rounded shadow-lg p-3 max-w-sm text-sm pointer-events-auto'
+  wrap.className = 'fixed z-[1100] bg-surface-strong border border-border rounded shadow-lg p-3 max-w-sm text-sm pointer-events-auto'
   wrap.setAttribute('data-scenario-overlay', 'tooltip')
 
   const bodyEl = document.createElement('div')
@@ -141,7 +141,7 @@ const renderTooltip = (detail: GuideShownDetail): void => {
 const renderModal = (detail: GuideShownDetail): void => {
   removeOverlay()
   const backdrop = document.createElement('div')
-  backdrop.className = 'fixed inset-0 z-50 flex items-center justify-center pointer-events-auto'
+  backdrop.className = 'fixed inset-0 z-[1100] flex items-center justify-center pointer-events-auto'
   // Same --shadow-overlay token other modals use; theme-flips with dark mode.
   backdrop.style.background = 'var(--shadow-overlay)'
   backdrop.setAttribute('data-scenario-overlay', 'modal')

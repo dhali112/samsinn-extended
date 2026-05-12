@@ -191,7 +191,7 @@ const openSourceModal = async (): Promise<void> => {
   } catch { /* show fallback */ }
 
   const overlay = document.createElement('div')
-  overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50'
+  overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-[1100]'
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove() })
 
   const dialog = document.createElement('div')

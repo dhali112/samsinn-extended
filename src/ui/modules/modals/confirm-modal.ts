@@ -13,8 +13,9 @@
 //   - Enter resolves true, Escape resolves false, backdrop click resolves false
 //
 // Stacking + re-entrancy:
-//   - Overlay sits at z-index 60 so it stacks above any parent modal
-//     (createModal sets z:50). Escape uses capture-phase +
+//   - Overlay sits at z-index 1110 so it stacks above any parent modal
+//     (createModal sets z:1100, which itself beats Leaflet's z:1000
+//     controls so inline maps don't cover modals). Escape uses capture-phase +
 //     stopImmediatePropagation so it doesn't close the parent.
 //   - Module-level `pending` ensures double-click doesn't open two modals;
 //     the second call returns the same Promise as the first.
@@ -45,7 +46,7 @@ export const confirmModal = (opts: ConfirmOptions): Promise<boolean> => {
 
   pending = new Promise<boolean>((resolve) => {
     const modal = createModal({ title: opts.title, width: 'max-w-md' })
-    modal.overlay.style.zIndex = '60'
+    modal.overlay.style.zIndex = '1110'
     modal.card.setAttribute('role', 'alertdialog')
 
     // Body — short copy describing what's about to happen.

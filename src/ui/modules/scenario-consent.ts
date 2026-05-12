@@ -83,7 +83,7 @@ export const confirmRunWithConsent = async (
     // Use the same --shadow-overlay token the project's other modals use
     // (light: 40% black, dark: 60% black). bg-black/40 was a fixed value
     // that didn't theme-flip and looked thin against the dark theme.
-    backdrop.className = 'fixed inset-0 z-50 flex items-center justify-center'
+    backdrop.className = 'fixed inset-0 z-[1100] flex items-center justify-center'
     backdrop.style.background = 'var(--shadow-overlay)'
     backdrop.setAttribute('data-scenario-consent', '')
 
