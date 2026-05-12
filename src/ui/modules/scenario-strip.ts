@@ -1,22 +1,31 @@
 // ============================================================================
-// Empty-state inline strip — discoverability lure for the demos pack.
+// Empty-state inline strip — discoverability lure for showcase prompts
+// and the small set of scenario-backed demos (e.g. Watch Me).
 //
 // Renders inside the messages container when:
-//   - the current room has zero non-system messages (i.e. the only thing
-//     anyone sees is the welcome banner from the boot scenario)
+//   - the current room has zero non-system messages
 //   - AND no scenario is currently running in this tab's ownership
 //
-// Disappears as soon as either condition becomes false (the user posts, or
-// any scenario starts). Lives at the bottom of #messages so it doesn't
-// shove the welcome banner around — fits the "quiet nudge" UX.
+// Two sources merged into one strip:
+//   1. SHOWCASE_PROMPTS — static chips that post a natural-language prompt
+//      into the current room as the user's existing human. No scenarios
+//      runner, no setup ceremony. The simplest path for "click to try."
+//   2. Scenarios tagged `category: demo` — for demos that genuinely need
+//      orchestration (pack install, dedicated agent with tool whitelist,
+//      consent flow). Currently only Watch Me. Renders as a "Run" card
+//      with the existing consent dialog.
 //
-// The strip queries /api/scenarios on mount; renders nothing if the demos
-// pack didn't load. No state lives in the strip — it's stateless rendering
-// driven by store events the app already pushes.
+// Pre-2026-05 design forced every demo through scenarios. After the
+// scenarios-runner cascade of issues (auto-switch-to-manual heuristic,
+// __DEFAULT_HUMAN__ resolution, persona-vs-system-trailer fights), the
+// 4 data demos moved to plain chips. Watch Me stays a scenario because
+// it actually needs the pack install + agent spawn + biometrics consent
+// flow.
 // ============================================================================
 
 import { confirmRunWithConsent, type ScenarioConsentMeta } from './scenario-consent.ts'
 import { $selectedRoomId, $rooms } from './stores.ts'
+import { SHOWCASE_PROMPTS, sendAsCurrentHuman, type ShowcasePrompt } from './showcase-prompts.ts'
 
 interface CatalogScenario {
   readonly id: string
@@ -29,22 +38,13 @@ interface CatalogScenario {
   readonly opKinds: ReadonlyArray<string>
 }
 
-const currentRoomName = (): string | undefined => {
-  const id = $selectedRoomId.get()
-  if (!id) return undefined
-  return $rooms.get()[id]?.name
-}
-
 const STRIP_ID = 'scenario-empty-state-strip'
 
-const fetchDemoCatalog = async (): Promise<CatalogScenario[]> => {
+const fetchDemoScenarios = async (): Promise<CatalogScenario[]> => {
   try {
     const res = await fetch('/api/scenarios')
     if (!res.ok) return []
     const data = await res.json() as { scenarios: CatalogScenario[] }
-    // Filter to category: demo specifically — tutorials are interactive
-    // walkthroughs that need a fresh room, and onboarding/welcome already
-    // ran. We want the strip to only pitch the one-click showcase set.
     return data.scenarios.filter(s => s.category === 'demo')
   } catch { return [] }
 }
@@ -56,48 +56,90 @@ const hasOwnedActiveRun = (): boolean => {
   } catch { return false }
 }
 
-const buildStrip = (demos: ReadonlyArray<CatalogScenario>, refresh: () => void): HTMLElement => {
+const currentRoomName = (): string | undefined => {
+  const id = $selectedRoomId.get()
+  if (!id) return undefined
+  return $rooms.get()[id]?.name
+}
+
+// === Card builders ==========================================================
+
+const buildPromptChip = (entry: ShowcasePrompt, onSent: () => void): HTMLElement => {
+  const btn = document.createElement('button')
+  btn.className = 'w-full text-left px-3 py-2 rounded border border-border bg-surface hover:bg-surface-strong'
+  btn.title = entry.prompt
+  const t = document.createElement('div')
+  t.className = 'text-xs font-semibold text-text'
+  t.textContent = entry.label
+  const d = document.createElement('div')
+  d.className = 'text-xs text-text-subtle'
+  d.textContent = entry.description
+  btn.appendChild(t)
+  btn.appendChild(d)
+  btn.addEventListener('click', () => {
+    const ok = sendAsCurrentHuman(entry.prompt)
+    if (ok) onSent()   // strip will hide once the room has a non-system message
+  })
+  return btn
+}
+
+const buildScenarioCard = (
+  scenario: CatalogScenario,
+  onStarted: () => void,
+): HTMLElement => {
+  const btn = document.createElement('button')
+  btn.className = 'w-full text-left px-3 py-2 rounded border border-border bg-surface hover:bg-surface-strong'
+  btn.title = scenario.description
+  const t = document.createElement('div')
+  t.className = 'text-xs font-semibold text-text'
+  t.textContent = scenario.title
+  const d = document.createElement('div')
+  d.className = 'text-xs text-text-subtle'
+  d.textContent = scenario.description
+  btn.appendChild(t)
+  btn.appendChild(d)
+  btn.addEventListener('click', async () => {
+    const meta: ScenarioConsentMeta = {
+      id: scenario.id,
+      pack: scenario.pack,
+      name: scenario.name,
+      title: scenario.title,
+      description: scenario.description,
+      opKinds: scenario.opKinds,
+    }
+    const runId = await confirmRunWithConsent(meta, currentRoomName())
+    if (runId) onStarted()
+  })
+  return btn
+}
+
+// === Strip ==================================================================
+
+const buildStrip = (
+  scenarios: ReadonlyArray<CatalogScenario>,
+  refresh: () => void,
+): HTMLElement => {
   const wrap = document.createElement('div')
   wrap.id = STRIP_ID
   wrap.className = 'mt-4 mx-4 p-3 rounded border border-border bg-surface-muted'
 
   const header = document.createElement('div')
   header.className = 'text-xs text-text-subtle mb-2'
-  header.textContent = 'New here? Try a demo →'
+  header.textContent = 'Try a demo →'
   wrap.appendChild(header)
 
-  // Vertical column — full-width cards, one per row. Grows naturally with
-  // the demo count; no horizontal scroll. The strip lives in the messages
-  // container so the surrounding scroll is the existing chat scroll, which
-  // already handles overflow when the demo list outgrows the viewport.
   const grid = document.createElement('div')
   grid.className = 'flex flex-col gap-2'
-  for (const demo of demos) {
-    const btn = document.createElement('button')
-    btn.className = 'w-full text-left px-3 py-2 rounded border border-border bg-surface hover:bg-surface-strong'
-    btn.title = demo.description
-    const t = document.createElement('div')
-    t.className = 'text-xs font-semibold text-text'
-    t.textContent = demo.title
-    const d = document.createElement('div')
-    d.className = 'text-xs text-text-subtle'
-    d.textContent = demo.description
-    btn.appendChild(t)
-    btn.appendChild(d)
-    btn.addEventListener('click', async () => {
-      const meta: ScenarioConsentMeta = {
-        id: demo.id,
-        pack: demo.pack,
-        name: demo.name,
-        title: demo.title,
-        description: demo.description,
-        opKinds: demo.opKinds,
-      }
-      const runId = await confirmRunWithConsent(meta, currentRoomName())
-      if (runId) refresh()   // strip will hide once active run is detected
-    })
-    grid.appendChild(btn)
+
+  // Showcase chips first — one-click, no consent dialog needed.
+  for (const entry of SHOWCASE_PROMPTS) {
+    grid.appendChild(buildPromptChip(entry, refresh))
   }
+  // Then scenario-backed demos (currently just Watch Me).
+  for (const scenario of scenarios) {
+    grid.appendChild(buildScenarioCard(scenario, refresh))
+  }
+
   wrap.appendChild(grid)
   return wrap
 }
@@ -105,36 +147,25 @@ const buildStrip = (demos: ReadonlyArray<CatalogScenario>, refresh: () => void):
 // Per-call token — incremented on every render-strip entry. The async
 // fetch+append phase checks the token on resume; if a newer call has run
 // in the meantime, the older one drops out instead of double-appending.
-// Without this, the room-load + room-message-update WS events both call
-// in quickly, both pass the initial dedup query, both await fetch, both
-// append — duplicate-id strips in the DOM.
 let renderToken = 0
 
-// Public — called by app.ts after WS connect. Mounts inside the messages
-// container; re-evaluates visibility on every refresh() call (which app.ts
-// can wire to message events / room switches).
 export const renderScenarioStrip = async (
   messagesContainer: HTMLElement,
   isCurrentRoomEmpty: () => boolean,
 ): Promise<void> => {
   const myToken = ++renderToken
-  // Remove ALL existing strips (not just first; defensive against any
-  // pre-existing duplicates from a prior race window).
   for (const el of messagesContainer.querySelectorAll(`#${STRIP_ID}`)) el.remove()
 
   if (!isCurrentRoomEmpty()) return
   if (hasOwnedActiveRun()) return
 
-  const demos = await fetchDemoCatalog()
-  // If a newer render started during the await, drop out — the newer call
-  // owns the result, and we'd just be racing to append the same thing.
+  const scenarios = await fetchDemoScenarios()
   if (myToken !== renderToken) return
-  if (demos.length === 0) return
 
   // Re-check both predicates after the await — state may have changed.
   if (!isCurrentRoomEmpty()) return
   if (hasOwnedActiveRun()) return
 
   const refresh = (): void => { void renderScenarioStrip(messagesContainer, isCurrentRoomEmpty) }
-  messagesContainer.appendChild(buildStrip(demos, refresh))
+  messagesContainer.appendChild(buildStrip(scenarios, refresh))
 }

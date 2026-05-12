@@ -42,7 +42,7 @@ describe('synthetic-demos pack', () => {
     await rm(homeDir, { recursive: true, force: true })
   })
 
-  it('catalog lists welcome + all bundled demos + tutorials', async () => {
+  it('catalog: welcome + biometric-awareness demo + 2 tutorials', async () => {
     const id = generateInstanceId()
     const system = await registry.getOrLoad(id)
     // SAMSINN_SEED_EXAMPLE=0 skips the registry's explicit await of
@@ -50,17 +50,15 @@ describe('synthetic-demos pack', () => {
     // not have completed yet, so await it here.
     await system.scenarioStore.reload()
     const ids = system.scenarioStore.list().map(s => s.id).sort()
-    // Note: .sort() is alphabetical, so tutorials interleave with demos.
-    // The UI grouping uses the `category` field on each entry; this test
-    // just asserts the catalog membership.
+    // The 4 data demos (norway-platforms, vatsim-heathrow, diagram, pwr-eop)
+    // moved to chip-based showcase prompts (src/ui/modules/showcase-prompts.ts)
+    // and no longer live as scenarios. Scenarios are reserved for genuinely
+    // orchestrated flows: pack install (Watch Me / biometric-awareness) and
+    // guided tutorials.
     expect(ids).toEqual([
       'demos/biometric-awareness',
-      'demos/diagram',
       'demos/diagram-thinking',
       'demos/first-conversation',
-      'demos/norway-platforms',
-      'demos/pwr-eop',
-      'demos/vatsim-heathrow',
       'welcome/getting-started',
     ])
   })
@@ -70,11 +68,7 @@ describe('synthetic-demos pack', () => {
     const system = await registry.getOrLoad(id)
     await system.scenarioStore.reload()
     const demos = system.scenarioStore.list().filter(s => s.category === 'demo')
-    expect(demos.length).toBeGreaterThanOrEqual(5)
-    // The store would have refused to load any scenario tagged demo with a
-    // click-wait (assertDemoIsHandsFree throws at parse time). Reaching
-    // this point with N demos loaded is itself the assertion — but be
-    // explicit so a regression to the assertion site fails loud here too.
+    expect(demos.length).toBeGreaterThanOrEqual(1)
     for (const s of demos) {
       for (const op of s.ops) {
         if (op.kind !== 'guide-tooltip' && op.kind !== 'guide-modal') continue

@@ -1,6 +1,7 @@
 ---
 title: Welcome to Samsinn
 description: A friendly Cafe room with one AI agent and one human seat — the same first-run shape that used to ship as a hardcoded seed.
+category: onboarding
 ---
 
 This is the default first-run scenario. It creates a Cafe room with one AI

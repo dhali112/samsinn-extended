@@ -33,27 +33,13 @@ export const buildDemosExtraSource = (_system: System): ExtraSource =>
   buildBundledExtraSource({
     pack: DEMOS_PACK_NAMESPACE,
     scenarios: [
-      // Showcase demos (category: demo) — one-click, hands-free.
-      {
-        name: 'norway-platforms',
-        file: './norway-platforms.scenario.md',
-        importMetaUrl: import.meta.url,
-      },
-      {
-        name: 'vatsim-heathrow',
-        file: './vatsim-heathrow.scenario.md',
-        importMetaUrl: import.meta.url,
-      },
-      {
-        name: 'diagram',
-        file: './diagram.scenario.md',
-        importMetaUrl: import.meta.url,
-      },
-      {
-        name: 'pwr-eop',
-        file: './pwr-eop.scenario.md',
-        importMetaUrl: import.meta.url,
-      },
+      // Showcase demos (category: demo) — scenarios for flows that
+      // genuinely need orchestration (pack install, agent spawn, multi-
+      // stage consent). Simple "post a prompt to the existing AI" demos
+      // live in src/ui/modules/showcase-prompts.ts as chips, not here —
+      // forcing one-shot prompts through the scenarios runner created a
+      // class of bugs (auto-switch-to-manual, persona-template fights,
+      // wait-on-llm-response races).
       {
         name: 'biometric-awareness',
         file: './biometric-awareness.scenario.md',

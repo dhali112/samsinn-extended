@@ -10,6 +10,22 @@ import type { House } from '../core/types/room.ts'
 import type { RouteMessage, Team } from '../core/types/agent.ts'
 import { makeJoinFields } from './shared.ts'
 
+// Inviters whose adds are programmatic / orchestrated. For these, the
+// second-AI auto-switch-to-manual heuristic below is wrong — the
+// orchestrator already picked the delivery mode it wants and the heuristic
+// would flip it under their feet. The heuristic stays for interactive
+// adds (UI flows where invitedBy is undefined or a human/AI agent name).
+//
+// Without this, every scenario that spawns a second AI into a room that
+// already has one (e.g. demos targeting the user's Cafe) silently switched
+// the room to manual mode, meaning the scenario's post-message trigger
+// was never delivered to AI peers and the wait-for-llm-response sat in
+// `awaiting` until the 30-min abandonment timeout.
+export const ORCHESTRATED_INVITERS: ReadonlySet<string> = new Set([
+  'scenario',
+  'script-runner',
+])
+
 export const addAgentToRoom = async (
   targetId: string,
   targetName: string,
@@ -32,8 +48,12 @@ export const addAgentToRoom = async (
 
   // Live-path auto-switch: Broadcast → Manual on second AI join.
   // Skipped during snapshot restore (which bypasses this function and calls
-  // room.addMember directly).
-  if (target.kind === 'ai' && room.deliveryMode === 'broadcast') {
+  // room.addMember directly) and skipped for orchestrated adds (scenarios,
+  // scripts) — those callers picked their delivery mode deliberately and
+  // the heuristic would silently override it. See ORCHESTRATED_INVITERS
+  // above for the rationale.
+  const isOrchestrated = invitedBy !== undefined && ORCHESTRATED_INVITERS.has(invitedBy)
+  if (target.kind === 'ai' && room.deliveryMode === 'broadcast' && !isOrchestrated) {
     const aiMemberCount = room.getParticipantIds()
       .filter(id => team.getAgent(id)?.kind === 'ai').length
     if (aiMemberCount === 2) {

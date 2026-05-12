@@ -3,8 +3,23 @@ import { createHouse } from '../core/house.ts'
 import { createMessageRouter } from '../core/delivery.ts'
 import { createTeam } from './team.ts'
 import { createHumanAgent } from './human-agent.ts'
-import { addAgentToRoom, removeAgentFromRoom } from './actions.ts'
+import { addAgentToRoom, removeAgentFromRoom, ORCHESTRATED_INVITERS } from './actions.ts'
+import type { Agent } from '../core/types/agent.ts'
 import type { Message } from '../core/types/messaging.ts'
+
+// Minimal AI stub — just enough surface for addAgentToRoom + the auto-switch
+// heuristic, which only inspects `kind`. We don't need a real LLM-backed agent.
+let aiCounter = 0
+const makeAIStub = (name: string): Agent => ({
+  id: `ai-${++aiCounter}`,
+  name,
+  kind: 'ai',
+  metadata: {},
+  state: { get: () => 'idle' as const, getContext: () => undefined, getStartedAt: () => undefined, subscribe: () => () => {} },
+  receive: () => {},
+  join: async () => {},
+  leave: () => {},
+})
 
 const createTestSystem = () => {
   const team = createTeam()
@@ -69,6 +84,69 @@ describe('addAgentToRoom', () => {
 
     // No throw expected
     await addAgentToRoom(agent.id, agent.name, 'nonexistent-room-id', undefined, team, routeMessage, house)
+  })
+
+  // ============================================================================
+  // Auto-switch heuristic: when a SECOND AI joins a broadcast room, the room
+  // auto-switches to manual mode to prevent two AIs spamming each other.
+  // The heuristic is correct for interactive adds (a user inviting a second
+  // AI to a chat). It's WRONG for orchestrator-driven adds (scenarios, scripts)
+  // — those callers already picked their delivery mode and the heuristic would
+  // silently flip it under their feet, causing the orchestrator's trigger
+  // messages to never reach the just-added AI.
+  // ============================================================================
+
+  test('second AI auto-switches room to manual when added interactively (invitedBy undefined)', async () => {
+    const { house, team, routeMessage } = createTestSystem()
+    const ai1 = makeAIStub('AI1'); const ai2 = makeAIStub('AI2')
+    team.addAgent(ai1); team.addAgent(ai2)
+    const room = house.createRoom({ name: 'R', createdBy: 'system' })
+
+    await addAgentToRoom(ai1.id, ai1.name, room.profile.id, undefined, team, routeMessage, house)
+    expect(room.deliveryMode).toBe('broadcast')
+
+    await addAgentToRoom(ai2.id, ai2.name, room.profile.id, undefined, team, routeMessage, house)
+    expect(room.deliveryMode).toBe('manual')
+  })
+
+  test('second AI auto-switches when added by a human/agent (invitedBy is a name)', async () => {
+    const { house, team, routeMessage } = createTestSystem()
+    const ai1 = makeAIStub('AI1'); const ai2 = makeAIStub('AI2')
+    team.addAgent(ai1); team.addAgent(ai2)
+    const room = house.createRoom({ name: 'R', createdBy: 'system' })
+
+    await addAgentToRoom(ai1.id, ai1.name, room.profile.id, undefined, team, routeMessage, house)
+    await addAgentToRoom(ai2.id, ai2.name, room.profile.id, 'Alice', team, routeMessage, house)
+    expect(room.deliveryMode).toBe('manual')
+  })
+
+  test('second AI does NOT auto-switch when added by a scenario', async () => {
+    const { house, team, routeMessage } = createTestSystem()
+    const ai1 = makeAIStub('AI1'); const ai2 = makeAIStub('AI2')
+    team.addAgent(ai1); team.addAgent(ai2)
+    const room = house.createRoom({ name: 'R', createdBy: 'system' })
+
+    await addAgentToRoom(ai1.id, ai1.name, room.profile.id, undefined, team, routeMessage, house)
+    await addAgentToRoom(ai2.id, ai2.name, room.profile.id, 'scenario', team, routeMessage, house)
+    expect(room.deliveryMode).toBe('broadcast')
+  })
+
+  test('second AI does NOT auto-switch when added by the script runner', async () => {
+    const { house, team, routeMessage } = createTestSystem()
+    const ai1 = makeAIStub('AI1'); const ai2 = makeAIStub('AI2')
+    team.addAgent(ai1); team.addAgent(ai2)
+    const room = house.createRoom({ name: 'R', createdBy: 'system' })
+
+    await addAgentToRoom(ai1.id, ai1.name, room.profile.id, undefined, team, routeMessage, house)
+    await addAgentToRoom(ai2.id, ai2.name, room.profile.id, 'script-runner', team, routeMessage, house)
+    expect(room.deliveryMode).toBe('broadcast')
+  })
+
+  test('ORCHESTRATED_INVITERS is the canonical sentinel set', () => {
+    expect(ORCHESTRATED_INVITERS.has('scenario')).toBe(true)
+    expect(ORCHESTRATED_INVITERS.has('script-runner')).toBe(true)
+    expect(ORCHESTRATED_INVITERS.has('Alice')).toBe(false)
+    expect(ORCHESTRATED_INVITERS.has('')).toBe(false)
   })
 })
 
