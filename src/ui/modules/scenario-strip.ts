@@ -49,11 +49,38 @@ const fetchDemoScenarios = async (): Promise<CatalogScenario[]> => {
   } catch { return [] }
 }
 
-const hasOwnedActiveRun = (): boolean => {
+// Verify owned scenario-runs against the server. The previous version
+// returned true if sessionStorage had ANY runId — stale ids from
+// abandoned/failed runs never get cleared and the strip hid forever.
+// Now we query each owned run; only running/awaiting count as "active."
+// Stale ids are pruned from sessionStorage so they don't accumulate.
+const hasOwnedActiveRun = async (): Promise<boolean> => {
+  let owned: string[]
   try {
     const raw = sessionStorage.getItem('samsinn:owned-scenario-runs') ?? ''
-    return raw.split(',').filter(Boolean).length > 0
+    owned = raw.split(',').filter(Boolean)
   } catch { return false }
+  if (owned.length === 0) return false
+
+  const stillActive: string[] = []
+  let foundActive = false
+  for (const runId of owned) {
+    try {
+      const res = await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}`)
+      if (!res.ok) continue                     // 404 / 4xx → stale, drop it
+      const r = await res.json() as { status: string }
+      if (r.status === 'running' || r.status === 'awaiting') {
+        stillActive.push(runId)
+        foundActive = true
+      }
+      // completed / failed / stopped → drop from sessionStorage
+    } catch { /* network error — drop conservatively */ }
+  }
+  // Persist the pruned list so subsequent calls are cheaper.
+  try {
+    sessionStorage.setItem('samsinn:owned-scenario-runs', stillActive.join(','))
+  } catch { /* private mode / quota — non-fatal */ }
+  return foundActive
 }
 
 const currentRoomName = (): string | undefined => {
@@ -157,14 +184,16 @@ export const renderScenarioStrip = async (
   for (const el of messagesContainer.querySelectorAll(`#${STRIP_ID}`)) el.remove()
 
   if (!isCurrentRoomEmpty()) return
-  if (hasOwnedActiveRun()) return
+  if (await hasOwnedActiveRun()) return
+  if (myToken !== renderToken) return
 
   const scenarios = await fetchDemoScenarios()
   if (myToken !== renderToken) return
 
-  // Re-check both predicates after the await — state may have changed.
+  // Re-check both predicates after the awaits — state may have changed.
   if (!isCurrentRoomEmpty()) return
-  if (hasOwnedActiveRun()) return
+  if (await hasOwnedActiveRun()) return
+  if (myToken !== renderToken) return
 
   const refresh = (): void => { void renderScenarioStrip(messagesContainer, isCurrentRoomEmpty) }
   messagesContainer.appendChild(buildStrip(scenarios, refresh))
