@@ -29,7 +29,6 @@ export interface ToolContext {
   readonly roomId?: string          // current trigger room ID — available when tool is called from a room context
   readonly llm?: (request: ToolLLMRequest) => Promise<string>  // model inherited from calling agent at spawn time
   readonly llmStream?: (request: ToolLLMRequest) => AsyncIterable<string>  // streaming variant — yields raw deltas
-  readonly maxResultChars?: number  // evaluation loop's context budget for this tool's result — tools should pre-size output to fit
 }
 
 export interface Tool {

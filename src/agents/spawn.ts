@@ -165,7 +165,6 @@ export const buildToolSupport = async (
   registry: ToolRegistry,
   agentRef: { readonly id: string; readonly name: string; readonly currentModel?: () => string },
   llmProvider: LLMProvider,
-  maxResultChars?: number,
   seed?: number,
   getRoomActivation?: GetRoomActivation,
 ): Promise<AgentToolSupport> => {
@@ -191,7 +190,6 @@ export const buildToolSupport = async (
       model: agentRef.currentModel?.() ?? '',
       ...(seed !== undefined ? { seed } : {}),
     }),
-    maxResultChars,
   }
   // Family dispatcher trampolines registered into the global registry
   // once. Each trampoline re-resolves its family's members at execute
@@ -289,7 +287,6 @@ const resolveAgentTools = async (
     toolRegistry,
     agentRef,
     llmProvider,
-    config.maxToolResultChars,
     config.seed,
     getRoomActivation,
   )

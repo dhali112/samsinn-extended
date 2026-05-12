@@ -1,6 +1,6 @@
 // Tools group — list fold (check/uncheck individual tools), check-all
-// shortcut, iter + result-chars inline number editors, warning when the
-// current model is known not to support function calling.
+// shortcut, iter inline number editor, warning when the current model is
+// known not to support function calling.
 
 import { createInlineNumberEditor } from '../inline-number.ts'
 import {
@@ -18,7 +18,6 @@ export const buildToolsGroup = (deps: ToolsDeps): HTMLElement => {
   const toolTokens = preview.toolTokens
   const enabledTools = new Set<string>((agentData.tools as string[] | undefined) ?? registered)
   const includeTools = (agentData.includeTools as boolean) ?? true
-  const maxToolResultChars = agentData.maxToolResultChars as number | null | undefined
   const maxToolIterations = agentData.maxToolIterations as number | null | undefined
 
   const toolTokensTotal = [...enabledTools].reduce((s, n) => s + (toolTokens[n] ?? 0), 0)
@@ -84,7 +83,8 @@ export const buildToolsGroup = (deps: ToolsDeps): HTMLElement => {
   }
   toolFold.appendChild(toolListBody)
 
-  // Tool option inputs (iter + result chars) — moved from Advanced
+  // Tool option input (iter only) — result-chars cap was removed; tool
+  // results now pass through verbatim.
   const toolOpts = document.createElement('div')
   toolOpts.className = 'flex items-center gap-3 mt-2 text-xs text-text-subtle'
 
@@ -102,21 +102,7 @@ export const buildToolsGroup = (deps: ToolsDeps): HTMLElement => {
   })
   iterWrap.setAttribute('data-group-child-label', '')
 
-  const resWrap = createInlineNumberEditor({
-    label: 'result chars',
-    value: typeof maxToolResultChars === 'number' ? String(maxToolResultChars) : 'default',
-    tooltip: 'Max characters per tool result (blank = default)',
-    step: '100',
-    onSave: async (v) => {
-      const patch = v === '' ? { maxToolResultChars: null } : { maxToolResultChars: Number(v) }
-      await patchAgent(patch)
-      ;(agentData as Record<string, unknown>).maxToolResultChars = v === '' ? null : Number(v)
-    },
-  })
-  resWrap.setAttribute('data-group-child-label', '')
-
   toolOpts.appendChild(iterWrap)
-  toolOpts.appendChild(resWrap)
 
   const children: HTMLElement[] = [toolFold, toolOpts]
   if (preview.modelSupportsTools === false) {

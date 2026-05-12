@@ -133,19 +133,10 @@ describe('normaliseMermaidSource — edge cases', () => {
 })
 
 describe('truncateForDisplay', () => {
-  it('returns source unchanged when under limit', () => {
+  it('returns source unchanged (no artificial cap — fallback card uses overflow-scroll)', () => {
     expect(truncateForDisplay('short')).toBe('short')
-  })
-
-  it('truncates and appends ellipsis when over default limit', () => {
-    const long = 'x'.repeat(600)
-    const out = truncateForDisplay(long)
-    expect(out.length).toBeLessThan(600)
-    expect(out.endsWith('… (truncated)')).toBe(true)
-  })
-
-  it('respects custom limit', () => {
-    expect(truncateForDisplay('abcdefghij', 3)).toBe('abc\n… (truncated)')
+    const long = 'x'.repeat(10_000)
+    expect(truncateForDisplay(long)).toBe(long)
   })
 })
 

@@ -35,7 +35,7 @@ const decodeEntities = (s: string): string =>
 
 const stripTags = (s: string): string => s.replace(/<[^>]+>/g, '')
 
-export const htmlToMarkdown = (html: string, maxChars = 8_000): HtmlToMdResult => {
+export const htmlToMarkdown = (html: string, maxChars = Number.POSITIVE_INFINITY): HtmlToMdResult => {
   let s = html
 
   // Step 1 — Extract page title (before any stripping)

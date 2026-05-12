@@ -39,8 +39,8 @@ describe('pack-aware tool surface filter', () => {
       registry,
       { id: 'a', name: 'Alice' },
       stubProvider,
-      undefined, undefined,
-      (roomId) => roomId === 'r1' ? makeRoom([]) : undefined,
+      undefined,
+      (roomId: string) => roomId === 'r1' ? makeRoom([]) : undefined,
     )
 
     expect(support.resolveToolDefinitions).toBeDefined()
@@ -69,8 +69,8 @@ describe('pack-aware tool surface filter', () => {
       registry,
       { id: 'a', name: 'Alice' },
       stubProvider,
-      undefined, undefined,
-      (roomId) => roomId === 'tower' ? makeRoom(['aviation']) : undefined,
+      undefined,
+      (roomId: string) => roomId === 'tower' ? makeRoom(['aviation']) : undefined,
     )
 
     const defs = support.resolveToolDefinitions!('tower')
@@ -89,7 +89,7 @@ describe('pack-aware tool surface filter', () => {
       registry,
       { id: 'a', name: 'Alice' },
       stubProvider,
-      undefined, undefined,
+      undefined,
       () => undefined,
     )
 

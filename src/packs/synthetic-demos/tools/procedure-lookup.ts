@@ -213,10 +213,20 @@ const parseProcedure = (source: string): ParsedProcedure => {
 // of node-id labels which breaks the diagram syntactically — this happens
 // even with strong models when given a fill-in-template prompt.
 
-// Sanitize a string for use as a mermaid node label. Mermaid is picky about
-// quotes / parens inside `["..."]` labels — replace doubles with singles
-// and strip control characters.
-const escapeLabel = (s: string): string => s.replace(/"/g, "'").replace(/[\r\n]+/g, ' ').slice(0, 80)
+// Sanitize a string for use as a mermaid edge/node label inside `"..."`.
+// Even within quotes, mermaid mis-parses unescaped `<`, `>`, `|`, and `#`
+// as syntax; HTML-entity-escape them so the renderer sees pure text.
+// No length cap — the procedure source authors set the wording; truncating
+// to 80 chars previously cut mid-word (e.g. "(Loss of Reactor or Secondary"
+// missing its closing paren) and broke the diagram.
+const escapeLabel = (s: string): string => s
+  .replace(/"/g, "'")
+  .replace(/[\r\n]+/g, ' ')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/\|/g, '&#124;')
+  .replace(/#/g, '&#35;')
 
 // Render a compact mermaid flowchart:
 //   - one node per step (rectangle for action/check-only, diamond for decisions)

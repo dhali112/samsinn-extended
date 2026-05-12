@@ -102,7 +102,6 @@ export const agentRoutes: RouteEntry[] = [
         detail.includeTools = aiAgent.getIncludeTools()
         detail.promptsEnabled = aiAgent.getPromptsEnabled()
         detail.contextEnabled = aiAgent.getContextEnabled()
-        detail.maxToolResultChars = aiAgent.getMaxToolResultChars()
         detail.maxToolIterations = aiAgent.getMaxToolIterations()
         // Registered tools + token cost estimates — enables per-tool UI panel
         const registered = system.toolRegistry.list().map(t => t.name)
@@ -234,8 +233,6 @@ export const agentRoutes: RouteEntry[] = [
         if (typeof body.includeTools === 'boolean') aiAgent.updateIncludeTools(body.includeTools)
         if (typeof body.promptsEnabled === 'boolean') aiAgent.updatePromptsEnabled(body.promptsEnabled)
         if (typeof body.contextEnabled === 'boolean') aiAgent.updateContextEnabled(body.contextEnabled)
-        if (body.maxToolResultChars === null) aiAgent.updateMaxToolResultChars(undefined)
-        else if (typeof body.maxToolResultChars === 'number') aiAgent.updateMaxToolResultChars(body.maxToolResultChars)
         if (typeof body.maxToolIterations === 'number') aiAgent.updateMaxToolIterations(body.maxToolIterations)
         // Tool-list edits rebuild every AI agent's tool support via the
         // system helper. Routing through refreshAllAgentTools is what keeps

@@ -454,9 +454,11 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 
 // === Build full LLM context ===
 
-// Context budget: 8000 tokens for system message + history, within 16384 num_ctx.
-// Remaining budget covers native tool definitions (~2000) + generation output (~2000).
-const DEFAULT_MAX_CONTEXT_TOKENS = 8000
+// Fallback context budget — only used when `deps.contextTokenBudget` is
+// unset (tests, headless callers). Runtime always sets contextTokenBudget
+// from the resolved model window in ai-agent.ts. 64K is a safe modern
+// floor; tiny-context models (qwen3 4b @ 8K) self-clip when num_ctx fills.
+const DEFAULT_MAX_CONTEXT_TOKENS = 64_000
 
 // === Strategy interface ===
 //

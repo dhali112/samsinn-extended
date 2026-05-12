@@ -36,11 +36,10 @@ export interface Trigger {
   readonly targetName?: string         // script or scenario name (start-* modes)
 }
 
-// Bounds. 60s minimum prevents runaway spam; 24h maximum keeps the UI's
-// minutes/hours unit dropdown sensible. Picked to match the documented user
-// expectation in the modal copy.
+// Bounds. 60s minimum prevents runaway spam; 7-day maximum supports
+// weekly status pings while still catching off-by-1000 mistakes.
 export const MIN_INTERVAL_SEC = 60
-export const MAX_INTERVAL_SEC = 86400
+export const MAX_INTERVAL_SEC = 604_800
 
 // Validation for incoming REST/UI bodies. Pure: returns null on success or
 // the first error string. Mirrors server-side enforcement; UI uses this for

@@ -229,7 +229,7 @@ const isOwnedRun = (runId: string): boolean => {
 // scenario can fire `scenario_completed` BEFORE the POST /run response
 // returns and we get a chance to claim. The bound prevents unbounded
 // accumulation of stale runIds in sessionStorage from that race.
-const MAX_OWNED = 8
+const MAX_OWNED = 50
 
 export const claimRunOwnership = (runId: string): void => {
   try {

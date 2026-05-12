@@ -43,23 +43,13 @@ const nativeCallsToToolCalls = (native: ReadonlyArray<NativeToolCall>): Readonly
   native.map(tc => ({ tool: tc.function.name, arguments: tc.function.arguments }))
 
 // === Tool result injection ===
-
-const MAX_TOOL_RESULT_CHARS = 4_000
-
-// Truncate with a visible marker so the model knows content was dropped.
-// Returns the (possibly truncated) string and how many characters were
-// omitted (0 when no truncation occurred) — the omitted-count is surfaced
-// as a warning event so operators can see silent data loss in the trace.
-interface TruncateOutcome {
-  readonly text: string
-  readonly omitted: number
-}
-
-const truncateWithTrace = (s: string, maxChars: number): TruncateOutcome => {
-  if (s.length <= maxChars) return { text: s, omitted: 0 }
-  const omitted = s.length - maxChars
-  return { text: `${s.slice(0, maxChars)}\n[... ${omitted} characters omitted]`, omitted }
-}
+//
+// No artificial cap on tool result size. Fence-emitting tools
+// (procedure_lookup, vatsim_arrivals, norway_platforms, the map/mermaid/
+// geojson tools) routinely produce 5-50 KB payloads that MUST reach the
+// model intact — truncating mid-fence breaks the renderer downstream.
+// If a tool genuinely returns runaway output, fix the tool; do not paper
+// over it here.
 
 // Render a tool's `data` field for inclusion in the LLM's next turn.
 //
@@ -95,24 +85,11 @@ export const formatToolDataForLLM = (data: unknown): string => {
 const formatToolResults = (
   calls: ReadonlyArray<ToolCall>,
   results: ReadonlyArray<ToolResult>,
-  maxChars: number,
-  onEvent?: (e: EvalEventCore) => void,
 ): string => {
   const lines = results.map((r, i) => {
     const toolName = calls[i]?.tool ?? '<unknown>'
-    if (!r.success) {
-      const outcome = truncateWithTrace(r.error ?? '', maxChars)
-      if (outcome.omitted > 0) {
-        onEvent?.({ kind: 'warning', message: `tool_result_truncated: tool="${toolName}" bytesOmitted=${outcome.omitted} (error path)` })
-      }
-      return `- ${toolName}: Error: ${outcome.text}`
-    }
-    const rendered = formatToolDataForLLM(r.data)
-    const outcome = truncateWithTrace(rendered, maxChars)
-    if (outcome.omitted > 0) {
-      onEvent?.({ kind: 'warning', message: `tool_result_truncated: tool="${toolName}" bytesOmitted=${outcome.omitted}` })
-    }
-    return `- ${toolName}: ${outcome.text}`
+    if (!r.success) return `- ${toolName}: Error: ${r.error ?? ''}`
+    return `- ${toolName}: ${formatToolDataForLLM(r.data)}`
   })
   return `Tool results:\n${lines.join('\n')}\n\nUse the tool results above as you see fit. If a result contains a fenced code block (triple-backticks), include it in your reply intact — do not paraphrase the contents or rewrite identifiers inside the fence.`
 }
@@ -297,7 +274,6 @@ export const evaluate = async (
   const context = [...contextResult.messages]
   let totalGenerationMs = 0
   let lastMetrics: LLMCallMetrics = {}
-  const maxToolResultChars = config.maxToolResultChars ?? MAX_TOOL_RESULT_CHARS
   const { toolDefinitions, inReplyTo, onEvent, signal } = options ?? {}
 
   // Accumulates one entry per tool call across every loop iteration. Attached
@@ -305,8 +281,9 @@ export const evaluate = async (
   // reconstruct what the agent actually did before answering.
   const toolTrace: Array<ToolTraceEntry> = []
 
-  // Cap preview at 200 chars regardless of the agent's maxToolResultChars —
-  // trace is a debugging/analysis aid, not context fed to the LLM.
+  // Cap preview at 200 chars — this is a debugging/analysis aid for the
+  // UI trace panel, not context fed to the LLM, and arbitrarily long
+  // previews would bloat every message blob the UI ships.
   const PREVIEW_MAX = 200
   const previewFor = (result: ToolResult): string => {
     const raw = result.success
@@ -396,7 +373,7 @@ export const evaluate = async (
           })
         }
         context.push({ role: 'assistant' as const, content: streamResult.content })
-        context.push({ role: 'user' as const, content: formatToolResults(calls, results, maxToolResultChars, onEvent) })
+        context.push({ role: 'user' as const, content: formatToolResults(calls, results) })
         continue
       }
 

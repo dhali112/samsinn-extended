@@ -109,8 +109,6 @@ export interface AIAgent extends Agent {
   readonly updatePromptsEnabled: (enabled: boolean) => void
   readonly getContextEnabled: () => boolean
   readonly updateContextEnabled: (enabled: boolean) => void
-  readonly getMaxToolResultChars: () => number | undefined
-  readonly updateMaxToolResultChars: (n: number | undefined) => void
   readonly getMaxToolIterations: () => number | undefined
   readonly updateMaxToolIterations: (n: number | undefined) => void
   // Context preview — runs buildSystemSections for a specific room and
@@ -218,7 +216,6 @@ export interface AIAgentConfig {
   readonly historyLimit?: number
   readonly tools?: ReadonlyArray<string>        // tool names this agent can use
   readonly maxToolIterations?: number           // default 5
-  readonly maxToolResultChars?: number          // default: 4000
   readonly tags?: ReadonlyArray<string>         // capability/role tags for [[tag:X]] addressing
   readonly thinking?: boolean                    // enable model CoT (qwen3 thinking mode)
   // Context & Prompts toggles — all default true; undefined preserves current behavior

@@ -92,11 +92,10 @@ export const classifyWhisper = async (args: ClassifyArgs): Promise<ClassifyResul
         model: args.model,
         messages: [{ role: 'user', content: buildPrompt(args, retryNote) }],
         temperature: 0,
-        // Generous cap for whisper output. Thinking-mode models (Gemini 2.5
-        // Pro, Claude 4 with thinking) burn budget before producing output;
-        // a small cap can leave the response empty. The actual JSON we expect
-        // is ~80 tokens — the slack covers reasoning.
-        maxTokens: 2000,
+        // No artificial maxTokens — thinking-mode models (Gemini 2.5 Pro,
+        // Claude 4 with thinking, gpt-5 reasoning) routinely burn 5-10K
+        // reasoning tokens before producing the actual ~80-token JSON. Any
+        // cap is era-stale; trust the provider's own response limit.
         jsonMode: true,
       })
       raw = response.content.trim()

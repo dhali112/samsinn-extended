@@ -387,7 +387,9 @@ const fitView = (features: ReadonlyArray<GeoFeature>): MapEnvelopeFromGeo['view'
 }
 
 const DEFAULT_LIMIT = 200
-const MAX_LIMIT = 1000
+// Generous ceiling — the leaflet renderer happily draws ~10K markers; the
+// cap is here to catch "operator typed a 1M filter and meant 1K" bugs.
+const MAX_LIMIT = 50_000
 
 export const createGeoListFeaturesTool = (): Tool => ({
   name: 'geo_list_features',

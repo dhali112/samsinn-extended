@@ -14,9 +14,11 @@
 //     BRAVE_API_KEY                        → Brave Search
 //     GOOGLE_CSE_API_KEY + GOOGLE_CSE_ID   → Google Custom Search
 //
-// Context budget:
-//   All tools honour context.maxResultChars to pre-size their output so
-//   the evaluation loop's truncation boundary is never hit mid-content.
+// No artificial output cap: tool output passes through to the model
+// verbatim. `web_fetch` accepts an optional `maxChars` param when the
+// caller actively wants a small chunk (e.g. headline-only extraction);
+// when omitted the full page Markdown is returned. The evaluation loop
+// no longer truncates tool results.
 // ============================================================================
 
 import type { Tool, ToolContext, ToolResult } from '../../core/types/tool.ts'
@@ -35,7 +37,6 @@ export interface WebToolsConfig {
 // === Constants ===
 
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000  // default; rename signals it's not a hard cap
-const DEFAULT_MAX_CHARS = 8_000
 const USER_AGENT = 'samsinn/1.0 (multi-agent research assistant)'
 
 // === Internal helpers ===
@@ -259,19 +260,20 @@ export const webFetchTool: Tool = {
     type: 'object',
     properties: {
       url: { type: 'string', description: 'http or https' },
-      maxChars: { type: 'number', maximum: 32000 },
+      maxChars: {
+        type: 'number',
+        description: 'Optional. When omitted, the full document is returned. Pass a positive number only when you actively want a smaller chunk (e.g. headline-only).',
+      },
     },
     required: ['url'],
   },
-  execute: async (params, context: ToolContext): Promise<ToolResult> => {
+  execute: async (params, _context: ToolContext): Promise<ToolResult> => {
     const parsed = parseAndValidateUrl(params.url as string)
     if ('error' in parsed) return { success: false, error: parsed.error }
 
-    // Content limit: explicit param → context budget → fallback default
-    const effectiveMaxChars = Math.min(
-      typeof params.maxChars === 'number' ? params.maxChars : (context.maxResultChars ?? DEFAULT_MAX_CHARS),
-      32_000,
-    )
+    // Caller-supplied cap when present; otherwise no cap (Infinity).
+    const effectiveMaxChars =
+      typeof params.maxChars === 'number' && params.maxChars > 0 ? params.maxChars : Number.POSITIVE_INFINITY
 
     let res: Response
     try {
@@ -350,7 +352,7 @@ export const webExtractJsonTool: Tool = {
     },
     required: ['url'],
   },
-  execute: async (params, context: ToolContext): Promise<ToolResult> => {
+  execute: async (params, _context: ToolContext): Promise<ToolResult> => {
     const parsed = parseAndValidateUrl(params.url as string)
     if ('error' in parsed) return { success: false, error: parsed.error }
 
@@ -403,14 +405,8 @@ export const webExtractJsonTool: Tool = {
       }
     }
 
-    const effectiveMaxChars = context.maxResultChars ?? DEFAULT_MAX_CHARS
-    const serialised = JSON.stringify(extracted, null, 2)
-    const truncated = serialised.length > effectiveMaxChars
-    const data = truncated
-      ? `${serialised.slice(0, effectiveMaxChars)}\n... [${serialised.length - effectiveMaxChars} characters omitted]`
-      : extracted
-
-    return { success: true, data: { url: res.url, data, truncated } }
+    // No artificial cap — caller's choice via `path` to scope the response.
+    return { success: true, data: { url: res.url, data: extracted, truncated: false } }
   },
 }
 

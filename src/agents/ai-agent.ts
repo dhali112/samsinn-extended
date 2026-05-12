@@ -38,7 +38,10 @@ import { parsePrefixedModel, isCloudProvider } from '../llm/models/parse-prefix.
 // without requiring users to hand-tune per model.
 const AUTO_BUDGET_FRACTION = 0.7
 const AUTO_BUDGET_FLOOR = 2000
-const AUTO_BUDGET_FALLBACK = 8000
+// Used when the model's context window is not in the registry (unknown
+// model). 64K matches modern medium-context defaults without risking
+// memory blowup on unknown small-context backends.
+const AUTO_BUDGET_FALLBACK = 64_000
 
 // Resolve a fully-qualified model string for context-window lookup. Cloud-
 // prefixed models (e.g. "groq:llama-3.3") look up via the curated table;
@@ -149,7 +152,6 @@ export const createAIAgent = (
   let includeTools: boolean = config.includeTools ?? true
   let promptsEnabled: boolean = config.promptsEnabled ?? true
   let contextEnabled: boolean = config.contextEnabled ?? true
-  let maxToolResultCharsCfg: number | undefined = config.maxToolResultChars
   let maxToolIterationsCfg: number = config.maxToolIterations ?? 5
 
   // Resolve the system+history token budget from the current model's context
@@ -249,7 +251,6 @@ export const createAIAgent = (
       temperature: currentTemperature,
       thinking: currentThinking,
       historyLimit,
-      maxToolResultChars: maxToolResultCharsCfg ?? config.maxToolResultChars,
       maxToolIterations: maxToolIterationsCfg,
     }
     const evalToolExec = includeTools ? toolExecutor : undefined
@@ -579,10 +580,6 @@ export const createAIAgent = (
     updatePromptsEnabled: (enabled: boolean) => { promptsEnabled = enabled },
     getContextEnabled: () => contextEnabled,
     updateContextEnabled: (enabled: boolean) => { contextEnabled = enabled },
-    getMaxToolResultChars: () => maxToolResultCharsCfg,
-    updateMaxToolResultChars: (n: number | undefined) => {
-      maxToolResultCharsCfg = (typeof n === 'number' && n > 0) ? n : undefined
-    },
     getMaxToolIterations: () => maxToolIterationsCfg,
     updateMaxToolIterations: (n: number | undefined) => {
       maxToolIterationsCfg = (typeof n === 'number' && n > 0) ? n : 5
@@ -624,7 +621,6 @@ export const createAIAgent = (
       includeTools,
       promptsEnabled,
       contextEnabled,
-      maxToolResultChars: maxToolResultCharsCfg,
       maxToolIterations: maxToolIterationsCfg,
       ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
     }),

@@ -13,7 +13,7 @@ import type { RoomProfile, UIMessage } from './render/render-types.ts'
 
 export const fetchRoomMessages = async (_roomId: string, roomName: string): Promise<void> => {
   const data = await safeFetchJson<{ profile: RoomProfile; messages: UIMessage[] }>(
-    `/api/rooms/${encodeURIComponent(roomName)}?limit=50`,
+    `/api/rooms/${encodeURIComponent(roomName)}?limit=1000`,
   )
   if (!data) return
   $roomMessages.setKey(data.profile.id, data.messages)

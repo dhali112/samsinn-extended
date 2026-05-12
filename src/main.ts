@@ -698,7 +698,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
         { id: ai.id, name: ai.name, currentModel: () => ai.getModel() },
         llm,
         undefined,
-        undefined,
         // Pack-aware filter must survive a hot reload — without re-passing
         // it here, refreshing tools (e.g. after install_pack) would silently
         // erase the resolver and revert the agent to seeing every tool.

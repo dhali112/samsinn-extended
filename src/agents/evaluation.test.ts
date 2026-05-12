@@ -390,7 +390,10 @@ describe('evaluate (tool loop)', () => {
     }
   })
 
-  test('tool result > maxToolResultChars truncated when fed back', async () => {
+  test('large tool results are passed through verbatim (no truncation)', async () => {
+    // Fence-emitting tools like procedure_lookup / vatsim_arrivals routinely
+    // produce 5-50 KB payloads that must reach the model intact. Any cap
+    // here would slice the fence mid-content and break the renderer.
     const huge = 'x'.repeat(10_000)
     const { provider, calls } = makeScriptedProvider([
       { toolCalls: [{ function: { name: 'big', arguments: {} } }] },
@@ -399,17 +402,13 @@ describe('evaluate (tool loop)', () => {
     const exec: ToolExecutor = async (toolCalls) =>
       toolCalls.map(() => ({ success: true, data: huge }))
     await evaluate(
-      baseContextResult(),
-      { ...baseConfig, maxToolResultChars: 100 },
+      baseContextResult(), baseConfig,
       provider, exec, 5, 'room-1',
       { toolDefinitions: [] },
     )
     const second = calls[1]!
-    const truncMsg = second.messages.find(m =>
-      m.role === 'user' && m.content.includes('characters omitted'))
-    expect(truncMsg).toBeDefined()
-    // The full 10k string must NOT appear in the next request.
-    expect(second.messages.some(m => m.content.includes(huge))).toBe(false)
+    expect(second.messages.some(m => m.content.includes(huge))).toBe(true)
+    expect(second.messages.some(m => m.content.includes('characters omitted'))).toBe(false)
   })
 })
 

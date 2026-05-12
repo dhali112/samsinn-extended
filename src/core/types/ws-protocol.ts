@@ -23,7 +23,6 @@ export type WSInbound =
       readonly includePrompts?: IncludePrompts
       readonly includeContext?: IncludeContext
       readonly includeTools?: boolean
-      readonly maxToolResultChars?: number | null
       readonly maxToolIterations?: number
       readonly tools?: ReadonlyArray<string>
     }

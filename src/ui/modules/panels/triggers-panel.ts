@@ -21,7 +21,7 @@ import type { Trigger, TriggerMode } from '../../../core/triggers/types.ts'
 // pre-flight validator here. Server is still authoritative — this is only
 // a UX convenience to avoid round-trips on obvious errors.
 const MIN_INTERVAL_SEC = 60
-const MAX_INTERVAL_SEC = 86400
+const MAX_INTERVAL_SEC = 604_800  // 7 days — long-cycle triggers (weekly status, etc.)
 
 const VALID_MODES: ReadonlySet<string> = new Set(['execute', 'post', 'start-script', 'start-scenario'])
 
@@ -249,7 +249,7 @@ export const openTriggerForm = async (
   body.appendChild(intervalLabel); body.appendChild(intervalRow)
   const intervalHint = document.createElement('div')
   intervalHint.className = 'text-[11px] text-text-muted'
-  intervalHint.textContent = `Min ${MIN_INTERVAL_SEC}s · Max ${MAX_INTERVAL_SEC}s (${MAX_INTERVAL_SEC / 3600}h).`
+  intervalHint.textContent = `Min ${MIN_INTERVAL_SEC}s · Max ${MAX_INTERVAL_SEC}s (${MAX_INTERVAL_SEC / 86400}d).`
   body.appendChild(intervalHint)
 
   // --- Enabled ---

@@ -53,18 +53,23 @@ export const normaliseMermaidSource = (src: string): string => {
     return id
   }
 
-  // An edge label sits between `--` and `--` (any number of dashes — covers
-  // `-->`, `--x`, `-.->`, etc). A quoted string is a bare node reference
-  // ONLY when it's NOT in that position. Check both neighbours at match
-  // time rather than using variable-width lookbehind (portability + clarity).
+  // An edge label sits inside one of two forms:
+  //   A --"label"--> B          (between `--` and `--`, any dash count)
+  //   A -->|"label"| B          (between `|` delimiters on an arrow line)
+  // A quoted string is a bare node reference ONLY when it's NOT in either
+  // position. Check neighbours at match time rather than using variable-
+  // width lookbehind (portability + clarity).
   normalised = normalised.replace(
     /"([^"\n]+)"/g,
     (match, label: string, offset: number, full: string): string => {
       const before = full.slice(Math.max(0, offset - 6), offset)
       const after = full.slice(offset + match.length, offset + match.length + 6)
-      const isEdgeStart = /--\s*$/.test(before)
-      const isEdgeEnd = /^\s*--/.test(after)
-      if (isEdgeStart && isEdgeEnd) return match  // edge label — leave alone
+      const isDashEdgeStart = /--\s*$/.test(before)
+      const isDashEdgeEnd = /^\s*--/.test(after)
+      const isPipeEdgeStart = /\|\s*$/.test(before)
+      const isPipeEdgeEnd = /^\s*\|/.test(after)
+      if (isDashEdgeStart && isDashEdgeEnd) return match
+      if (isPipeEdgeStart && isPipeEdgeEnd) return match
       return `__MM_LABEL__${synthId(label)}__MM_END__`
     },
   )
@@ -95,9 +100,7 @@ export const normaliseMermaidSource = (src: string): string => {
   return normalised
 }
 
-// Truncate a source string for display in a fallback card. Mermaid sources
-// get large enough to dominate a chat pane; keep the preview bounded.
-export const truncateForDisplay = (src: string, max = 500): string => {
-  if (src.length <= max) return src
-  return `${src.slice(0, max)}\n… (truncated)`
-}
+// Pass-through. Fallback cards show the full source so the user can debug
+// what broke. The fallback wrapper has its own `max-h` + overflow-scroll;
+// no need to amputate the content.
+export const truncateForDisplay = (src: string): string => src

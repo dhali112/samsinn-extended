@@ -29,7 +29,7 @@ export interface RecallToolDeps {
   readonly house: House
 }
 
-const MAX_K = 20
+const MAX_K = 200
 const DEFAULT_K = 5
 
 export const createRecallTool = (deps: RecallToolDeps): Tool => ({

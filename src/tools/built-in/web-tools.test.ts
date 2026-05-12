@@ -201,24 +201,24 @@ describe('web_fetch — content handling', () => {
     expect(result.error).toContain('PDF')
   })
 
-  test('respects context.maxResultChars — content truncated to budget', async () => {
+  test('full content returned by default (no artificial cap)', async () => {
     const longPage = '<p>' + 'x'.repeat(5000) + '</p>'
     restore = mockFetch(async () => makeResponse(longPage, { contentType: 'text/html' }))
     const result = await webFetchTool.execute(
       { url: 'https://example.com' },
-      makeToolContext({ maxResultChars: 500 }),
+      makeToolContext(),
     )
     expect(result.success).toBe(true)
     const data = result.data as { content: string; truncated: boolean }
-    expect(data.truncated).toBe(true)
-    expect(data.content.length).toBeLessThanOrEqual(500 + 70)  // truncation notice overhead
+    expect(data.truncated).toBe(false)
+    expect(data.content.length).toBeGreaterThan(4900)
   })
 
-  test('explicit maxChars param overrides context budget', async () => {
+  test('explicit maxChars param caps content when caller opts in', async () => {
     restore = mockFetch(async () => makeResponse('<p>' + 'y'.repeat(3000) + '</p>', { contentType: 'text/html' }))
     const result = await webFetchTool.execute(
       { url: 'https://example.com', maxChars: 200 },
-      makeToolContext({ maxResultChars: 10_000 }),
+      makeToolContext(),
     )
     expect(result.success).toBe(true)
     const data = result.data as { truncated: boolean }
@@ -293,17 +293,17 @@ describe('web_extract_json — happy path', () => {
     expect(data.data).toEqual({ x: 1 })
   })
 
-  test('respects context.maxResultChars', async () => {
+  test('full JSON returned by default — no artificial cap', async () => {
     const large = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`key${i}`, 'value'.repeat(20)]))
     restore = mockFetch(async () => makeJsonResponse(large))
     const result = await webExtractJsonTool.execute(
       { url: 'https://api.example.com' },
-      makeToolContext({ maxResultChars: 300 }),
+      makeToolContext(),
     )
     expect(result.success).toBe(true)
-    const data = result.data as { truncated: boolean; data: string }
-    expect(data.truncated).toBe(true)
-    expect(typeof data.data).toBe('string')  // truncated → string, not object
+    const data = result.data as { truncated: boolean; data: Record<string, string> }
+    expect(data.truncated).toBe(false)
+    expect(Object.keys(data.data).length).toBe(200)
   })
 })
 

@@ -82,13 +82,14 @@ describe('claimRunOwnership (bounded sessionStorage)', () => {
     } as Storage
   })
 
-  test('caps at 8 entries, oldest evicted', async () => {
+  test('caps at 50 entries, oldest evicted', async () => {
     const { claimRunOwnership } = await import('./scenario-overlay.ts')
-    for (let i = 1; i <= 10; i++) claimRunOwnership(`run-${i}`)
+    for (let i = 1; i <= 55; i++) claimRunOwnership(`run-${i}`)
     const stored = sessionStorage.getItem('samsinn:owned-scenario-runs') ?? ''
     const ids = stored.split(',').filter(Boolean)
-    expect(ids.length).toBe(8)
-    expect(ids).toEqual(['run-3', 'run-4', 'run-5', 'run-6', 'run-7', 'run-8', 'run-9', 'run-10'])
+    expect(ids.length).toBe(50)
+    expect(ids[0]).toBe('run-6')
+    expect(ids[49]).toBe('run-55')
   })
 
   test('idempotent: claiming the same id twice is a no-op', async () => {

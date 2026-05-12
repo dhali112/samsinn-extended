@@ -81,7 +81,6 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
       tools: z.array(z.string()).optional().describe('Tool names available to this agent. When omitted, agent has access to every registered tool. Pass an empty array for no tools.'),
       historyLimit: z.number().int().optional().describe('Max number of old messages retained per room in the agent\'s context window.'),
       maxToolIterations: z.number().int().optional().describe('Max tool-loop iterations before the agent is forced to answer or pass.'),
-      maxToolResultChars: z.number().int().optional().describe('Per-tool-call result truncation limit fed back to the LLM.'),
       tags: z.array(z.string()).optional().describe('Capability/role tags enabling [[tag:X]] addressing.'),
       thinking: z.boolean().optional().describe('Enable model chain-of-thought (qwen3 thinking mode, etc.).'),
       includePrompts: includePromptsShape.describe('Per-section prompt inclusion gates. All default to true. See tool description for UI-label mapping.'),
@@ -102,7 +101,6 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
           ...(args.tools !== undefined ? { tools: args.tools } : {}),
           ...(args.historyLimit !== undefined ? { historyLimit: args.historyLimit } : {}),
           ...(args.maxToolIterations !== undefined ? { maxToolIterations: args.maxToolIterations } : {}),
-          ...(args.maxToolResultChars !== undefined ? { maxToolResultChars: args.maxToolResultChars } : {}),
           ...(args.tags !== undefined ? { tags: args.tags } : {}),
           ...(args.thinking !== undefined ? { thinking: args.thinking } : {}),
           ...(args.includePrompts !== undefined ? { includePrompts: args.includePrompts } : {}),
@@ -180,7 +178,7 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
 
   mcpServer.tool(
     'update_agent_context',
-    'Update per-agent Context panel toggles and limits (includePrompts, includeContext, includeTools, maxToolResultChars, maxToolIterations).',
+    'Update per-agent Context panel toggles and limits (includePrompts, includeContext, includeTools, maxToolIterations).',
     {
       name: z.string().describe('Agent name'),
       includePrompts: z.object({
@@ -196,10 +194,9 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
         knownAgents: z.boolean().optional(),
       }).optional().describe('CONTEXT sub-section toggles. Partial.'),
       includeTools: z.boolean().optional().describe('Master tools on/off (false = send zero tool definitions).'),
-      maxToolResultChars: z.number().nullable().optional().describe('Cap on each tool-result payload injected back into the loop.'),
       maxToolIterations: z.number().optional().describe('Max tool-call rounds per turn.'),
     },
-    async ({ name, includePrompts, includeContext, includeTools, maxToolResultChars, maxToolIterations }) => {
+    async ({ name, includePrompts, includeContext, includeTools, maxToolIterations }) => {
       try {
         const agent = resolveAgent(system, name)
         const ai = agent as AIAgent
@@ -209,8 +206,6 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
         if (includePrompts) ai.updateIncludePrompts(includePrompts)
         if (includeContext) ai.updateIncludeContext(includeContext)
         if (typeof includeTools === 'boolean') ai.updateIncludeTools(includeTools)
-        if (maxToolResultChars === null) ai.updateMaxToolResultChars(undefined)
-        else if (typeof maxToolResultChars === 'number') ai.updateMaxToolResultChars(maxToolResultChars)
         if (typeof maxToolIterations === 'number') ai.updateMaxToolIterations(maxToolIterations)
         return textResult({
           updated: true,
@@ -218,7 +213,6 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
           includePrompts: ai.getIncludePrompts(),
           includeContext: ai.getIncludeContext(),
           includeTools: ai.getIncludeTools(),
-          maxToolResultChars: ai.getMaxToolResultChars() ?? null,
           maxToolIterations: ai.getMaxToolIterations() ?? null,
         })
       } catch (err) {
