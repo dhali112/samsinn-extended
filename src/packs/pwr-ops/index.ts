@@ -9,6 +9,7 @@
 import type { Tool } from '../../core/types/tool.ts'
 import packManifest from './pack.json' with { type: 'json' }
 import { createProcedureLookupTool } from './tools/procedure-lookup.ts'
+import { createWikiLookupTool } from './tools/wiki-lookup.ts'
 import type { WikiSourceBinding } from '../types.ts'
 
 interface ManifestWiki {
@@ -32,6 +33,7 @@ if (!wiki || !wiki.source) {
 
 export const PWR_OPS_TOOLS: ReadonlyArray<Tool> = [
   createProcedureLookupTool(wiki.source, wiki.name, wiki.url),
+  createWikiLookupTool(wiki.source, wiki.name, wiki.url),
 ]
 
 export const PWR_OPS_MANIFEST = manifest

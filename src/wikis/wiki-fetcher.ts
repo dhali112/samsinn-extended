@@ -29,6 +29,12 @@ export interface WikiManifest {
   readonly wiki: string
   readonly procmdVersion?: string
   readonly procedures: ReadonlyArray<WikiManifestEntry>
+  /**
+   * Phase D additions — non-procedure pages (system descriptions, tag /
+   * setpoint catalogues, tech-spec extracts, lineups). Optional for
+   * backward compatibility: a v1 manifest without `pages` is still valid.
+   */
+  readonly pages?: ReadonlyArray<WikiManifestPageEntry>
 }
 
 export interface WikiManifestEntry {
@@ -43,6 +49,23 @@ export interface WikiManifestEntry {
   readonly tagDefinitionCount?: number
 }
 
+export type WikiPageType =
+  | 'system-description'
+  | 'tag-catalogue'
+  | 'setpoint-catalogue'
+  | 'tech-spec'
+  | 'lineup'
+
+export interface WikiManifestPageEntry {
+  readonly id: string
+  readonly type: WikiPageType
+  readonly title?: string
+  readonly file: string
+  readonly appliesTo?: string
+  readonly referencePlant?: string
+  readonly csfsRelated?: ReadonlyArray<string>
+}
+
 export interface WikiSource {
   readonly binding: WikiSourceBinding
   /** Fetch the index file once and cache it; subsequent calls return the cached value within ttl. */
@@ -55,6 +78,12 @@ export interface WikiSource {
   readonly fetchManifest: () => Promise<WikiManifest | null>
   /** Fetch a procedure's raw markdown by id (case-sensitive — wiki uses canonical ids). */
   readonly fetchProcedure: (id: string) => Promise<string>
+  /**
+   * Fetch an arbitrary page from the wiki by its repo-relative path
+   * (e.g. `wiki/systems/rcs.md`, `wiki/tags/index.md`). Uses the same
+   * raw → Pages fallback path as procedures. Cached per ttl.
+   */
+  readonly fetchPage: (path: string) => Promise<string>
   /** Build the canonical citation URL for a procedure id (the rendered wiki page). */
   readonly citationUrl: (id: string) => string
   /** Build the raw.githubusercontent URL for a procedure id (the markdown source). */
@@ -151,6 +180,12 @@ export const createWikiSource = (
       if (!parsed || typeof parsed !== 'object') return null
       const m = parsed as Partial<WikiManifest>
       if (m.version !== 1 || !Array.isArray(m.procedures)) return null
+      // `pages` is optional — silently drop a malformed `pages` field
+      // rather than failing the whole manifest (procedures still usable).
+      if (m.pages !== undefined && !Array.isArray(m.pages)) {
+        const { pages: _ignored, ...rest } = m
+        return rest as WikiManifest
+      }
       return m as WikiManifest
     } catch {
       return null
@@ -162,6 +197,7 @@ export const createWikiSource = (
     fetchIndex: () => getBuffered('__index__', binding.indexFile),
     fetchManifest,
     fetchProcedure: (id: string) => getBuffered(id, `${binding.procedureDir}/${id}.md`),
+    fetchPage: (path: string) => getBuffered(`page:${path}`, path),
     citationUrl: (id: string) => `${binding.citationBase.replace(/\/$/, '')}/${id}/`,
     rawUrl: (id: string) => `${rawBase}/${binding.procedureDir}/${id}.md`,
   }
