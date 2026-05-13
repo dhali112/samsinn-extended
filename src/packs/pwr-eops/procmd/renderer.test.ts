@@ -51,6 +51,21 @@ describe('renderProcedure — E-0', () => {
   test('tags section appears when references exist', () => {
     expect(rendered.markdown).toContain('### Tags referenced')
   })
+
+  test('CSF channels are surfaced in the head', () => {
+    expect(rendered.markdown).toContain('Concurrent CSF channels in service:')
+    expect(rendered.markdown).toMatch(/`subcriticality`/)
+  })
+
+  test('Because: rationales render under their branch', () => {
+    expect(rendered.markdown).toMatch(/_because:_\s+/)
+  })
+
+  test('structured Tags appendix renders as a table with sim-path column', () => {
+    expect(rendered.markdown).toContain('| Tag | Description | Sim-path | Units | Equipment |')
+    expect(rendered.markdown).toMatch(/\| `TRIP-BKR-A` \|/)
+    expect(rendered.markdown).toMatch(/rps\.trip_breaker/)
+  })
 })
 
 describe('renderProcedure — mermaid fallback on validation failure', () => {

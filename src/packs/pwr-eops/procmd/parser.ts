@@ -1,16 +1,22 @@
-// procmd v0.6 parser — minimal subset that backs the renderer.
+// procmd parser — supports v0.5 and v0.6 procedure source.
 //
 // Handles (per docs/procedure-md.md):
-//   - YAML frontmatter (type, procedure-id, procedure-md, title, profile,
-//     applies-to, category, csfs-monitored, entry-triggers)
+//   - YAML frontmatter, with passthrough of unknown keys (fm.extra)
 //   - `## Step <label> [id: <kebab>]` headings — id required
-//   - body lines: `Check:`, `Action:`, `Caution:`, `Note:`
+//   - body lines: `Check:`, `Action:`, `Caution:`, `Note:`, `Within:`
 //   - branches: `- <condition> → #intra-id` / `→ [[INTER-ID]]` / free text
-//   - inline `«TAG»` references, extracted as a flat list (no appendix metadata)
+//   - branch rationale: `Because:` / `Against:` continuation lines attach to
+//     the immediately preceding branch
+//   - inline `«TAG»` references
+//   - standalone `CSF: <channel>` declarations in preamble
+//   - `## Tags` appendix — structured tag definitions with metadata
+//   - `procedure-md:` version handshake (accepts 0.5 / 0.6 transparently)
 //
-// Deferred (no consumer yet): When:/Until:/Abort-if:, Because:/Against:,
-// sub-steps (`### Step`), Concurrent:/CSF:, [primitive] override,
-// `## Tags` appendix metadata, profile-vocabulary validation.
+// Deferred: When:/Until:/Abort-if:, sub-steps (`### Step`), Concurrent:
+// keyword, [primitive] override, profile-vocabulary validation.
+
+export const PARSER_PROCMD_VERSION = '0.6'
+const ACCEPTED_PROCMD_VERSIONS = new Set(['0.5', '0.6'])
 
 export interface ParsedFrontmatter {
   readonly procedureId: string
@@ -21,6 +27,7 @@ export interface ParsedFrontmatter {
   readonly category?: string
   readonly csfsMonitored: ReadonlyArray<string>
   readonly entryTriggers: ReadonlyArray<string>
+  readonly extra: Readonly<Record<string, string>>
 }
 
 export type BranchTarget =
@@ -31,31 +38,50 @@ export type BranchTarget =
 export interface Branch {
   readonly condition: string
   readonly target: BranchTarget
+  readonly because?: string
+  readonly against?: string
 }
 
 export interface ParsedStep {
   readonly id: string
-  readonly label: string                       // presentation: "1", "3.a", etc
-  readonly title: string                       // free text after `## Step <label>` (the keyword chain's first prose line, if any)
+  readonly label: string
+  readonly title: string
   readonly checks: ReadonlyArray<string>
   readonly actions: ReadonlyArray<string>
   readonly cautions: ReadonlyArray<string>
   readonly notes: ReadonlyArray<string>
+  readonly withins: ReadonlyArray<string>
   readonly tagsReferenced: ReadonlyArray<string>
   readonly branches: ReadonlyArray<Branch>
-  readonly isDecision: boolean                 // has at least one branch
+  readonly isDecision: boolean
+}
+
+export interface TagDefinition {
+  readonly id: string
+  readonly description?: string
+  readonly simPath?: string
+  readonly units?: string
+  readonly equipment?: string
+  readonly extra: Readonly<Record<string, string>>
 }
 
 export interface ParsedProcedure {
   readonly frontmatter: ParsedFrontmatter
   readonly preamble: string
+  readonly csfChannels: ReadonlyArray<string>
   readonly steps: ReadonlyArray<ParsedStep>
+  readonly tagDefinitions: ReadonlyArray<TagDefinition>
   readonly warnings: ReadonlyArray<string>
 }
 
 // === Frontmatter ============================================================
 
-const parseFrontmatter = (raw: string): { fm: ParsedFrontmatter | null; body: string } => {
+const KNOWN_FM_KEYS = new Set([
+  'type', 'procedure-md', 'procedure-id', 'title', 'profile',
+  'applies-to', 'category', 'csfs-monitored', 'entry-triggers',
+])
+
+const parseFrontmatter = (raw: string): { fm: ParsedFrontmatter | null; body: string; warning?: string } => {
   if (!raw.startsWith('---\n') && !raw.startsWith('---\r\n')) {
     return { fm: null, body: raw }
   }
@@ -79,6 +105,17 @@ const parseFrontmatter = (raw: string): { fm: ParsedFrontmatter | null; body: st
     return [trimmed].filter(Boolean)
   }
 
+  const extra: Record<string, string> = {}
+  for (const [k, v] of Object.entries(map)) {
+    if (!KNOWN_FM_KEYS.has(k)) extra[k] = v
+  }
+
+  let warning: string | undefined
+  const version = map['procedure-md']
+  if (version && !ACCEPTED_PROCMD_VERSIONS.has(version)) {
+    warning = `procedure-md ${version} declared; parser supports ${[...ACCEPTED_PROCMD_VERSIONS].join(', ')} — output may be degraded`
+  }
+
   return {
     fm: {
       procedureId: map['procedure-id']!,
@@ -89,19 +126,18 @@ const parseFrontmatter = (raw: string): { fm: ParsedFrontmatter | null; body: st
       ...(map['category'] ? { category: map['category'] } : {}),
       csfsMonitored: parseList(map['csfs-monitored']),
       entryTriggers: parseList(map['entry-triggers']),
+      extra,
     },
     body,
+    ...(warning ? { warning } : {}),
   }
 }
 
 // === Tag extraction =========================================================
 
-// Inline tag refs are «UPPER-CASE» per spec. Skip occurrences inside fenced
-// code blocks or inline code spans — same convention as the spec demands.
 const TAG_RE = /«([A-Z][A-Z0-9-]*)»/g
 
 const extractTags = (text: string): ReadonlyArray<string> => {
-  // Strip fenced code blocks first to avoid false positives in examples.
   const noFences = text.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]+`/g, '')
   const seen = new Set<string>()
   let m: RegExpExecArray | null
@@ -113,13 +149,9 @@ const extractTags = (text: string): ReadonlyArray<string> => {
 
 // === Branch parsing =========================================================
 
-// Recognised branch shapes (per spec):
-//   - <condition> → #intra-step-id
-//   - <condition> → [[INTER-ID]]
-//   - <condition> → free text  (unparsed, kept as freeText target)
 const BRANCH_RE = /^[-*]\s+(.+?)\s*→\s*(.+?)\s*$/
 
-const parseBranch = (line: string): Branch | null => {
+const parseBranchLine = (line: string): { condition: string; target: BranchTarget } | null => {
   const m = line.match(BRANCH_RE)
   if (!m) return null
   const condition = m[1]!.trim()
@@ -133,9 +165,9 @@ const parseBranch = (line: string): Branch | null => {
 
 // === Step parsing ===========================================================
 
-// `## Step <label>` or `## Step <label> [id: <kebab>]` or `## Step [id: <kebab>]`.
-// Label is optional in the spec; id is required (we warn if missing).
 const STEP_HEADING_RE = /^##\s+Step(?:\s+(\S+?))?(?:\s+\[(?<meta>[^\]]+)\])?\s*$/
+const OTHER_H2_RE = /^##\s+(?!Step\b)(\S.*)$/
+const TAGS_HEADING_RE = /^##\s+Tags\s*$/i
 
 const parseStepMeta = (meta: string | undefined): { id?: string } => {
   if (!meta) return {}
@@ -147,6 +179,13 @@ const parseStepMeta = (meta: string | undefined): { id?: string } => {
   return {}
 }
 
+interface BranchBuilder {
+  condition: string
+  target: BranchTarget
+  because?: string
+  against?: string
+}
+
 interface StepBuilder {
   id: string
   label: string
@@ -155,13 +194,18 @@ interface StepBuilder {
   actions: string[]
   cautions: string[]
   notes: string[]
-  branches: Branch[]
-  bodyText: string[]            // accumulator for tag extraction
+  withins: string[]
+  branches: BranchBuilder[]
+  bodyText: string[]
 }
 
 const flushStep = (b: StepBuilder | null, out: ParsedStep[]): void => {
   if (!b) return
-  const tagSource = [...b.checks, ...b.actions, ...b.cautions, ...b.notes, ...b.bodyText, ...b.branches.map(br => br.condition)].join('\n')
+  const tagSource = [
+    ...b.checks, ...b.actions, ...b.cautions, ...b.notes, ...b.withins,
+    ...b.bodyText,
+    ...b.branches.flatMap(br => [br.condition, br.because ?? '', br.against ?? '']),
+  ].join('\n')
   const tagsReferenced = extractTags(tagSource)
   out.push({
     id: b.id,
@@ -171,39 +215,115 @@ const flushStep = (b: StepBuilder | null, out: ParsedStep[]): void => {
     actions: b.actions,
     cautions: b.cautions,
     notes: b.notes,
+    withins: b.withins,
     tagsReferenced,
-    branches: b.branches,
+    branches: b.branches.map(br => ({
+      condition: br.condition,
+      target: br.target,
+      ...(br.because ? { because: br.because } : {}),
+      ...(br.against ? { against: br.against } : {}),
+    })),
     isDecision: b.branches.length > 0,
   })
 }
 
-const parseBody = (body: string): { preamble: string; steps: ReadonlyArray<ParsedStep>; warnings: ReadonlyArray<string> } => {
+// === Tags appendix parsing ==================================================
+
+const TAG_DEF_KNOWN_KEYS = new Set(['id', 'description', 'sim-path', 'units', 'equipment'])
+
+const parseTagsAppendix = (block: string): ReadonlyArray<TagDefinition> => {
+  const lines = block.split('\n')
+  const out: TagDefinition[] = []
+  let current: { id: string; map: Record<string, string> } | null = null
+
+  const flush = (): void => {
+    if (!current) return
+    const m = current.map
+    const extra: Record<string, string> = {}
+    for (const [k, v] of Object.entries(m)) {
+      if (!TAG_DEF_KNOWN_KEYS.has(k) && k !== 'id') extra[k] = v
+    }
+    out.push({
+      id: current.id,
+      ...(m['description'] ? { description: m['description'] } : {}),
+      ...(m['sim-path'] ? { simPath: m['sim-path'] } : {}),
+      ...(m['units'] ? { units: m['units'] } : {}),
+      ...(m['equipment'] ? { equipment: m['equipment'] } : {}),
+      extra,
+    })
+    current = null
+  }
+
+  for (const raw of lines) {
+    const startMatch = raw.match(/^-\s+id:\s*([A-Z][A-Z0-9-]*)\s*$/)
+    if (startMatch) {
+      flush()
+      current = { id: startMatch[1]!, map: {} }
+      continue
+    }
+    if (!current) continue
+    const contMatch = raw.match(/^\s+([a-zA-Z][a-zA-Z0-9_-]*):\s*(.*)$/)
+    if (contMatch) {
+      current.map[contMatch[1]!] = contMatch[2]!.trim()
+      continue
+    }
+    if (raw.trim() === '') continue
+    flush()
+  }
+  flush()
+  return out
+}
+
+// === Body parsing ===========================================================
+
+interface BodyParseResult {
+  readonly preamble: string
+  readonly csfChannels: ReadonlyArray<string>
+  readonly steps: ReadonlyArray<ParsedStep>
+  readonly tagDefinitions: ReadonlyArray<TagDefinition>
+  readonly warnings: ReadonlyArray<string>
+}
+
+const parseBody = (body: string): BodyParseResult => {
   const lines = body.split('\n')
   const steps: ParsedStep[] = []
   const warnings: string[] = []
   const preambleLines: string[] = []
+  const csfChannels: string[] = []
   let current: StepBuilder | null = null
   let inFence = false
   let stepIndex = 0
+  let tagsAppendixLines: string[] | null = null
+  let inTagsAppendix = false
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!
-    // Track fenced code blocks at the line level — keywords inside fences
-    // are content, not directives.
+
     if (/^\s*```/.test(raw)) {
       inFence = !inFence
-      if (current) current.bodyText.push(raw)
+      if (inTagsAppendix) tagsAppendixLines!.push(raw)
+      else if (current) current.bodyText.push(raw)
       else preambleLines.push(raw)
       continue
     }
     if (inFence) {
-      if (current) current.bodyText.push(raw)
+      if (inTagsAppendix) tagsAppendixLines!.push(raw)
+      else if (current) current.bodyText.push(raw)
       else preambleLines.push(raw)
+      continue
+    }
+
+    if (TAGS_HEADING_RE.test(raw)) {
+      flushStep(current, steps)
+      current = null
+      inTagsAppendix = true
+      tagsAppendixLines = []
       continue
     }
 
     const stepM = raw.match(STEP_HEADING_RE)
     if (stepM) {
+      if (inTagsAppendix) inTagsAppendix = false
       flushStep(current, steps)
       stepIndex += 1
       const meta = parseStepMeta(stepM.groups?.['meta'])
@@ -220,13 +340,31 @@ const parseBody = (body: string): { preamble: string; steps: ReadonlyArray<Parse
         actions: [],
         cautions: [],
         notes: [],
+        withins: [],
         branches: [],
         bodyText: [],
       }
       continue
     }
 
+    if (OTHER_H2_RE.test(raw) && current) {
+      flushStep(current, steps)
+      current = null
+      preambleLines.push(raw)
+      continue
+    }
+
+    if (inTagsAppendix) {
+      tagsAppendixLines!.push(raw)
+      continue
+    }
+
     if (!current) {
+      const csfMatch = raw.match(/^\s*CSF:\s*([a-z0-9][a-z0-9-]*)\s*$/i)
+      if (csfMatch) {
+        csfChannels.push(csfMatch[1]!.toLowerCase())
+        continue
+      }
       preambleLines.push(raw)
       continue
     }
@@ -234,7 +372,6 @@ const parseBody = (body: string): { preamble: string; steps: ReadonlyArray<Parse
     const line = raw.trim()
     if (!line) continue
 
-    // Body keyword dispatch
     if (/^check:/i.test(line)) {
       current.checks.push(line.replace(/^check:\s*/i, ''))
       continue
@@ -251,19 +388,29 @@ const parseBody = (body: string): { preamble: string; steps: ReadonlyArray<Parse
       current.notes.push(line.replace(/^note:\s*/i, ''))
       continue
     }
-    // Branch?
+    if (/^within:/i.test(line)) {
+      current.withins.push(line.replace(/^within:\s*/i, ''))
+      continue
+    }
+    const becauseMatch = line.match(/^because:\s*(.+)$/i)
+    if (becauseMatch && current.branches.length > 0) {
+      const lastBranch = current.branches[current.branches.length - 1]!
+      lastBranch.because = (lastBranch.because ? lastBranch.because + ' ' : '') + becauseMatch[1]!.trim()
+      continue
+    }
+    const againstMatch = line.match(/^against:\s*(.+)$/i)
+    if (againstMatch && current.branches.length > 0) {
+      const lastBranch = current.branches[current.branches.length - 1]!
+      lastBranch.against = (lastBranch.against ? lastBranch.against + ' ' : '') + againstMatch[1]!.trim()
+      continue
+    }
     if (/^[-*]\s+.*→/.test(line)) {
-      const b = parseBranch(line)
-      if (b) current.branches.push(b)
+      const b = parseBranchLine(line)
+      if (b) current.branches.push({ condition: b.condition, target: b.target })
       else current.bodyText.push(line)
       continue
     }
-    // Section header within step body — ignore (e.g. `## Tags` appendix kicks
-    // us out of the last step; handled by the heading match above when it's
-    // an H2). For sub-content we just capture as bodyText so tag extraction
-    // sees it.
     if (!current.title && !line.startsWith('#')) {
-      // First non-keyword line becomes the step title (free-text intro).
       current.title = line
       continue
     }
@@ -271,10 +418,15 @@ const parseBody = (body: string): { preamble: string; steps: ReadonlyArray<Parse
   }
 
   flushStep(current, steps)
+  const tagDefinitions = inTagsAppendix && tagsAppendixLines
+    ? parseTagsAppendix(tagsAppendixLines.join('\n'))
+    : []
 
   return {
     preamble: preambleLines.join('\n').trim(),
+    csfChannels,
     steps,
+    tagDefinitions,
     warnings,
   }
 }
@@ -282,16 +434,19 @@ const parseBody = (body: string): { preamble: string; steps: ReadonlyArray<Parse
 // === Public entry ============================================================
 
 export const parseProcedure = (raw: string): ParsedProcedure | { readonly error: string } => {
-  const { fm, body } = parseFrontmatter(raw)
+  const { fm, body, warning: fmWarning } = parseFrontmatter(raw)
   if (!fm) return { error: 'invalid frontmatter — `procedure-id` and `title` are required' }
-  const { preamble, steps, warnings } = parseBody(body)
+  const { preamble, csfChannels, steps, tagDefinitions, warnings } = parseBody(body)
   if (steps.length === 0) {
     return { error: `no \`## Step\` headings found in ${fm.procedureId}` }
   }
+  const allWarnings = fmWarning ? [fmWarning, ...warnings] : warnings
   return {
     frontmatter: fm,
     preamble,
+    csfChannels,
     steps,
-    warnings,
+    tagDefinitions,
+    warnings: allWarnings,
   }
 }

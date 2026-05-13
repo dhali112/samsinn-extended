@@ -146,3 +146,170 @@ Note: this is the last step
     expect(r.steps[1]!.isDecision).toBe(false)
   })
 })
+
+describe('parseProcedure — v0.6 promoted keywords', () => {
+  const src = `---
+type: procedure
+procedure-md: 0.6
+procedure-id: TEST-2
+title: Test Promotions
+profile: nuclear-erg
+applies-to: Westinghouse 4-loop PWR
+custom-key: custom-value
+csfs-monitored: [subcriticality, core-cooling]
+entry-triggers: [reactor-trip-signal]
+---
+
+# TEST-2 — Test Promotions
+
+Preamble paragraph.
+
+CSF: subcriticality
+
+CSF: core-cooling
+
+## Step 1 [id: do-thing]
+Check: pump «P-1» pressure within range
+Within: 30 seconds
+Caution: do not exceed 100 psig
+- OK → #wrap-up
+  Because: pressure within band confirms pump health
+  Against: but readings can drift if instrument drift detected
+- Fault → [[OTHER-1]]
+  Because: pump fault requires escalation
+
+## Step 2 [id: wrap-up]
+Action: log completion
+
+## Tags
+
+- id: P-1
+  description: primary charging pump
+  sim-path: cvcs.charging_pump.a.status
+  units: enum[STOPPED,RUNNING,FAULT]
+  equipment: charging-system
+  range: [0, 1]
+
+- id: P-2
+  description: backup charging pump
+  sim-path: cvcs.charging_pump.b.status
+  units: enum[STOPPED,RUNNING,FAULT]
+  equipment: charging-system
+`
+  const r = parseProcedure(src)
+  if ('error' in r) throw new Error(r.error)
+
+  test('frontmatter passthrough captures unknown keys', () => {
+    expect(r.frontmatter.extra['custom-key']).toBe('custom-value')
+    expect(r.frontmatter.extra['title']).toBeUndefined()
+    expect(r.frontmatter.extra['procedure-id']).toBeUndefined()
+  })
+
+  test('CSF channels parsed from preamble standalone lines', () => {
+    expect(r.csfChannels).toEqual(['subcriticality', 'core-cooling'])
+  })
+
+  test('Within: captured as step-level time constraint', () => {
+    expect(r.steps[0]!.withins).toContain('30 seconds')
+  })
+
+  test('Because: attaches to the preceding branch as rationale', () => {
+    const b0 = r.steps[0]!.branches[0]!
+    expect(b0.because).toContain('within band confirms pump health')
+    const b1 = r.steps[0]!.branches[1]!
+    expect(b1.because).toContain('pump fault requires escalation')
+  })
+
+  test('Against: attaches to the preceding branch as counter-rationale', () => {
+    const b0 = r.steps[0]!.branches[0]!
+    expect(b0.against).toContain('readings can drift')
+  })
+
+  test('## Tags appendix parsed into structured TagDefinition entries', () => {
+    expect(r.tagDefinitions.length).toBe(2)
+    const p1 = r.tagDefinitions[0]!
+    expect(p1.id).toBe('P-1')
+    expect(p1.description).toContain('primary charging pump')
+    expect(p1.simPath).toBe('cvcs.charging_pump.a.status')
+    expect(p1.units).toBe('enum[STOPPED,RUNNING,FAULT]')
+    expect(p1.equipment).toBe('charging-system')
+    expect(p1.extra['range']).toBe('[0, 1]')
+  })
+
+  test('Tags appendix does NOT leak into the last step body', () => {
+    expect(r.steps[1]!.actions.length).toBe(1)
+    expect(r.steps[1]!.tagsReferenced).toEqual([])
+  })
+
+  test('accepted procedure-md version emits no warning', () => {
+    expect(r.warnings.filter(w => w.includes('procedure-md'))).toEqual([])
+  })
+})
+
+describe('parseProcedure — version handshake', () => {
+  test('unknown procedure-md version emits a warning but still parses', () => {
+    const src = `---
+type: procedure
+procedure-md: 99.9
+procedure-id: TEST-3
+title: Future Spec
+profile: nuclear-erg
+applies-to: anywhere
+---
+
+## Step 1 [id: x]
+Check: something
+- ok → #x
+`
+    const r = parseProcedure(src)
+    if ('error' in r) throw new Error(r.error)
+    expect(r.warnings.some(w => w.includes('99.9'))).toBe(true)
+  })
+
+  test('omitted procedure-md is fine', () => {
+    const src = `---
+type: procedure
+procedure-id: TEST-4
+title: No version
+profile: nuclear-erg
+applies-to: anywhere
+---
+
+## Step 1 [id: x]
+Check: something
+`
+    const r = parseProcedure(src)
+    expect('error' in r).toBe(false)
+  })
+})
+
+describe('parseProcedure — E-0 fixture exercises v0.6 features', () => {
+  const r = parseProcedure(fixture('E-0.md'))
+  if ('error' in r) throw new Error(`E-0 fixture failed: ${r.error}`)
+
+  test('E-0 declares its CSF channels in preamble', () => {
+    expect(r.csfChannels.length).toBeGreaterThanOrEqual(6)
+    expect(r.csfChannels).toContain('subcriticality')
+    expect(r.csfChannels).toContain('core-cooling')
+    expect(r.csfChannels).toContain('containment')
+  })
+
+  test('E-0 step branches carry Because: rationales', () => {
+    let withBecause = 0
+    for (const s of r.steps) for (const b of s.branches) if (b.because) withBecause += 1
+    expect(withBecause).toBeGreaterThan(0)
+  })
+
+  test('E-0 ## Tags appendix produces structured tag definitions', () => {
+    expect(r.tagDefinitions.length).toBeGreaterThan(10)
+    const trip = r.tagDefinitions.find(t => t.id === 'TRIP-BKR-A')
+    expect(trip).toBeDefined()
+    expect(trip!.simPath).toContain('trip_breaker')
+    expect(trip!.equipment).toBe('reactor-protection-system')
+  })
+
+  test('E-0 monitor-csfs is the last real step (Tags appendix does not override it)', () => {
+    const lastStep = r.steps[r.steps.length - 1]!
+    expect(lastStep.id).toBe('monitor-csfs')
+  })
+})

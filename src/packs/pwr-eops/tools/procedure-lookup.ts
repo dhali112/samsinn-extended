@@ -1,18 +1,15 @@
 // procedure_lookup — fetch a Westinghouse PWR EOP from the samsinn-wikis
-// pwr-eops wiki, parse procmd, render a ready-to-paste markdown reply.
-//
-// Contract: the tool returns a single markdown string (`data`). The agent
-// pastes the string verbatim into chat — no composition, no rewriting,
-// no citation substitution. Same shape as norway_platforms / vatsim_arrivals.
+// pwr-eops wiki, parse procmd, render a ready-to-paste markdown reply OR
+// a structured JSON shape for agents that reason over the procedure.
 //
 // Fetch policy: fresh from raw.githubusercontent.com on every "first" call,
-// with a process-level 5-minute in-memory buffer for repeats. No disk
-// cache, no Tree API, no GitHub auth.
+// with a process-level 5-minute in-memory buffer for repeats.
 
 import type { Tool, ToolResult } from '../../../core/types/tool.ts'
 import type { WikiSourceBinding } from '../../types.ts'
 import { createWikiSource, extractProcedureIds, type WikiSource } from '../../../wikis/wiki-fetcher.ts'
 import { parseProcedure } from '../procmd/parser.ts'
+import type { ParsedProcedure, ParsedStep } from '../procmd/parser.ts'
 import { renderProcedure, renderIndex } from '../procmd/renderer.ts'
 
 interface PwrEopsToolDeps {
@@ -21,9 +18,6 @@ interface PwrEopsToolDeps {
   readonly wikiHomepage: string
 }
 
-// Lazy index cache — process-level, refreshed on TTL boundary by the
-// wiki-fetcher itself. We hold the parsed id list separately so each
-// call doesn't re-extract from the raw markdown.
 interface IndexCache {
   ids: ReadonlyArray<string>
   fetchedAt: number
@@ -44,6 +38,50 @@ const fuzzyMatch = (query: string, candidates: ReadonlyArray<string>): ReadonlyA
   return out.sort((a, b) => b.score - a.score).slice(0, 5).map(x => x.id)
 }
 
+const renderStepFragment = (parsed: ParsedProcedure, step: ParsedStep, citationUrl: string): string => {
+  const parts: string[] = []
+  parts.push(`### ${parsed.frontmatter.procedureId} step ${step.label}. ${step.title || step.id} \`[${step.id}]\``)
+  if (step.checks.length > 0) parts.push('**Check:**', step.checks.map(c => `  - ${c}`).join('\n'))
+  if (step.actions.length > 0) parts.push('**Action:**', step.actions.map(a => `  - ${a}`).join('\n'))
+  for (const w of step.withins) parts.push(`> ⏱️ **Within:** ${w}`)
+  for (const c of step.cautions) parts.push(`> ⚠️ **Caution:** ${c}`)
+  for (const n of step.notes) parts.push(`> ℹ️ **Note:** ${n}`)
+  if (step.branches.length > 0) {
+    parts.push('**Branches:**')
+    const lines: string[] = []
+    for (const b of step.branches) {
+      const t = b.target.kind === 'intra' ? `→ \`#${b.target.stepId}\``
+        : b.target.kind === 'inter' ? `→ [${b.target.procedureId}]`
+        : `→ ${b.target.text}`
+      lines.push(`  - ${b.condition} ${t}`)
+      if (b.because) lines.push(`    _because:_ ${b.because}`)
+      if (b.against) lines.push(`    _against:_ ${b.against}`)
+    }
+    parts.push(lines.join('\n'))
+  }
+  parts.push(`\n---\nFrom: [${parsed.frontmatter.procedureId} — ${parsed.frontmatter.title}](${citationUrl})`)
+  return parts.join('\n\n')
+}
+
+const renderSummaryFragment = (parsed: ParsedProcedure, citationUrl: string): string => {
+  const fm = parsed.frontmatter
+  const lines: string[] = []
+  lines.push(`## ${fm.procedureId} — ${fm.title} (summary)`)
+  const meta: string[] = []
+  if (fm.profile) meta.push(`Profile: ${fm.profile}`)
+  if (fm.appliesTo) meta.push(`Applies to: ${fm.appliesTo}`)
+  if (fm.category) meta.push(`Category: ${fm.category}`)
+  if (meta.length > 0) lines.push(`*${meta.join(' · ')}*`)
+  if (fm.entryTriggers.length > 0) lines.push(`**Entry triggers:** ${fm.entryTriggers.map(t => `\`${t}\``).join(', ')}`)
+  if (fm.csfsMonitored.length > 0) lines.push(`**CSFs monitored:** ${fm.csfsMonitored.join(', ')}`)
+  if (parsed.csfChannels.length > 0) lines.push(`**Concurrent CSF channels:** ${parsed.csfChannels.join(', ')}`)
+  if (parsed.preamble) lines.push(parsed.preamble)
+  lines.push(`**Steps (${parsed.steps.length}):** ${parsed.steps.map(s => `\`${s.id}\``).join(' → ')}`)
+  if (parsed.tagDefinitions.length > 0) lines.push(`**Tag definitions:** ${parsed.tagDefinitions.length} (request full mode for details).`)
+  lines.push(`\nSource: [${fm.procedureId}](${citationUrl})`)
+  return lines.join('\n\n')
+}
+
 const buildTool = (deps: PwrEopsToolDeps): Tool => {
   let indexCache: IndexCache | null = null
 
@@ -59,29 +97,49 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
   return {
     name: 'procedure_lookup',
     description:
-      'Fetches an emergency operating procedure (EOP) from the pwr-eops wiki and returns a complete, ready-to-paste markdown response — step list, mermaid flowchart, source citation. ' +
-      'Paste the returned `data` string verbatim into your reply. Do not summarize, rewrite, or substitute the source URL. ' +
+      'Fetches an emergency operating procedure (EOP) from the pwr-eops wiki. ' +
+      'Default returns a complete, ready-to-paste markdown response — step list, mermaid flowchart, source citation. ' +
+      'Paste the markdown `data` verbatim into your reply unless you set `format: "json"`, in which case `data` is structured and is for your own reasoning, not for pasting. ' +
       'Call with no `id` to list available procedures.',
     usage:
-      'Pass `id` (e.g. "E-0", "ECA-0.0", "FR-S.1"). Omit `id` to get the index of available procedures. Procedures are pulled fresh from GitHub on each first call; repeats within ~5 min are cached.',
-    returns: 'A markdown string ready to paste into chat.',
+      'Pass `id` (e.g. "E-0", "ECA-0.0", "FR-S.1"). ' +
+      'Optional: `format: "json"` returns the parsed shape for reasoning; `step: "<step-id>"` returns only that step; `mode: "summary"` returns frontmatter + entry conditions + step-id list only. ' +
+      'Omit `id` to get the index. Cached ~5 min after first fetch.',
+    returns: 'A markdown string (default) or a JSON object (when `format: "json"`).',
     parameters: {
       type: 'object',
       properties: {
         id: {
           type: 'string',
-          description: 'Procedure id (case-sensitive — wiki uses canonical ids like E-0, ECA-0.0, FR-S.1). Omit to list available procedures.',
+          description: 'Procedure id (case-sensitive — canonical ids like E-0, ECA-0.0, FR-S.1). Omit to list available procedures.',
+        },
+        format: {
+          type: 'string',
+          enum: ['markdown', 'json'],
+          description: 'Output shape. "markdown" (default) is paste-ready prose + mermaid; "json" returns the structured ParsedProcedure for agent reasoning.',
+        },
+        step: {
+          type: 'string',
+          description: 'Optional step id (kebab-case, e.g. "verify-reactor-trip"). Returns only that step. Combine with `format: "json"` for the structured object.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['full', 'summary'],
+          description: 'Optional output mode. "summary" returns frontmatter, CSF channels, entry triggers, and step-id list — no step bodies. Ignored when `step` is set.',
         },
       },
       additionalProperties: false,
     },
     execute: async (params): Promise<ToolResult> => {
       const rawId = typeof params.id === 'string' ? params.id.trim() : ''
+      const format = params.format === 'json' ? 'json' : 'markdown'
+      const mode = params.mode === 'summary' ? 'summary' : 'full'
+      const stepId = typeof params.step === 'string' ? params.step.trim() : ''
 
-      // No id → return the index
       if (!rawId) {
         try {
           const ids = await getIndex()
+          if (format === 'json') return { success: true, data: { kind: 'index', wikiName: deps.wikiName, wikiHomepage: deps.wikiHomepage, ids } }
           return { success: true, data: renderIndex(ids, deps.wikiName, deps.wikiHomepage) }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
@@ -89,7 +147,6 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
         }
       }
 
-      // Validate id against the known set (fetched fresh if cache cold)
       let ids: ReadonlyArray<string>
       try {
         ids = await getIndex()
@@ -105,7 +162,6 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
         return { success: false, error: `Procedure "${rawId}" not found in ${deps.wikiName}.${hint}` }
       }
 
-      // Fetch the procedure markdown (buffered)
       let raw: string
       try {
         raw = await deps.source.fetchProcedure(rawId)
@@ -114,24 +170,65 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
         return { success: false, error: `Could not fetch procedure "${rawId}" from GitHub: ${msg}. Try again in a minute.` }
       }
 
-      // Parse + render
       const parsed = parseProcedure(raw)
       if ('error' in parsed) {
-        // Parser failed — fall back to raw markdown with a visible "raw" notice
-        // (degraded but never empty; user can see the procedure body).
+        if (format === 'json') {
+          return { success: false, error: `Could not parse "${rawId}" as procmd: ${parsed.error}` }
+        }
         return {
           success: true,
           data: `> ⚠️ Could not parse procedure as procmd: ${parsed.error}. Showing raw source.\n\n${raw}\n\nSource: [${rawId}](${deps.source.citationUrl(rawId)})`,
         }
       }
 
+      if (stepId) {
+        const step = parsed.steps.find(s => s.id === stepId)
+        if (!step) {
+          const stepIds = parsed.steps.map(s => s.id)
+          const hints = fuzzyMatch(stepId, stepIds)
+          const hint = hints.length > 0 ? ` Did you mean: ${hints.join(', ')}?` : ` Available step ids: ${stepIds.slice(0, 8).join(', ')}${stepIds.length > 8 ? `, ...` : ''}.`
+          return { success: false, error: `Step "${stepId}" not found in ${rawId}.${hint}` }
+        }
+        if (format === 'json') {
+          return { success: true, data: { kind: 'step', procedureId: rawId, step, citationUrl: deps.source.citationUrl(rawId) } }
+        }
+        return { success: true, data: renderStepFragment(parsed, step, deps.source.citationUrl(rawId)) }
+      }
+
+      if (mode === 'summary') {
+        if (format === 'json') {
+          return { success: true, data: {
+            kind: 'summary',
+            procedureId: parsed.frontmatter.procedureId,
+            title: parsed.frontmatter.title,
+            profile: parsed.frontmatter.profile,
+            appliesTo: parsed.frontmatter.appliesTo,
+            category: parsed.frontmatter.category,
+            csfsMonitored: parsed.frontmatter.csfsMonitored,
+            entryTriggers: parsed.frontmatter.entryTriggers,
+            csfChannels: parsed.csfChannels,
+            stepIds: parsed.steps.map(s => s.id),
+            tagDefinitionCount: parsed.tagDefinitions.length,
+            citationUrl: deps.source.citationUrl(rawId),
+          } }
+        }
+        return { success: true, data: renderSummaryFragment(parsed, deps.source.citationUrl(rawId)) }
+      }
+
+      if (format === 'json') {
+        return { success: true, data: {
+          kind: 'procedure',
+          procedureId: rawId,
+          parsed,
+          citationUrl: deps.source.citationUrl(rawId),
+        } }
+      }
       const rendered = renderProcedure(parsed, (procId) => deps.source.citationUrl(procId))
       return { success: true, data: rendered.markdown }
     },
   }
 }
 
-// Factory: takes the binding from the pack manifest, returns the tool.
 export const createProcedureLookupTool = (
   binding: WikiSourceBinding,
   wikiName: string,

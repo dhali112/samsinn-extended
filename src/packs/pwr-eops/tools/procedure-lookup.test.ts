@@ -74,6 +74,80 @@ describe('procedure_lookup — integration with mocked GitHub', () => {
   })
 })
 
+describe('procedure_lookup — format / step / mode parameters', () => {
+  let restore: () => void
+  beforeEach(() => { restore = installFetchMock(fixtureResponder) })
+  afterEach(() => restore())
+
+  test('format: "json" returns the parsed shape, not markdown', async () => {
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const r = await tool.execute({ id: 'E-0', format: 'json' }, ctx)
+    expect(r.success).toBe(true)
+    const data = r.data as { kind: string; procedureId: string; parsed: { frontmatter: { procedureId: string }; steps: unknown[]; csfChannels: string[] } }
+    expect(data.kind).toBe('procedure')
+    expect(data.procedureId).toBe('E-0')
+    expect(data.parsed.frontmatter.procedureId).toBe('E-0')
+    expect(data.parsed.steps.length).toBeGreaterThan(5)
+    expect(data.parsed.csfChannels).toContain('subcriticality')
+  })
+
+  test('format: "json" with no id returns an index object', async () => {
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const r = await tool.execute({ format: 'json' }, ctx)
+    expect(r.success).toBe(true)
+    const data = r.data as { kind: string; ids: string[] }
+    expect(data.kind).toBe('index')
+    expect(data.ids).toContain('E-0')
+  })
+
+  test('step: "<id>" returns only that step (markdown)', async () => {
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const r = await tool.execute({ id: 'E-0', step: 'verify-reactor-trip' }, ctx)
+    expect(r.success).toBe(true)
+    const data = r.data as string
+    expect(data).toContain('verify-reactor-trip')
+    expect(data).toContain('**Check:**')
+    expect(data).not.toContain('check-rcs-conditions')
+  })
+
+  test('step: "<id>" returns the step in JSON mode', async () => {
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const r = await tool.execute({ id: 'E-0', step: 'verify-reactor-trip', format: 'json' }, ctx)
+    expect(r.success).toBe(true)
+    const data = r.data as { kind: string; step: { id: string; checks: string[] } }
+    expect(data.kind).toBe('step')
+    expect(data.step.id).toBe('verify-reactor-trip')
+    expect(data.step.checks.length).toBeGreaterThan(0)
+  })
+
+  test('unknown step → structured error with fuzzy suggestions', async () => {
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const r = await tool.execute({ id: 'E-0', step: 'no-such-step' }, ctx)
+    expect(r.success).toBe(false)
+    expect(r.error).toContain('no-such-step')
+  })
+
+  test('mode: "summary" returns frontmatter + step ids, no step bodies', async () => {
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const r = await tool.execute({ id: 'E-0', mode: 'summary' }, ctx)
+    expect(r.success).toBe(true)
+    const data = r.data as string
+    expect(data).toContain('(summary)')
+    expect(data).toMatch(/\*\*Steps \(\d+\):\*\*/)
+    expect(data).not.toContain('**Check:**')
+  })
+
+  test('mode: "summary" with format: "json" returns structured summary', async () => {
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const r = await tool.execute({ id: 'E-0', mode: 'summary', format: 'json' }, ctx)
+    expect(r.success).toBe(true)
+    const data = r.data as { kind: string; stepIds: string[]; entryTriggers: string[] }
+    expect(data.kind).toBe('summary')
+    expect(data.stepIds.length).toBeGreaterThan(5)
+    expect(data.entryTriggers).toContain('reactor-trip-signal')
+  })
+})
+
 describe('procedure_lookup — failure modes', () => {
   let restore: () => void
   afterEach(() => restore?.())

@@ -155,6 +155,7 @@ const renderStep = (step: ParsedStep, stepLookup: Map<string, ParsedStep>, citat
     parts.push('**Action:**')
     parts.push(bulletList(step.actions))
   }
+  for (const w of step.withins) parts.push(`> ⏱️ **Within:** ${w}`)
   for (const c of step.cautions) parts.push(`> ⚠️ **Caution:** ${c}`)
   for (const n of step.notes) parts.push(`> ℹ️ **Note:** ${n}`)
   if (step.branches.length > 0) {
@@ -171,7 +172,13 @@ const renderStep = (step: ParsedStep, stepLookup: Map<string, ParsedStep>, citat
       }
       return `→ ${b.target.text}`
     }
-    parts.push(step.branches.map(b => `  - ${b.condition} ${renderBranchTarget(b)}`).join('\n'))
+    const renderRationale = (b: Branch): string => {
+      const bits: string[] = []
+      if (b.because) bits.push(`    _because:_ ${b.because}`)
+      if (b.against) bits.push(`    _against:_ ${b.against}`)
+      return bits.length > 0 ? '\n' + bits.join('\n') : ''
+    }
+    parts.push(step.branches.map(b => `  - ${b.condition} ${renderBranchTarget(b)}${renderRationale(b)}`).join('\n'))
   }
   return parts.join('\n\n')
 }
@@ -196,18 +203,46 @@ export const renderProcedure = (
   if (fm.category) meta.push(`Category: ${fm.category}`)
   if (fm.csfsMonitored.length > 0) meta.push(`CSFs monitored: ${fm.csfsMonitored.join(', ')}`)
   if (meta.length > 0) head.push(`*${meta.join(' · ')}*`)
+  if (parsed.csfChannels.length > 0) {
+    head.push(`**Concurrent CSF channels in service:** ${parsed.csfChannels.map(c => `\`${c}\``).join(', ')}`)
+  }
   if (parsed.preamble) head.push(parsed.preamble)
 
   const stepsMd = parsed.steps.map(s => renderStep(s, stepLookup, citationUrlFor)).join('\n\n')
 
-  // Aggregate all unique referenced tags across all steps for a "Tags
-  // referenced" section. Flat list (no appendix metadata in v1).
-  const tagSet = new Set<string>()
-  for (const s of parsed.steps) for (const t of s.tagsReferenced) tagSet.add(t)
-  const tags = [...tagSet].sort()
-  const tagsSection = tags.length > 0
-    ? `\n\n### Tags referenced\n\n${tags.map(t => `- \`${t}\``).join('\n')}`
-    : ''
+  // Tag presentation: prefer the structured `## Tags` appendix when present
+  // (definitions with sim-path / units / equipment); otherwise fall back to
+  // the flat list of inline references.
+  let tagsSection = ''
+  if (parsed.tagDefinitions.length > 0) {
+    const refSet = new Set<string>()
+    for (const s of parsed.steps) for (const t of s.tagsReferenced) refSet.add(t)
+    const rows = parsed.tagDefinitions
+      .filter(d => refSet.size === 0 || refSet.has(d.id))
+      .map(d => {
+        const cells = [
+          `\`${d.id}\``,
+          d.description ?? '',
+          d.simPath ? `\`${d.simPath}\`` : '',
+          d.units ?? '',
+          d.equipment ?? '',
+        ].map(c => c.replace(/\|/g, '\\|'))
+        return `| ${cells.join(' | ')} |`
+      })
+    if (rows.length > 0) {
+      tagsSection = '\n\n### Tags referenced\n\n' +
+        '| Tag | Description | Sim-path | Units | Equipment |\n' +
+        '|---|---|---|---|---|\n' +
+        rows.join('\n')
+    }
+  } else {
+    const tagSet = new Set<string>()
+    for (const s of parsed.steps) for (const t of s.tagsReferenced) tagSet.add(t)
+    const tags = [...tagSet].sort()
+    if (tags.length > 0) {
+      tagsSection = `\n\n### Tags referenced\n\n${tags.map(t => `- \`${t}\``).join('\n')}`
+    }
+  }
 
   const { fence } = buildMermaid(parsed.steps, citationUrlFor)
   const validation = validateMermaid(fence)
