@@ -158,6 +158,12 @@ const renderStep = (step: ParsedStep, stepLookup: Map<string, ParsedStep>, citat
   for (const w of step.withins) parts.push(`> ⏱️ **Within:** ${w}`)
   for (const c of step.cautions) parts.push(`> ⚠️ **Caution:** ${c}`)
   for (const n of step.notes) parts.push(`> ℹ️ **Note:** ${n}`)
+  if (step.decision) {
+    parts.push(`**Decision:** ${step.decision.prologue}`)
+    if (step.decision.paths.length > 0) {
+      parts.push(step.decision.paths.map((p, i) => `  ${i + 1}. ${p}`).join('\n'))
+    }
+  }
   if (step.branches.length > 0) {
     parts.push('**Branches:**')
     const renderBranchTarget = (b: Branch): string => {

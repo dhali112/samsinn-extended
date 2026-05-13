@@ -145,6 +145,12 @@ interface StepBuilder {
   withins: string[]
   branches: BranchBuilder[]
   bodyText: string[]
+  /** v0.7 — when a `Decision:` line opens, all subsequent numbered-list
+   *  lines accumulate as paths until a non-numbered, non-empty line is
+   *  encountered (other parsers may run after). */
+  decisionPrologue: string | null
+  decisionPaths: string[]
+  inDecisionPaths: boolean
 }
 
 const flushStep = (b: StepBuilder | null, out: ParsedStep[]): void => {
@@ -152,8 +158,11 @@ const flushStep = (b: StepBuilder | null, out: ParsedStep[]): void => {
   const tagSource = [
     ...b.checks, ...b.actions, ...b.cautions, ...b.notes, ...b.withins,
     ...b.bodyText,
+    ...(b.decisionPrologue ? [b.decisionPrologue] : []),
+    ...b.decisionPaths,
     ...b.branches.flatMap(br => [br.condition, br.because ?? '', br.against ?? '']),
   ].join('\n')
+  const hasDecision = b.decisionPrologue !== null
   out.push({
     id: b.id,
     label: b.label,
@@ -163,6 +172,7 @@ const flushStep = (b: StepBuilder | null, out: ParsedStep[]): void => {
     cautions: b.cautions,
     notes: b.notes,
     withins: b.withins,
+    ...(hasDecision ? { decision: { prologue: b.decisionPrologue!, paths: b.decisionPaths } } : {}),
     tagsReferenced: extractTags(tagSource),
     branches: b.branches.map(br => ({
       condition: br.condition,
@@ -170,7 +180,7 @@ const flushStep = (b: StepBuilder | null, out: ParsedStep[]): void => {
       ...(br.because ? { because: br.because } : {}),
       ...(br.against ? { against: br.against } : {}),
     })),
-    isDecision: b.branches.length > 0,
+    isDecision: b.branches.length > 0 || hasDecision,
   })
 }
 
@@ -281,6 +291,7 @@ const parseBody = (body: string): BodyResult => {
         id, label, title: '',
         checks: [], actions: [], cautions: [], notes: [], withins: [],
         branches: [], bodyText: [],
+        decisionPrologue: null, decisionPaths: [], inDecisionPaths: false,
       }
       continue
     }
@@ -309,6 +320,27 @@ const parseBody = (body: string): BodyResult => {
 
     const line = raw.trim()
     if (!line) continue
+
+    // v0.7 — `Decision:` opens a multi-path diagnostic block. Subsequent
+    // numbered-list lines (`N. ...`) accumulate as paths. Branches and
+    // other body keywords still parse normally inside or after the block;
+    // the path collector stops at the first non-numbered, non-empty,
+    // non-Decision-following line so we don't swallow branches.
+    if (/^decision:/i.test(line)) {
+      current.decisionPrologue = line.replace(/^decision:\s*/i, '')
+      current.inDecisionPaths = true
+      continue
+    }
+    if (current.inDecisionPaths) {
+      const pathMatch = line.match(/^\d+\.\s+(.+)$/)
+      if (pathMatch) {
+        current.decisionPaths.push(pathMatch[1]!.trim())
+        continue
+      }
+      // Anything that isn't a numbered path ends the path-collection state;
+      // fall through to the normal keyword dispatch for this same line.
+      current.inDecisionPaths = false
+    }
 
     if (/^check:/i.test(line)) { current.checks.push(line.replace(/^check:\s*/i, '')); continue }
     if (/^action:/i.test(line)) { current.actions.push(line.replace(/^action:\s*/i, '')); continue }

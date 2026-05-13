@@ -102,3 +102,52 @@ describe('renderIndex', () => {
     expect(renderIndex([], 'X', 'https://x.example')).toContain('No procedures listed yet')
   })
 })
+
+describe('renderProcedure — v0.7 Decision: rendering', () => {
+  const src = `---
+type: procedure
+procedure-md: 0.7
+procedure-id: D-RENDER
+title: Decision Render Test
+profile: nuclear-erg
+applies-to: anywhere
+---
+
+## Step 1 [id: choose]
+Decision: identify the faulted SG using the following paths in order
+1. SG pressure dropping uncontrollably
+2. Steam-line N-16 monitor «N16» elevated
+3. Containment radiation rising with steam flow correlation
+- Faulted SG identified → #isolate
+- No SG identified → [[ECA-2.1]]
+
+## Step 2 [id: isolate]
+Action: close MSIV on identified faulted SG
+`
+  const parsed = parseProcedure(src)
+  if ('error' in parsed) throw new Error(parsed.error)
+  const rendered = renderProcedure(parsed, citationUrl)
+
+  test('renders the **Decision:** prologue', () => {
+    expect(rendered.markdown).toContain('**Decision:** identify the faulted SG using the following paths in order')
+  })
+
+  test('renders numbered paths inline', () => {
+    expect(rendered.markdown).toMatch(/  1\. SG pressure dropping uncontrollably/)
+    expect(rendered.markdown).toMatch(/  2\. Steam-line N-16/)
+    expect(rendered.markdown).toMatch(/  3\. Containment radiation/)
+  })
+
+  test('Decision step renders branches separately', () => {
+    expect(rendered.markdown).toContain('**Branches:**')
+    expect(rendered.markdown).toMatch(/Faulted SG identified/)
+  })
+
+  test('Decision step is a diamond in mermaid', () => {
+    expect(rendered.markdown).toMatch(/S_choose\{"/)
+  })
+
+  test('mermaid still validates', () => {
+    expect(rendered.mermaidValid).toBe(true)
+  })
+})

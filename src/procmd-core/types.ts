@@ -12,8 +12,8 @@
 // and validators are each consumer's responsibility — they share semantics
 // via ParsedProcedure but format output for different audiences.
 
-export const PARSER_PROCMD_VERSION = '0.6'
-export const ACCEPTED_PROCMD_VERSIONS = new Set(['0.6'])
+export const PARSER_PROCMD_VERSION = '0.7'
+export const ACCEPTED_PROCMD_VERSIONS = new Set(['0.7'])
 
 export interface ParsedFrontmatter {
   readonly procedureId: string
@@ -42,6 +42,18 @@ export interface Branch {
   readonly against?: string
 }
 
+/**
+ * v0.7 — multi-path diagnostic decision. The prologue describes what the
+ * operator is identifying; numbered paths are the priority-ordered ways to
+ * reach a conclusion. The actual transitions remain in the step's regular
+ * `branches` (the step has both: paths are operator instructions, branches
+ * are flow targets).
+ */
+export interface ParsedDecision {
+  readonly prologue: string
+  readonly paths: ReadonlyArray<string>
+}
+
 export interface ParsedStep {
   readonly id: string
   readonly label: string                       // display: "1", "3.a", etc
@@ -51,9 +63,12 @@ export interface ParsedStep {
   readonly cautions: ReadonlyArray<string>
   readonly notes: ReadonlyArray<string>
   readonly withins: ReadonlyArray<string>      // Within: time constraints
+  /** v0.7 — present when the step uses the `Decision:` keyword */
+  readonly decision?: ParsedDecision
   readonly tagsReferenced: ReadonlyArray<string>
   readonly branches: ReadonlyArray<Branch>
-  readonly isDecision: boolean                 // has at least one branch
+  /** True when branches.length > 0 OR a `Decision:` block is present. */
+  readonly isDecision: boolean
 }
 
 export interface TagDefinition {

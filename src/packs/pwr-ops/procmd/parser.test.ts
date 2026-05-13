@@ -90,7 +90,7 @@ describe('parseProcedure — error paths', () => {
 describe('parseProcedure — minimal hand-rolled procedure', () => {
   const src = `---
 type: procedure
-procedure-md: 0.6
+procedure-md: 0.7
 procedure-id: TEST-1
 title: Test Procedure
 profile: nuclear-erg
@@ -150,7 +150,7 @@ Note: this is the last step
 describe('parseProcedure — v0.6 promoted keywords', () => {
   const src = `---
 type: procedure
-procedure-md: 0.6
+procedure-md: 0.7
 procedure-id: TEST-2
 title: Test Promotions
 profile: nuclear-erg

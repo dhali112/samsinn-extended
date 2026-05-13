@@ -18,15 +18,37 @@ knowledge graph.
 
 ## Status
 
-This document specifies **procmd v0.6 normative**. Reference parser:
+This document specifies **procmd v0.7 normative**. Reference parser:
 `src/procmd-core/parser.ts`. Reference validator:
-`pwr-ops/validate.ts`. Both are version-locked to v0.6.
+`pwr-ops/validate.ts`. Both are version-locked to v0.7.
 
-**No backward compatibility with v0.5 or earlier.** The atomic v0.6 bump
-landed 2026-05-13 alongside the procmd-core extraction; every artifact
-(parser, validator, mkdocs.yml, every procedure frontmatter) declares
-v0.6. Parsers reject other versions with a warning (still parse, but
-output is degraded).
+**No backward compatibility with v0.6 or earlier.** v0.7 added the
+`Decision:` step keyword (first real spec increment after v0.6's atomic
+relabel). Every artifact declares v0.7. Parsers reject other versions
+with a warning (still parse, but output is degraded).
+
+### v0.7 — `Decision:` step keyword
+
+A step using `Decision:` declares a *multi-path diagnostic*: the
+operator chooses among priority-ordered paths to reach a conclusion.
+Authoring shape:
+
+```markdown
+## Step 16 [id: identify-ruptured-sg]
+Decision: identify the ruptured SG using the following paths in order
+1. N-16 monitor reading «SG-x-N16» elevated → SG-x is ruptured
+2. SG narrow-range level rising uncontrollably → SG-x is ruptured
+3. Steam-line activity sample → SG-x is ruptured
+4. Blowdown radiation → SG-x is ruptured
+- Ruptured SG identified → #isolate-ruptured-sg
+- No SG identified → [[ECA-3.3]]
+```
+
+Parser surface: `ParsedStep.decision: { prologue, paths[] }`. Numbered
+list lines following `Decision:` accumulate as paths until a
+non-numbered, non-empty line is encountered (other body keywords resume
+normally). Branches (`- ... → ...`) still parse as usual. A `Decision:`
+step always renders as a mermaid diamond regardless of branch count.
 
 **Versioning protocol.** Breaking changes allowed between v0.x minor
 versions until v1.0; each bump is atomic (every artifact moves together;
@@ -73,7 +95,7 @@ procedures use standard `[[wikilinks]]`.
 ```yaml
 ---
 type: procedure
-procedure-md: 0.6
+procedure-md: 0.7
 procedure-id: E-0
 title: Reactor Trip or Safety Injection
 profile: nuclear-erg
@@ -300,7 +322,7 @@ its frontmatter.
 ```yaml
 ---
 type: procedure-profile
-procedure-md: 0.6
+procedure-md: 0.7
 profile-id: nuclear-erg
 title: Nuclear Emergency Response Guidelines profile
 ---
@@ -737,7 +759,7 @@ Tag binding landed in v0.5 (additive); retry + abort glyphs landed in v0.6 (addi
 | Version | Additions | Notes |
 |---|---|---|
 | **v0.5** | `«TAG»` inline references + `## Tags` appendix + `referencesTag` / `tagOnEquipment` KG predicates | Procedures become self-contained — every referenced tag is defined in an appendix in the same file. Cross-procedure validator catches drift on `sim-path` / `units` / `equipment`. No central catalog page. Migration: bump `procedure-md: 0.4` → `0.5`; existing procedures with no tag refs are unchanged. |
-| **v0.6** | `→ ↻` retry-self arrow + `→ ↯` abort arrow + `repeatsSelf` / `abortsWith` KG predicates | Two new branch-target glyphs cover patterns previously expressed as `→ #<self-id>` (with no structural signal of "this is a loop") and as falling-off-the-end (with no structural signal of "this is an abort"). Validator: a step whose only branches are `↻` is rejected (infinite loop); bare unconditional `→ ↻` / `→ ↯` rejected (loops/aborts must carry a condition or cause). Migration: bump `procedure-md: 0.6` → `0.6`; existing procedures unchanged unless they adopt the new arrows. |
+| **v0.6** | `→ ↻` retry-self arrow + `→ ↯` abort arrow + `repeatsSelf` / `abortsWith` KG predicates | Two new branch-target glyphs cover patterns previously expressed as `→ #<self-id>` (with no structural signal of "this is a loop") and as falling-off-the-end (with no structural signal of "this is an abort"). Validator: a step whose only branches are `↻` is rejected (infinite loop); bare unconditional `→ ↻` / `→ ↯` rejected (loops/aborts must carry a condition or cause). Migration: bump `procedure-md: 0.7` → `0.6`; existing procedures unchanged unless they adopt the new arrows. |
 
 ## Versioning policy
 
@@ -792,7 +814,7 @@ of features must be announced one minor version before removal.
 ```markdown
 ---
 type: procedure
-procedure-md: 0.6
+procedure-md: 0.7
 procedure-id: example-engine-restart
 title: Engine Restart After In-Flight Shutdown
 profile: aviation-qrh

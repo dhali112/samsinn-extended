@@ -11,6 +11,7 @@ export { parseProcedure, PARSER_PROCMD_VERSION, ACCEPTED_PROCMD_VERSIONS } from 
 export type {
   Branch,
   BranchTarget,
+  ParsedDecision,
   ParsedFrontmatter,
   ParsedProcedure,
   ParsedStep,
