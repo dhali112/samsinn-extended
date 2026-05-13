@@ -191,13 +191,11 @@ export const createModal = (config: ModalConfig): ModalElements => {
   const overlay = document.createElement('div')
   // z-[1100]: must beat Leaflet's controls (z-index 1000) and panes (400+)
   // so a Settings modal opened over a chat-inline map renders above it.
-  overlay.className = 'fixed inset-0 flex items-center justify-center z-[1100] p-4'
+  // Set as inline style so confirmModal can stack above existing modals
+  // by overriding to a higher value (z-1200+) without fighting Tailwind.
+  overlay.className = 'fixed inset-0 flex items-center justify-center p-4'
   overlay.style.background = 'var(--shadow-overlay)'
-
-  // Base z-index — confirmModal stacks above existing modals by overriding
-  // this to a higher value. Modals built without an override stack by DOM
-  // order at z:50.
-  overlay.style.zIndex = '50'
+  overlay.style.zIndex = '1100'
 
   const card = document.createElement('div')
   // `modal-card` hooks the global form-control theming in input.css so any
