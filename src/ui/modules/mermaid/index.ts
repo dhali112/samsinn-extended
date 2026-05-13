@@ -8,7 +8,7 @@
 // Each rendered wrapper stores the normalised source on `data-mermaid-source`
 // so theme re-renders can reuse it without re-walking markdown.
 
-import { ensureMermaid, getMermaidApi, reinitMermaid } from './api.ts'
+import { ensureMermaid, getMermaidApi, reinitMermaid, renderQueued, nextMermaidId } from './api.ts'
 import { normaliseMermaidSource, MAX_MERMAID_SOURCE } from './normalise.ts'
 import { showRenderFallback } from './fallback.ts'
 import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
@@ -36,7 +36,6 @@ export const renderMermaidBlocks = async (container: HTMLElement): Promise<void>
 
   const api = await ensureMermaid()
 
-  let localIdCounter = 0
   for (const block of blocks) {
     const pre = block.parentElement
     if (!pre) continue
@@ -58,9 +57,9 @@ export const renderMermaidBlocks = async (container: HTMLElement): Promise<void>
     }
 
     const source = normaliseMermaidSource(rawSource)
-    const id = `mermaid-${Date.now()}-${++localIdCounter}`
+    const id = nextMermaidId('mermaid')
     try {
-      const { svg } = await api.render(id, source)
+      const { svg } = await renderQueued(api, id, source)
       pre.replaceWith(buildRenderedWrapper(svg, source))
     } catch {
       showRenderFallback(wrapper, rawSource, 'render-failed')
@@ -83,13 +82,12 @@ export const reRenderAllMermaid = async (): Promise<void> => {
   reinitMermaid()
 
   const nodes = [...document.querySelectorAll<HTMLElement>('[data-mermaid-source]')]
-  let localIdCounter = 0
   await Promise.all(nodes.map(async (node) => {
     const source = node.getAttribute('data-mermaid-source') ?? ''
     if (!source) return
     try {
-      const id = `mermaid-retheme-${Date.now()}-${++localIdCounter}`
-      const { svg } = await api.render(id, source)
+      const id = nextMermaidId('mermaid-retheme')
+      const { svg } = await renderQueued(api, id, source)
       node.innerHTML = svg
     } catch {
       // Keep the old render if re-parse fails.
