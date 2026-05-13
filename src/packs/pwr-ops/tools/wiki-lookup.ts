@@ -12,7 +12,6 @@ import {
   createWikiSource,
   type WikiSource,
   type WikiManifestPageEntry,
-  type WikiPageType,
 } from '../../../wikis/wiki-fetcher.ts'
 
 interface WikiLookupDeps {
@@ -38,15 +37,26 @@ const defaultTelemetry = (event: WikiLookupTelemetry): void => {
   try { console.error('wiki_lookup_telemetry ' + JSON.stringify(event)) } catch { /* never crash */ }
 }
 
-const ALL_TYPES: ReadonlyArray<WikiPageType> = [
+// Documentation-only ordering for renderPageList. The set of accepted types
+// is the union of (a) every type the WikiPageType union knows about and (b)
+// every type that appears in the live manifest's pages[].type set at call
+// time. Validation happens at call time — see the manifest check in execute.
+const TYPE_DISPLAY_ORDER: ReadonlyArray<string> = [
   'system-description',
   'tag-catalogue',
   'setpoint-catalogue',
+  'operations-doc',
+  'hf-action-class',
+  'hf-failure-mode',
+  'hf-time-pressure-profile',
+  'operating-experience',
+  'scenario',
+  'simulator-binding',
+  'validation-trace',
+  'eal-classification',
   'tech-spec',
   'lineup',
 ]
-
-const isValidType = (t: string): t is WikiPageType => (ALL_TYPES as ReadonlyArray<string>).includes(t)
 
 const citationForPage = (binding: WikiSourceBinding, page: WikiManifestPageEntry): string => {
   // page.file looks like `wiki/systems/rcs.md` — strip leading `wiki/` and
@@ -59,20 +69,25 @@ const citationForPage = (binding: WikiSourceBinding, page: WikiManifestPageEntry
 }
 
 const renderPageList = (pages: ReadonlyArray<WikiManifestPageEntry>, wikiName: string, wikiHomepage: string): string => {
-  const byType = new Map<WikiPageType, WikiManifestPageEntry[]>()
+  const byType = new Map<string, WikiManifestPageEntry[]>()
   for (const p of pages) {
     const arr = byType.get(p.type) ?? []
     arr.push(p)
     byType.set(p.type, arr)
   }
+  // Display types in canonical order first, then any others encountered.
+  const seenTypes = new Set(byType.keys())
+  const ordered: string[] = []
+  for (const t of TYPE_DISPLAY_ORDER) if (seenTypes.has(t)) { ordered.push(t); seenTypes.delete(t) }
+  for (const t of [...seenTypes].sort()) ordered.push(t)
+
   const lines: string[] = []
   lines.push(`# ${wikiName} — reference pages`)
   lines.push('')
   lines.push(`Source: ${wikiHomepage}`)
   lines.push('')
-  for (const type of ALL_TYPES) {
-    const arr = byType.get(type)
-    if (!arr || arr.length === 0) continue
+  for (const type of ordered) {
+    const arr = byType.get(type)!
     lines.push(`## ${type} (${arr.length})`)
     for (const p of arr) lines.push(`  - \`${p.id}\`${p.title ? ' — ' + p.title : ''}`)
     lines.push('')
@@ -84,20 +99,22 @@ const renderPageList = (pages: ReadonlyArray<WikiManifestPageEntry>, wikiName: s
 const buildTool = (deps: WikiLookupDeps): Tool => ({
   name: 'wiki_lookup',
   description:
-    'Fetches a reference page from the pwr-ops wiki — system descriptions, the tag catalogue, the setpoint catalogue, tech-spec extracts, or lineups. ' +
+    'Fetches a reference page from the pwr-ops wiki — system descriptions, the tag catalogue, the setpoint catalogue, operations docs, human-factors pages, scenarios, and any future page type the wiki publishes. ' +
     'Use this when you need plant-reference context that is not procedure-specific. ' +
     'Call with no arguments to list available pages by type.',
   usage:
-    'Pass `type` (one of: system-description, tag-catalogue, setpoint-catalogue, tech-spec, lineup) and `id` (e.g. "rcs", "eccs", "index"). ' +
+    'Pass `type` (any page type the wiki manifest declares — system-description, tag-catalogue, operations-doc, scenario, …) and `id` (e.g. "rcs", "eccs", "index"). ' +
     'Omit both to list everything. Markdown body is returned verbatim and is paste-ready.',
   returns: 'A markdown string (the page body with frontmatter stripped) or an index listing.',
   parameters: {
     type: 'object',
     properties: {
+      // E.4 — open enum. Type values are validated against the live manifest's
+      // pages[].type set at call time, not at parameter-validation time. This
+      // lets the wiki ship new page types without a samsinn release.
       type: {
         type: 'string',
-        enum: [...ALL_TYPES],
-        description: 'Page type. Omit to list everything available.',
+        description: 'Page type. Validated against the wiki manifest at call time. Omit to list everything available.',
       },
       id: {
         type: 'string',
@@ -141,9 +158,11 @@ const buildTool = (deps: WikiLookupDeps): Tool => ({
       return { success: true, data: renderPageList(pages, deps.wikiName, deps.wikiHomepage) }
     }
 
-    if (type && !isValidType(type)) {
+    // E.4 — validate against the live manifest, not a hard-coded enum.
+    const manifestTypes: Set<string> = new Set(pages.map(p => p.type as string))
+    if (type && !manifestTypes.has(type)) {
       fire(false, 'unknown-type')
-      return { success: false, error: `Unknown page type "${type}". Available: ${ALL_TYPES.join(', ')}.` }
+      return { success: false, error: `Unknown page type "${type}" in ${deps.wikiName}. Available: ${[...manifestTypes].sort().join(', ')}.` }
     }
 
     if (type && !id) {

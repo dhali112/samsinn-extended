@@ -49,12 +49,21 @@ export interface WikiManifestEntry {
   readonly tagDefinitionCount?: number
 }
 
+/**
+ * Known page types the samsinn TypeScript side cares about. The wiki MAY
+ * publish additional types beyond this union — `wiki_lookup` validates
+ * incoming type strings against the live manifest's `pages[].type` set
+ * rather than this union, so a new wiki page type ships without a samsinn
+ * release. Add to this union when samsinn-side code wants to special-case
+ * a type (e.g. a dedicated tool for `scenario` pages).
+ */
 export type WikiPageType =
   | 'system-description'
   | 'tag-catalogue'
   | 'setpoint-catalogue'
   | 'tech-spec'
   | 'lineup'
+  | (string & {})
 
 export interface WikiManifestPageEntry {
   readonly id: string

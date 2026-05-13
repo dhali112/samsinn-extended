@@ -164,3 +164,69 @@ Caution: do not exceed limit
     expect(r3.steps[0]!.branches).toHaveLength(1)
   })
 })
+
+// H.2: feature-focused fixtures. One file per procmd v0.7 language feature.
+// Adding a feature without a fixture here means the renderer-parity contract
+// (golden output on the same input in both consumers) has no anchor.
+describe('procmd-core — feat-decision fixture', () => {
+  const r = parseProcedure(fixture('feat-decision.md'))
+  if ('error' in r) throw new Error(`feat-decision: ${r.error}`)
+  test('Decision: step is flagged isDecision', () => {
+    expect(r.steps[0]!.isDecision).toBe(true)
+  })
+  test('Decision-style branches preserve Because: and Against: rationale', () => {
+    const branches = r.steps[0]!.branches
+    expect(branches.length).toBe(3)
+    const withBecause = branches.filter(b => b.because).length
+    const withAgainst = branches.filter(b => b.against).length
+    expect(withBecause).toBeGreaterThanOrEqual(2)
+    expect(withAgainst).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('procmd-core — feat-within fixture', () => {
+  const r = parseProcedure(fixture('feat-within.md'))
+  if ('error' in r) throw new Error(`feat-within: ${r.error}`)
+  test('Within: lifecycle keyword surfaces on the step', () => {
+    expect(r.steps[0]!.withins).toEqual(['60 s'])
+  })
+  test('inline tag ref «SUB-MARGIN» is captured', () => {
+    expect(r.steps[0]!.tagsReferenced).toContain('SUB-MARGIN')
+  })
+  test('Tags appendix yields a definition with sim-path / units / equipment', () => {
+    const def = r.tagDefinitions.find(t => t.id === 'SUB-MARGIN')!
+    expect(def.simPath).toBe('rcs.subcooling')
+    expect(def.units).toBe('degF')
+    expect(def.equipment).toBe('rcs')
+  })
+})
+
+describe('procmd-core — feat-caution-note fixture', () => {
+  const r = parseProcedure(fixture('feat-caution-note.md'))
+  if ('error' in r) throw new Error(`feat-caution-note: ${r.error}`)
+  test('Caution: and Note: are first-class keyword lists on the step', () => {
+    expect(r.steps[0]!.cautions.length).toBe(1)
+    expect(r.steps[0]!.cautions[0]).toMatch(/pressurizer pressure/i)
+    expect(r.steps[0]!.notes.length).toBe(1)
+    expect(r.steps[0]!.notes[0]).toMatch(/informational/i)
+  })
+})
+
+describe('procmd-core — feat-freetext-branch fixture', () => {
+  const r = parseProcedure(fixture('feat-freetext-branch.md'))
+  if ('error' in r) throw new Error(`feat-freetext-branch: ${r.error}`)
+  test('free-text branch target parses to kind freeText', () => {
+    const ft = r.steps[0]!.branches.find(b => b.target.kind === 'freeText')
+    expect(ft).toBeDefined()
+    if (ft && ft.target.kind === 'freeText') {
+      expect(ft.target.text).toMatch(/SAMG/)
+    }
+  })
+  test('intra-page branch resolves to a sibling step id', () => {
+    const intra = r.steps[0]!.branches.find(b => b.target.kind === 'intra')
+    expect(intra).toBeDefined()
+    if (intra && intra.target.kind === 'intra') {
+      expect(intra.target.stepId).toBe('continue')
+    }
+  })
+})

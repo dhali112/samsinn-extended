@@ -43,16 +43,37 @@ const buildMermaid = (
 
   const lines: string[] = ['flowchart TD']
 
-  // Nodes (one per step, diamond for decisions, rectangle for action-only)
+  // G.1 — substantive-branch count: a branch emits a diamond-worthy edge if
+  // it resolves to an intra step that exists OR to an inter procedure. freeText
+  // branches are not substantive (they don't produce a flow target). A step is
+  // rendered as a diamond only when it BOTH declared itself a Decision: AND
+  // has ≥2 substantive branches; a "decision" with a single real edge is just
+  // a conditional action and renders as a rectangle.
+  const substantiveBranchCount = (step: ParsedStep): number => {
+    let n = 0
+    for (const b of step.branches) {
+      if (b.target.kind === 'intra' && stepIdSet.has(b.target.stepId)) n += 1
+      else if (b.target.kind === 'inter') n += 1
+    }
+    return n
+  }
+
+  // Nodes (diamond only for true multi-branch decisions; rectangle otherwise)
   for (const step of steps) {
     const label = `${step.label}: ${step.title || step.id}`
-    const shape = step.isDecision ? `{"${escapeMermaidLabel(label)}"}` : `["${escapeMermaidLabel(label)}"]`
+    const renderAsDiamond = step.isDecision && substantiveBranchCount(step) >= 2
+    const shape = renderAsDiamond ? `{"${escapeMermaidLabel(label)}"}` : `["${escapeMermaidLabel(label)}"]`
     lines.push(`  ${nodeId(step.id)}${shape}`)
   }
 
   // Edges + external node collection
   const externals = new Map<string, { id: string; nodeId: string }>()  // procId → {id, nodeId}
   const clickLines: string[] = []
+  // G.2 — freeText terminals: dedupe by the free-text body so a single node
+  // covers identical "see SAMG entry conditions" leaves from multiple steps.
+  const freeTexts = new Map<string, string>()  // body → nodeId
+  let ftCounter = 0
+  const ftNodeId = (): string => `FT_${ftCounter++}`
 
   for (const step of steps) {
     if (step.branches.length === 0) {
@@ -73,9 +94,16 @@ const buildMermaid = (
         const ext = externals.get(t.procedureId) ?? { id: t.procedureId, nodeId: extId(t.procedureId) }
         externals.set(t.procedureId, ext)
         lines.push(`  ${nodeId(step.id)} -->|${condLabel}| ${ext.nodeId}`)
+      } else if (t.kind === 'freeText') {
+        // G.2 — render as a distinct leaf-shaped node (stadium / pill).
+        const body = t.text
+        let id = freeTexts.get(body)
+        if (!id) {
+          id = ftNodeId()
+          freeTexts.set(body, id)
+        }
+        lines.push(`  ${nodeId(step.id)} -->|${condLabel}| ${id}`)
       }
-      // freeText branches are intentionally NOT rendered (kept in the markdown
-      // step list instead — orphan nodes break smaller models historically).
     }
   }
 
@@ -84,7 +112,14 @@ const buildMermaid = (
     lines.push(`  ${ext.nodeId}["${escapeMermaidLabel(ext.id)}"]:::external`)
     clickLines.push(`  click ${ext.nodeId} "${citationUrlFor(ext.id)}" _blank`)
   }
+  // freeText leaf nodes (stadium shape with a distinct class)
+  for (const [body, id] of freeTexts) {
+    lines.push(`  ${id}(["${escapeMermaidLabel(body)}"]):::freetext`)
+  }
   lines.push('  classDef external fill:#fff3cd,stroke:#856404,color:#856404')
+  if (freeTexts.size > 0) {
+    lines.push('  classDef freetext fill:#e8daef,stroke:#6c3483,color:#4a235a')
+  }
   for (const cl of clickLines) lines.push(cl)
 
   const fence = ['```mermaid', lines.join('\n'), '```'].join('\n')
