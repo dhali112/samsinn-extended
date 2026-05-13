@@ -78,32 +78,38 @@ const buildPromptRow = (entry: DemoPrompt, onSent: () => void): HTMLButtonElemen
 }
 
 // Ensure the demo packs are merged into the current room's active set.
-// Fire-and-forget; on success the next message in the room sees the new
-// tool surface.
-const ensureRoomPacks = async (roomId: string, packs: ReadonlyArray<string>): Promise<void> => {
-  if (packs.length === 0) return
+// Awaited so the user can't click a prompt before activation lands and
+// hit "no tools available." Returns true iff activation succeeded (or
+// was a no-op because packs were already active).
+const ensureRoomPacks = async (roomId: string, packs: ReadonlyArray<string>): Promise<boolean> => {
+  if (packs.length === 0) return true
   const roomName = $rooms.get()[roomId]?.name
-  if (!roomName) return
+  if (!roomName) return false
   try {
-    const res = await fetch(`/api/rooms/${encodeURIComponent(roomName)}`)
-    if (!res.ok) return
+    const res = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/packs`)
+    if (!res.ok) return false
     const data = await res.json() as { activePacks?: ReadonlyArray<string> }
     const current = new Set(data.activePacks ?? [])
     let changed = false
     for (const p of packs) {
       if (!current.has(p)) { current.add(p); changed = true }
     }
-    if (!changed) return
-    await fetch(`/api/rooms/${encodeURIComponent(roomName)}/active-packs`, {
+    if (!changed) return true
+    const put = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/packs`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activePacks: [...current] }),
     })
-  } catch { /* non-fatal */ }
+    return put.ok
+  } catch {
+    return false
+  }
 }
 
 // Best-effort: install an external pack if it isn't already present.
-// Biometrics demo uses this for `samsinn-packs/biometrics`.
+// Biometrics demo uses this for `samsinn-packs/biometrics`. Awaited so
+// the room-pack-activation step (which only succeeds if the pack is
+// already known) finds it.
 const ensurePackInstalled = async (packShortName: string, registryFullName: string): Promise<void> => {
   try {
     const res = await fetch('/api/packs')
@@ -131,12 +137,17 @@ export const openDemoModal = async (demoId: string): Promise<void> => {
     return
   }
 
-  // Side-effects: install biometrics if needed; merge required packs into
-  // the current room's active set so tools become visible to the AI.
+  // Side-effects: install biometrics if needed, then merge required packs
+  // into the current room's active set so the tools become visible to the
+  // AI BEFORE the user can click a prompt. Order matters: pack must be
+  // installed before activation can succeed.
   if (demo.id === 'biometrics') {
-    void ensurePackInstalled('biometrics', 'samsinn-packs/biometrics')
+    await ensurePackInstalled('biometrics', 'samsinn-packs/biometrics')
   }
-  void ensureRoomPacks(roomId, demo.requiredPacks)
+  const activated = await ensureRoomPacks(roomId, demo.requiredPacks)
+  if (!activated) {
+    showToast(document.body, `Couldn't activate required packs (${demo.requiredPacks.join(', ')}) — the AI may not see this demo's tools.`, { type: 'error', position: 'fixed', durationMs: 8000 })
+  }
 
   $activeDemoByRoom.setKey(roomId, demo.id)
 
