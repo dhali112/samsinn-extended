@@ -30,6 +30,7 @@ import {
 import type { WSOutbound } from '../../../../core/types/ws-protocol.ts'
 import { showToast } from '../../toast.ts'
 import { toUIMessage, toUIRoomProfile, toAgentEntry } from '../mappers.ts'
+import { fetchRoomMessages } from '../../room-fetchers.ts'
 
 type OutboundByType<K extends WSOutbound['type']> = Extract<WSOutbound, { readonly type: K }>
 
@@ -99,6 +100,34 @@ export const stateHandlers: StateHandlers = {
       for (const id of rs.muted) muted.add(id)
       $mutedAgents.set(muted)
     }
+
+    // Server is authoritative. Drop the stale per-room message cache so the
+    // $roomMessages.listen() renderer at app.ts:433 receives a per-room
+    // `changedKey` and diffs the old DOM against the new (empty) array,
+    // removing phantom messages from a previous server instance. Bare
+    // `$roomMessages.set({})` would empty the cache but not trigger the
+    // listener (changedKey would be undefined) — same gotcha already
+    // documented in the messages_cleared handler above.
+    //
+    // Then eagerly refetch the selected room so the user sees fresh state
+    // without a manual room-switch. Other rooms refetch lazily on click via
+    // the room-select listener in app.ts:371.
+    //
+    // Residual race: if a fetchRoomMessages from a prior room-switch is
+    // still in flight, its eventual setKey could land after our clear and
+    // write stale data. Accepted: rare, and the next snapshot re-clears.
+    // TODO: $thinkingPreviews / $thinkingTools / $agentContexts /
+    // $agentWarnings are cleared with bare set({}) above. If a future
+    // consumer's listener relies on `changedKey` semantics, the same
+    // listener-doesn't-fire trap will bite them. Convert to setKey
+    // iteration the moment that surfaces; no preemptive fix.
+    const previouslyCached = Object.keys($roomMessages.get())
+    for (const roomId of previouslyCached) {
+      $roomMessages.setKey(roomId, [])
+    }
+    const finalSelId = $selectedRoomId.get()
+    const selRoom = finalSelId ? $rooms.get()[finalSelId] : null
+    if (selRoom) void fetchRoomMessages(selRoom.id, selRoom.name)
   },
 
   // --- Messages ---
