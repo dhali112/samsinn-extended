@@ -9,6 +9,7 @@ import { createModal } from '../modals/detail-modal.ts'
 import { showToast } from '../toast.ts'
 import { send } from '../ws-send.ts'
 import { $selectedRoomId, $rooms, $agents, $roomMembers, $selectedHumanByRoom } from '../stores.ts'
+import { icon } from '../icon.ts'
 import { getDemo, type Demo, type DemoPrompt } from './catalog.ts'
 import { $activeDemoByRoom } from './active-demo-store.ts'
 
@@ -169,9 +170,11 @@ const buildHeaderIcon = (demo: Demo): HTMLButtonElement => {
   const btn = document.createElement('button')
   btn.id = HEADER_ICON_ID
   btn.setAttribute('data-room-icon-id', 'demo')
-  btn.className = 'px-2 py-1 text-base hover:bg-surface-muted rounded'
+  btn.setAttribute('data-room-icon-label', 'Demo')
+  btn.className = 'mode-btn icon-btn'
   btn.title = `Open ${demo.title}`
-  btn.textContent = '🎬'
+  btn.setAttribute('aria-label', `Open ${demo.title}`)
+  btn.appendChild(icon('wand', { size: 16, title: demo.title }))
   btn.addEventListener('click', () => { void openDemoModal(demo.id) })
   return btn
 }

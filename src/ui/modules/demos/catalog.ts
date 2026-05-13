@@ -21,7 +21,7 @@ export type DemoId = 'procedures' | 'biometrics' | 'aviation'
 export interface Demo {
   readonly id: DemoId
   readonly title: string
-  readonly blurb: string                       // shown in the modal; mentions the 🎬 icon
+  readonly blurb: string                       // shown in the modal; mentions the 🪄 icon
   readonly requiredPacks: ReadonlyArray<string>
   // Tool names the prompts call. A boot-time test (catalog.test.ts) asserts
   // each is registered so silent demo-breakage from tool renames is caught.
@@ -34,7 +34,7 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
     id: 'procedures',
     title: 'Procedure Demo',
     blurb:
-      'Pull real nuclear-plant emergency operating procedures from the wiki, search across them by keyword, and classify scenarios against NEI 99-01 emergency action levels. Click any prompt below to try it. You can re-open this list any time from the 🎬 icon in the room header.',
+      'Pull real nuclear-plant emergency operating procedures from the wiki, search across them by keyword, and classify scenarios against NEI 99-01 emergency action levels. Click any prompt below to try it. You can re-open this list any time from the 🪄 icon in the room header.',
     requiredPacks: ['pwr-ops'],
     requiredTools: ['procedure_lookup', 'procedure_search', 'wiki_lookup', 'eal_classify'],
     prompts: [
@@ -64,7 +64,7 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
     id: 'biometrics',
     title: 'Biometrics Demo',
     blurb:
-      'Webcam-based attention tracking. The agent observes your face for a moment, narrates what it sees, then releases the camera. You\'ll be asked to consent to webcam access the first time. Re-open this list any time from the 🎬 icon in the room header.',
+      'Webcam-based attention tracking. The agent observes your face for a moment, narrates what it sees, then releases the camera. You\'ll be asked to consent to webcam access the first time. Re-open this list any time from the 🪄 icon in the room header.',
     requiredPacks: ['biometrics'],
     requiredTools: ['biometrics_start', 'biometrics_read', 'biometrics_stop'],
     prompts: [
@@ -89,7 +89,7 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
     id: 'aviation',
     title: 'Aviation Demo',
     blurb:
-      'Live VATSIM network data — real human pilots flying simulators right now — plus offshore platform geodata, rendered on an inline map. Re-open this list any time from the 🎬 icon in the room header.',
+      'Live VATSIM network data — real human pilots flying simulators right now — plus offshore platform geodata, rendered on an inline map. Re-open this list any time from the 🪄 icon in the room header.',
     requiredPacks: ['demos'],
     requiredTools: ['vatsim_arrivals', 'norway_platforms'],
     prompts: [

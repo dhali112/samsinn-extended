@@ -40,6 +40,7 @@ export type IconName =
   | 'user'                 // human agent kind glyph (replaces 🧠)
   | 'pencil'               // inline edit / rename
   | 'clock'                // triggers — scheduled prompts
+  | 'wand'                 // demos — magic-wand pin in room header
 
 // Path fragments only (no SVG wrapper). Each string is the inner markup of
 // a 24×24 viewBox. Keep alphabetical.
@@ -66,6 +67,8 @@ const PATHS: Readonly<Record<IconName, string>> = {
     '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
   'clapperboard':
     '<path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"/><path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  'wand':
+    '<path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h0"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/>',
   'corner-down-left':
     '<polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/>',
   'external-link':
