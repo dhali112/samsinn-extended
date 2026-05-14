@@ -42,9 +42,6 @@ export const initInstanceLimiter = (limitMetrics?: LimitMetrics): RateLimiter =>
   })
   return instanceLimiter
 }
-// Accessor used by routes. Returns the bootstrap-wired instance if one was
-// initialized, otherwise lazy-creates a metrics-less default for tests.
-export const getInstanceLimiter = (): RateLimiter => initInstanceLimiter()
 
 export const instanceRoutes: RouteEntry[] = [
   {
@@ -76,7 +73,7 @@ export const instanceRoutes: RouteEntry[] = [
     pattern: /^\/api\/instances$/,
     handler: async (_req, _match, ctx) => {
       if (!ctx.instances) return REQUIRED()
-      const limit = getInstanceLimiter().check(ctx.remoteAddress)
+      const limit = initInstanceLimiter().check(ctx.remoteAddress)
       if (!limit.ok) {
         const retryS = Math.ceil(limit.retryAfterMs / 1000)
         return new Response(

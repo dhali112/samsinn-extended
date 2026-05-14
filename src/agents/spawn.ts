@@ -306,10 +306,10 @@ export interface SpawnOptions {
   // fix for tool-context bloat — without it, every agent sees every tool
   // the registry has registered.
   readonly getRoomActivation?: GetRoomActivation
-  // Per-call effective-model resolver (Phase 4 / commit-pending). Forwarded
-  // verbatim into createAIAgent's options so each eval picks an effective
-  // model from the user's preferred + currently-available providers, without
-  // ever mutating the agent's stored model.
+  // Per-call effective-model resolver. Forwarded verbatim into createAIAgent's
+  // options so each eval picks an effective model from the user's preferred +
+  // currently-available providers, without ever mutating the agent's stored
+  // model.
   readonly resolveEffectiveModel?: (preferred: string) => {
     readonly model: string
     readonly fallback: boolean

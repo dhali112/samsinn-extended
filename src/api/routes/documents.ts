@@ -25,7 +25,6 @@ export const initDocumentsLimiter = (limitMetrics?: LimitMetrics): RateLimiter =
   })
   return uploadLimiter
 }
-const getUploadLimiter = (): RateLimiter => initDocumentsLimiter()
 
 const NOT_AVAILABLE = (): Response =>
   errorResponse('document corpus is not available on this instance (no embedder configured)', 503)
@@ -45,8 +44,7 @@ export const documentRoutes: RouteEntry[] = [
     handler: async (req, _match, { system, remoteAddress }) => {
       if (!system.documents) return NOT_AVAILABLE()
 
-      const limiter = getUploadLimiter()
-      const limit = limiter.check(remoteAddress)
+      const limit = initDocumentsLimiter().check(remoteAddress)
       if (!limit.ok) {
         return new Response(
           JSON.stringify({ error: 'upload rate limit exceeded' }),

@@ -29,7 +29,6 @@ export type {
   OllamaHealth, ProviderHealth, OllamaHealthExtra,
   ProviderGateway, ChatCallOptions,
 }
-export { createProviderGateway }
 
 // === Configuration ===
 
@@ -38,7 +37,7 @@ export interface OllamaGatewayConfig extends ProviderGatewayConfig {
   readonly healthPollIntervalMs: number
 }
 
-export const GATEWAY_DEFAULTS: OllamaGatewayConfig = {
+const GATEWAY_DEFAULTS: OllamaGatewayConfig = {
   ...PROVIDER_GATEWAY_DEFAULTS,
   keepAlive: '30m',
   healthPollIntervalMs: 15_000,
@@ -197,6 +196,3 @@ export const createOllamaGateway = (
     dispose,
   }
 }
-
-// Back-compat alias so existing call sites compile unchanged.
-export const createLLMGateway = createOllamaGateway

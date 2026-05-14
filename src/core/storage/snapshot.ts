@@ -300,7 +300,7 @@ const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
 // in favour of letting the janitor handle drive-by cleanup (instance-
 // cleanup.ts: demote idle → trash after 48h, purge after 7d). The auth-
 // gated prod deploy bounds drive-by traffic; one snapshot file is ~5–20KB.
-export const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
+const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
   if (snap.bookmarks && snap.bookmarks.length > 0) return false
   return snap.rooms.length === 0 && snap.agents.length === 0
 }

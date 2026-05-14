@@ -182,7 +182,7 @@ export interface System {
   readonly setOnProviderBound: (callback: OnProviderBound) => void
   readonly setOnProviderAllFailed: (callback: OnProviderAllFailed) => void
   readonly setOnProviderStreamFailed: (callback: OnProviderStreamFailed) => void
-  // Dispatch entry point for the provider router (wired in Phase 4 via
+  // Dispatch entry point for the provider router (wired by bootstrap via
   // router.onRoutingEvent(system.dispatchProviderEvent)).
   readonly dispatchProviderEvent: (event: ProviderRoutingEvent) => void
   // Summary + compression scheduler (per-room). Exposed so REST/WS can call
@@ -699,12 +699,12 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // findMissingCast defensive abort never fires).
   roomDeleted.add((roomId) => { void scriptRunner.stop(roomId) })
 
-  // --- Effective-model cache (Phase 4: derive-on-read) ---
+  // --- Effective-model cache (derive-on-read) ---
   // Cache of currently-available models from llm.models(), refreshed in the
   // background. Used by every agent's per-call effective-model resolver so the
   // hot path stays sync. Misses (cache empty / preferred unavailable) fall
-  // through to the first available model in router order — Phase 1 surfaces
-  // the failure as a typed error if even that is unreachable.
+  // through to the first available model in router order — the resolver
+  // surfaces the failure as a typed error if even that is unreachable.
   let availableModelsCache: ReadonlyArray<string> = []
   const refreshAvailableModels = async (): Promise<void> => {
     try {

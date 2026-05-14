@@ -210,5 +210,5 @@ export const createToolSurface = (deps: CreateToolSurfaceDeps): ToolSurface => {
   }
 }
 
-export { BUILT_IN_FAMILIES, FAMILY_DISPATCHER_NAMES, CORE_TOOL_NAMES } from './families.ts'
-export { STRICT_TOOL_SCHEMA_PROVIDERS, isStrictProvider, inferProviderFromModelRef } from './strict-providers.ts'
+export { FAMILY_DISPATCHER_NAMES } from './families.ts'
+export { inferProviderFromModelRef } from './strict-providers.ts'
