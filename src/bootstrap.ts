@@ -154,23 +154,25 @@ export const bootstrap = async (): Promise<void> => {
   await loadSkills(sharedPaths.skills(), shared.sharedSkillStore, shared.sharedToolRegistry)
   await loadAllPacks(sharedPaths.packs(), shared.sharedToolRegistry, shared.sharedSkillStore)
 
-  // Bundled demo tools — register into the shared registry once at boot,
-  // marked as built-in (compiled into the binary, no filesystem path).
-  // These back the Aviation Demo prompts. Keeping them in-binary avoids
-  // the rate-limit / offline failure mode of registry-pack installs.
+  // Bundled packs — compiled into the binary. Each pack's tools register
+  // with kind:'pack-bundled' + pack:<namespace> so per-room activation
+  // (room.activePacks) actually gates them. The packs themselves are
+  // declared in src/packs/bundled.ts (the BUNDLED_PACKS table — single
+  // source of truth for namespace, system flag, default-active flag).
+  //
+  // Bundled-pack tools are exempt from the `<pack>_<tool>` registry-key
+  // prefix convention that filesystem packs follow (loadToolDirectory
+  // applies the prefix; we don't go through it here). When pwr-ops
+  // graduates to a filesystem registry pack (samsinn-packs/pwr-ops),
+  // tool names will need a rename pass at that migration point.
   {
     const { BUNDLED_DEMO_TOOLS } = await import('./packs/synthetic-demos/tools/index.ts')
     for (const tool of BUNDLED_DEMO_TOOLS) {
-      shared.sharedToolRegistry.registerWithSource(tool, { kind: 'built-in' })
+      shared.sharedToolRegistry.registerWithSource(tool, { kind: 'pack-bundled', pack: 'demos', displayName: tool.name })
     }
-    // pwr-ops bundled pack — wiki-backed procedure_lookup. Same compiled-in
-    // shape as synthetic-demos; the procedure content itself is fetched
-    // fresh from samsinn-wikis/pwr-ops on each first call (5-min in-memory
-    // buffer for repeats). Future remote-pack migration drops this block
-    // and moves src/packs/pwr-ops/ into its own repo.
     const { PWR_OPS_TOOLS } = await import('./packs/pwr-ops/index.ts')
     for (const tool of PWR_OPS_TOOLS) {
-      shared.sharedToolRegistry.registerWithSource(tool, { kind: 'built-in' })
+      shared.sharedToolRegistry.registerWithSource(tool, { kind: 'pack-bundled', pack: 'pwr-ops', displayName: tool.name })
     }
   }
 

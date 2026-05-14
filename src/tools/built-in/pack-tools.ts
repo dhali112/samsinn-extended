@@ -34,6 +34,7 @@ import { loadPack } from '../../packs/loader.ts'
 import { readManifest, resolveInstallNamespace, stripPackPrefix } from '../../packs/manifest.ts'
 import { scanPacks } from '../../packs/scanner.ts'
 import { getAvailablePacks, invalidateRegistryCache } from '../../packs/registry.ts'
+import { BUNDLED_PACKS } from '../../packs/bundled.ts'
 import { formatShellError } from '../../core/redact.ts'
 import { createSerialiseChain, type SerialiseChain } from '../../core/serialise-chain.ts'
 import { stat, mkdtemp, rename, rm } from 'node:fs/promises'
@@ -599,53 +600,48 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
 
 export const createListPacksTool = (deps: PackToolsDeps): Tool => ({
   name: 'list_packs',
-  description: 'Lists all installed packs (including the synthetic system packs core + local) with their manifest and per-pack tool/skill counts. System packs are always-active and cannot be uninstalled.',
-  returns: 'Array of pack objects, each with `system: boolean` indicating whether it can be deactivated/uninstalled.',
+  description: 'Lists every pack the system knows about — bundled (compiled into the binary: core, local, demos, pwr-ops) plus any filesystem-installed packs under ~/.samsinn/packs. Each entry carries `system` (cannot be removed from a room) and `defaultActive` (auto-added to new rooms) flags.',
+  returns: 'Array of pack objects, each with `system: boolean` and `defaultActive: boolean`.',
   parameters: { type: 'object', properties: {} },
   execute: async () => {
-    const packs = await scanPacks(deps.packsDir)
+    const installedPacks = await scanPacks(deps.packsDir)
     const entries = deps.toolRegistry.listEntries()
     const skills = deps.skillStore.list()
 
-    // Synthetic system pack entries — visible in list_packs + UI alongside
-    // installed packs, but flagged `system: true` so the UI hides the
-    // uninstall + activation toggle. core covers built-ins (kind='built-in'),
-    // local covers drop-ins (kind='external') and any skill/tool whose
-    // source.pack is unset. Always-active in every room — see
-    // effectiveActivePacks() which prepends ['core', 'local'] regardless.
-    const systemBuckets: Array<{
-      namespace: 'core' | 'local'
-      manifest: { name: string; description: string }
-      kindMatch: (e: typeof entries[number]) => boolean
-      skillMatch: (s: typeof skills[number]) => boolean
-    }> = [
-      {
-        namespace: 'core',
-        manifest: { name: 'core', description: 'Built-in tools (always active, cannot be uninstalled).' },
-        kindMatch: (e) => e.source.kind === 'built-in',
-        // Skills are never built-in today; the matcher exists for symmetry.
-        skillMatch: () => false,
-      },
-      {
-        namespace: 'local',
-        manifest: { name: 'local', description: 'Drop-in tools and skills under ~/.samsinn/{tools,skills}/. Always active.' },
-        kindMatch: (e) =>
-          e.source.kind === 'external' ||
-          (e.source.kind === 'skill-bundled' && !e.source.pack),
-        skillMatch: (s) => !s.pack,
-      },
-    ]
+    // Bundled packs (core, local, demos, pwr-ops) — table-driven from
+    // src/packs/bundled.ts. Tools are matched to a namespace by
+    // packNameFor-equivalent rules:
+    //   core   ← kind:'built-in'
+    //   local  ← kind:'external', or skill-bundled with no pack
+    //   demos  ← kind:'pack-bundled', pack:'demos'
+    //   pwr-ops← kind:'pack-bundled', pack:'pwr-ops'
+    // Same decode lives in src/core/types/tool-pack.ts:packNameFor — drift
+    // between the two would surface as tools missing from a list_packs
+    // bucket. Asserted by the bundled-pack test.
+    const matchTool = (ns: string) => (e: typeof entries[number]): boolean => {
+      switch (ns) {
+        case 'core':  return e.source.kind === 'built-in'
+        case 'local': return e.source.kind === 'external' ||
+                              (e.source.kind === 'skill-bundled' && !e.source.pack)
+        default:      return e.source.kind === 'pack-bundled' && e.source.pack === ns
+      }
+    }
+    const matchSkill = (ns: string) => (s: typeof skills[number]): boolean => {
+      if (ns === 'local') return !s.pack
+      return s.pack === ns
+    }
 
-    const systemEntries = systemBuckets.map(b => ({
+    const bundledEntries = BUNDLED_PACKS.map(b => ({
       namespace: b.namespace,
-      dirPath: '',                 // not on disk — synthetic
-      manifest: b.manifest,
-      tools: entries.filter(b.kindMatch).map(e => e.tool.name),
-      skills: skills.filter(b.skillMatch).map(s => s.name),
-      system: true as const,
+      dirPath: '',                                // not on disk
+      manifest: { name: b.displayName, description: b.description },
+      tools: entries.filter(matchTool(b.namespace)).map(e => e.tool.name),
+      skills: skills.filter(matchSkill(b.namespace)).map(s => s.name),
+      system: b.system,
+      defaultActive: b.defaultActive,
     }))
 
-    const installedEntries = packs.map(p => ({
+    const installedEntries = installedPacks.map(p => ({
       namespace: p.namespace,
       dirPath: p.dirPath,
       manifest: p.manifest,
@@ -656,14 +652,14 @@ export const createListPacksTool = (deps: PackToolsDeps): Tool => ({
         .filter(s => s.pack === p.namespace)
         .map(s => s.name),
       // Surfaced for the browser-side extension reconciler. Empty/absent for
-      // packs that don't declare any. System packs (core/local) cannot
-      // declare extensions.
+      // packs that don't declare any. Bundled packs don't declare extensions.
       ui_extensions: p.manifest.ui_extensions ?? [],
-      system: false as const,
+      system: false,
+      defaultActive: false,                       // user opted in by installing
     }))
 
-    // System packs first — they're the baseline surface every room sees.
-    return { success: true, data: [...systemEntries, ...installedEntries] }
+    // Bundled packs first — that's the baseline surface for new rooms.
+    return { success: true, data: [...bundledEntries, ...installedEntries] }
   },
 })
 

@@ -14,6 +14,7 @@ import type { LLMService } from '../llm/llm-service.ts'
 import type { MessageTarget } from '../core/types/messaging.ts'
 import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult } from '../core/types/tool.ts'
 import { packNameFor } from '../core/types/tool-pack.ts'
+import { BUNDLED_PACKS } from '../packs/bundled.ts'
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import { callLLM, streamLLM } from './evaluation.ts'
@@ -243,26 +244,21 @@ export const buildToolSupport = async (
 //
 //   defaultRequestedTools  ∩  active-packs(roomId)
 //
-// We default to tools owned by implicit-active packs (core/local/welcome/
-// demos) only. Explicit pack activation is the only way to add more.
-// This replaces the prior "give the agent everything in the registry"
-// default, which combined with the now-deleted budget cap produced
-// silent tool drops in production.
+// We default to tools owned by bundled packs (system + bundled default-active:
+// core, local, demos, pwr-ops today — see src/packs/bundled.ts). Explicit
+// pack activation is the only way to add more. This replaces the prior
+// "give the agent everything in the registry" default, which combined with
+// the now-deleted budget cap produced silent tool drops in production.
 //
 // Callers that want a specific breadth declare `tools:` explicitly on the
 // AIAgentConfig. Snapshot-restored agents whose persisted config has
 // tools === undefined are backfilled at load time to preserve their
 // pre-redesign behavior (see src/core/storage/snapshot.ts).
-const IMPLICIT_ACTIVE_PACKS: ReadonlySet<string> = new Set(['core', 'local', 'demos', 'pwr-ops'])
-
 const deriveDefaultRequestedTools = (registry: ToolRegistry): ReadonlyArray<string> => {
+  const bundledNs = new Set(BUNDLED_PACKS.map(p => p.namespace))
   const out: string[] = []
   for (const entry of registry.listEntries()) {
-    const pack =
-      entry.source.kind === 'built-in' ? 'core' :
-      entry.source.kind === 'external' ? 'local' :
-      entry.source.pack ?? 'local'
-    if (IMPLICIT_ACTIVE_PACKS.has(pack)) out.push(entry.tool.name)
+    if (bundledNs.has(packNameFor(entry))) out.push(entry.tool.name)
   }
   return out
 }

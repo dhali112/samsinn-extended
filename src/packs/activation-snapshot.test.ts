@@ -90,8 +90,8 @@ describe('M3: evict-reload + cross-instance pack scrub round-trip', () => {
     const reCafe = reSerialised.rooms.find(r => r.profile.name === 'Cafe')!
     expect(reCafe.activePacks).toEqual(['menus'])
     const reOffice = reSerialised.rooms.find(r => r.profile.name === 'Office')!
-    // Empty activePacks is omitted (length 0 → not stored).
-    expect(reOffice.activePacks).toBeUndefined()
+    // v24: activePacks is always present in the snapshot, even when empty.
+    expect(reOffice.activePacks).toEqual([])
   })
 
   test('multiple scrubs queued in sequence all apply on reload', async () => {

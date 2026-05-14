@@ -122,10 +122,11 @@ export const roomRoutes: RouteEntry[] = [
     },
   },
   {
-    // Replace activation list. Validates each entry against installed packs;
-    // unknown namespaces fail the whole request (atomic — no partial sets).
-    // 'core' and 'local' are filtered from the input if present (they're
-    // always active and don't belong in the stored list).
+    // Replace activation list. Validates each entry against the known-pack
+    // set (bundled + filesystem-installed). Refuses requests that would
+    // remove a system pack the room currently has. The request is
+    // atomic — any unknown namespace or system-pack-removal aborts the
+    // whole set (no partial writes).
     method: 'PUT',
     pattern: /^\/api\/rooms\/([^/]+)\/packs$/,
     handler: async (req, match, { system, broadcastToInstance, instanceId }) => {
@@ -136,21 +137,43 @@ export const roomRoutes: RouteEntry[] = [
       const requested = Array.isArray(body?.activePacks)
         ? (body!.activePacks as unknown[]).filter((v): v is string => typeof v === 'string')
         : []
-      const filtered = requested.filter(p => p !== 'core' && p !== 'local')
 
-      // Validate against installed packs via the list_packs tool — same
-      // truth source the UI uses, no parallel scanner.
+      // Validate every requested namespace against list_packs — same
+      // truth source the UI uses, no parallel scanner. list_packs now
+      // includes bundled packs (core, local, demos, pwr-ops) so demo
+      // modal PUTs of ['pwr-ops', ...] validate cleanly.
       const listTool = system.toolRegistry.get('list_packs')
-      const installed = listTool
+      const listed = listTool
         ? await listTool.execute({}, { callerId: 'api', callerName: 'api' })
         : { success: false }
-      const installedSet = installed.success && Array.isArray(installed.data)
-        ? new Set((installed.data as Array<{ namespace: string }>).map(p => p.namespace))
-        : new Set<string>()
-      const unknown = filtered.filter(ns => !installedSet.has(ns))
+      const known = listed.success && Array.isArray(listed.data)
+        ? (listed.data as Array<{ namespace: string; system: boolean }>)
+        : []
+      const knownSet = new Set(known.map(p => p.namespace))
+      const systemSet = new Set(known.filter(p => p.system).map(p => p.namespace))
+
+      const unknown = requested.filter(ns => !knownSet.has(ns))
       if (unknown.length > 0) return errorResponse(`unknown pack namespaces: ${unknown.join(', ')}`, 400)
 
-      room.setActivePacks(filtered)
+      // Auto-include system packs if the client omitted them. Treats the
+      // request as "everything the user wants active among non-system
+      // packs" + the always-on system layer. Prevents the UI from having
+      // to remember to include core/local in every PUT.
+      const requestedSet = new Set(requested)
+      const next = [...systemSet, ...requested.filter(ns => !systemSet.has(ns))]
+
+      // Sanity: if the current room state has a system pack the request
+      // explicitly omitted, the merge above re-adds it. Loud-log if this
+      // ever surfaces (it would indicate a UI that's stripping system
+      // packs deliberately — bug, not a feature).
+      const current = new Set(room.getActivePacks())
+      for (const sys of systemSet) {
+        if (current.has(sys) && !requestedSet.has(sys)) {
+          console.warn(`[packs] PUT /api/rooms/${name}/packs omitted system pack "${sys}"; re-added`)
+        }
+      }
+
+      room.setActivePacks(next)
       // Per-instance state — pack activation is scoped to one tenant's room.
       // The previous global `broadcast(...)` fanned out to every connected
       // tenant; their UI handlers no-oped on unfamiliar roomId but the
@@ -158,7 +181,7 @@ export const roomRoutes: RouteEntry[] = [
       // typed optional (MCP-mode shape compatibility); pack-activation
       // routes only register in HTTP mode where it's always wired.
       try {
-        broadcastToInstance?.(instanceId, { type: 'pack_activation_changed', roomId: room.profile.id, activePacks: filtered })
+        broadcastToInstance?.(instanceId, { type: 'pack_activation_changed', roomId: room.profile.id, activePacks: next })
       } catch { /* ignore */ }
       return json({ activePacks: room.getActivePacks() })
     },

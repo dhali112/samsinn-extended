@@ -34,6 +34,7 @@ import { DEFAULT_SUMMARY_CONFIG } from '../types/summary.ts'
 import { SYSTEM_SENDER_ID } from '../types/constants.ts'
 import { parseAddressedAgents } from './addressing.ts'
 import { deliverBroadcast } from './delivery-modes.ts'
+import { defaultActiveNamespaces } from '../../packs/bundled.ts'
 
 export interface RoomCallbacks {
   readonly deliver?: DeliverFn
@@ -78,7 +79,10 @@ export const createRoom = (
   let paused = false
   let summaryConfig: SummaryConfig = DEFAULT_SUMMARY_CONFIG
   let latestSummary: string | undefined
-  let activePacks: ReadonlyArray<string> = []
+  // Seed with the default-active bundled packs (core, local, demos, pwr-ops
+  // today). Restore paths overwrite via restoreState({ activePacks: ... }).
+  // Snapshot.serialize captures the full list — no implicit augmentation.
+  let activePacks: ReadonlyArray<string> = defaultActiveNamespaces()
 
   // --- Eligible set: members minus user-muted ---
 
@@ -281,7 +285,9 @@ export const createRoom = (
       members: [...members],
       summaryConfig,
       ...(latestSummary ? { latestSummary } : {}),
-      ...(activePacks.length > 0 ? { activePacks: [...activePacks] } : {}),
+      // Always include — under v24 semantics activePacks is the full truth,
+      // including the empty case ("user deactivated everything").
+      activePacks: [...activePacks],
     }),
 
     getActivePacks: (): ReadonlyArray<string> => activePacks,
@@ -351,7 +357,10 @@ export const createRoom = (
       }
       if (state.summaryConfig) summaryConfig = state.summaryConfig
       if (state.latestSummary !== undefined) latestSummary = state.latestSummary
-      if (state.activePacks) activePacks = [...state.activePacks]
+      // Unconditional apply — v24+ snapshots always carry activePacks
+      // (the full truth, including empty). The createRoom default-active
+      // seed is purely for fresh in-memory rooms; restore overwrites.
+      activePacks = state.activePacks ? [...state.activePacks] : []
     },
   }
 }

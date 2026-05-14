@@ -1,7 +1,11 @@
 // Verifies the pack-aware tool surface filter — the structural fix for
-// tool-context bloat. An agent in a room with no activated packs sees only
-// 'core' (built-in) and 'local' (external) tools; activating a pack adds
-// only its own tools.
+// tool-context bloat. An agent in a room with only system packs (core, local)
+// active sees core/local tools; activating a pack adds only its own tools.
+//
+// v24 note: room.activePacks is the COMPLETE truth (no implicit augmentation).
+// A real room created via createRoom is seeded with bundled defaults
+// (core/local/demos/pwr-ops) — these tests construct rooms by hand so they
+// must include the relevant pack namespaces explicitly.
 
 import { describe, expect, test } from 'bun:test'
 import { buildToolSupport } from './spawn.ts'
@@ -23,7 +27,7 @@ const stubProvider = {} as unknown as LLMProvider
 const makeRoom = (activePacks: string[]) => ({ getActivePacks: () => activePacks })
 
 describe('pack-aware tool surface filter', () => {
-  test('with no activation, agent sees core (built-in) + local (external) only', async () => {
+  test('with only system packs active, agent sees core (built-in) + local (external) only', async () => {
     const registry = createToolRegistry()
     registry.registerWithSource(okTool('core_tool'), { kind: 'built-in' })
     registry.registerWithSource(okTool('local_tool'), { kind: 'external', path: '/x.ts' })
@@ -40,7 +44,7 @@ describe('pack-aware tool surface filter', () => {
       { id: 'a', name: 'Alice' },
       stubProvider,
       undefined,
-      (roomId: string) => roomId === 'r1' ? makeRoom([]) : undefined,
+      (roomId: string) => roomId === 'r1' ? makeRoom(['core', 'local']) : undefined,
     )
 
     expect(support.resolveToolDefinitions).toBeDefined()
@@ -70,7 +74,7 @@ describe('pack-aware tool surface filter', () => {
       { id: 'a', name: 'Alice' },
       stubProvider,
       undefined,
-      (roomId: string) => roomId === 'tower' ? makeRoom(['aviation']) : undefined,
+      (roomId: string) => roomId === 'tower' ? makeRoom(['core', 'local', 'aviation']) : undefined,
     )
 
     const defs = support.resolveToolDefinitions!('tower')

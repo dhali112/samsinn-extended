@@ -29,9 +29,11 @@ const okTool = (name: string): Tool => ({
 const stubProvider = {} as unknown as LLMProvider
 
 describe('pack activation — end-to-end with House + Room', () => {
-  test('agent in fresh room sees only core + local tools, no pack tools', async () => {
+  test('fresh room: agent sees bundled-pack tools (core/local/demos/pwr-ops) but not unrelated registry packs', async () => {
     const house = createHouse({})
     const room = house.createRoom({ name: 'Cafe', createdBy: SYSTEM_SENDER_ID })
+    // v24: fresh room is seeded with default-active bundled packs.
+    expect([...room.getActivePacks()].sort()).toEqual(['core', 'demos', 'local', 'pwr-ops'])
     const reg = createToolRegistry()
 
     reg.registerWithSource(okTool('builtin_a'), { kind: 'built-in' })
@@ -78,13 +80,13 @@ describe('pack activation — end-to-end with House + Room', () => {
       (id: string) => house.getRoom(id),
     )
 
-    // Empty activation → only built-in.
+    // Default-seeded activePacks (bundled defaults) → only built-in matches.
     const before = (support.resolveToolDefinitions!(room.profile.id) ?? []).map(d => d.function.name).sort()
     expect(before).toContain('builtin_a')
     expect(before).not.toContain('av_atc')
 
-    // Flip activation.
-    room.setActivePacks(['aviation'])
+    // Add aviation on top of the defaults.
+    room.setActivePacks([...room.getActivePacks(), 'aviation'])
 
     // Next resolve sees the change without any explicit invalidation —
     // the resolver is pure over (room state, registry).
@@ -92,8 +94,8 @@ describe('pack activation — end-to-end with House + Room', () => {
     expect(after).toContain('builtin_a')
     expect(after).toContain('av_atc')
 
-    // Flip back.
-    room.setActivePacks([])
+    // Remove aviation again (drop back to bundled defaults).
+    room.setActivePacks(room.getActivePacks().filter(p => p !== 'aviation'))
     const reset = (support.resolveToolDefinitions!(room.profile.id) ?? []).map(d => d.function.name).sort()
     expect(reset).not.toContain('av_atc')
   })
@@ -132,12 +134,14 @@ describe('pack activation — end-to-end with House + Room', () => {
     expect(cafeSurf).not.toContain('av_atc')
   })
 
-  test('effectiveActivePacks is order-stable: implicit packs first, explicit appended', () => {
+  test('effectiveActivePacks is a passthrough — what the room says is what you get', () => {
     const house = createHouse({})
     const room = house.createRoom({ name: 'X', createdBy: SYSTEM_SENDER_ID })
+    // Fresh room is seeded with bundled defaults — verify the order matches
+    // BUNDLED_PACKS in src/packs/bundled.ts.
     expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'demos', 'pwr-ops'])
     room.setActivePacks(['z', 'a'])
-    expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'demos', 'pwr-ops', 'z', 'a'])
+    expect(effectiveActivePacks(room)).toEqual(['z', 'a'])
   })
 
   test('snapshot-style restore round-trips activePacks', () => {

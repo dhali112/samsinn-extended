@@ -35,8 +35,8 @@ export interface GeoToolsDeps {
   readonly getActivePacks?: (roomId: string) => ReadonlyArray<string> | undefined
 }
 
-const IMPLICIT_ACTIVE = ['core', 'local'] as const
-
+// v24: room.activePacks is the COMPLETE truth — system packs (core, local)
+// are present explicitly, no implicit augmentation here.
 const buildActiveSet = (
   deps: GeoToolsDeps | undefined,
   roomId: string | undefined,
@@ -44,7 +44,7 @@ const buildActiveSet = (
   if (!deps?.getActivePacks || !roomId) return undefined
   const explicit = deps.getActivePacks(roomId)
   if (!explicit) return undefined
-  return new Set([...IMPLICIT_ACTIVE, ...explicit])
+  return new Set(explicit)
 }
 
 const featureToEnvelope = (f: GeoFeature, icon: MarkerIcon | undefined): MapEnvelopeFromGeo['features'][number] => {

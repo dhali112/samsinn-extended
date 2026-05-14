@@ -52,11 +52,11 @@ export interface RoomState {
   readonly members: ReadonlyArray<string>
   readonly summaryConfig?: SummaryConfig
   readonly latestSummary?: string
-  // Pack namespaces activated in this room. Empty = no installed packs are
-  // active here (agent tool/skill/script surface = core + local only).
-  // Implicit-active packs ("core", "local") are NOT listed — they're always
-  // included by the resolver. See effectiveActivePacks() in src/packs/activation.ts.
-  readonly activePacks?: ReadonlyArray<string>
+  // Pack namespaces activated in this room — the COMPLETE truth as of v24.
+  // Includes system packs (core, local) and bundled default-active packs
+  // (demos, pwr-ops). No implicit augmentation at read time. Empty list is
+  // valid ("user has deactivated everything") and distinguishable from absent.
+  readonly activePacks: ReadonlyArray<string>
 }
 
 // === Room — self-contained component: stores messages and delivers to members ===
@@ -111,10 +111,11 @@ export interface Room {
   // Current `room_summary` at top of stream, if any.
   readonly getCurrentCompressionMessage: () => Message | undefined
 
-  // Active packs — namespaces of installed packs activated in this room.
-  // Default empty: agent sees core + local only (no bloat). Activation is
-  // additive across the persistent surface; "core" and "local" are implicit
-  // and not stored here.
+  // Active packs — the COMPLETE namespace list of packs active in this room
+  // (v24+). Includes system packs (core, local) and bundled default-active
+  // packs. New rooms get defaultActiveNamespaces() seeded at construction
+  // (see src/packs/bundled.ts). The activation route enforces that system
+  // packs can never be dropped from this list.
   readonly getActivePacks: () => ReadonlyArray<string>
   readonly setActivePacks: (namespaces: ReadonlyArray<string>) => void
 

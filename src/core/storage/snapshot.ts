@@ -7,6 +7,13 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
+// v24: current. Unifies the pack-activation model — room.activePacks is now
+//   the COMPLETE per-room pack list including system packs (core, local) and
+//   bundled default-active packs (demos, pwr-ops). The prior IMPLICIT_ACTIVE
+//   resolver is gone; what the snapshot says is what the room has. Always
+//   serialised (was previously omitted-when-empty). v23 rejected at load
+//   (clean break per repo policy — no migration shim).
+// v23 (predecessor): RAG-foundation state.
 // v22: current. Adds RAG-foundation state at the system level:
 //   - `embedderBinding` — once any per-instance embedding ingestion runs
 //     (memory fold or document upload), the instance commits to a
@@ -78,7 +85,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 23
+export const SNAPSHOT_VERSION = 24
 
 // --- Snapshot schema ---
 
@@ -92,9 +99,12 @@ export interface RoomSnapshot {
   readonly compressedIds?: ReadonlyArray<string>
   readonly summaryConfig?: SummaryConfig
   readonly latestSummary?: string
-  // Pack namespaces activated in this room. Implicit-active packs ('core',
-  // 'local') are NOT stored — they're always included by the resolver.
-  readonly activePacks?: ReadonlyArray<string>
+  // Pack namespaces activated in this room — the COMPLETE truth (v24+).
+  // Includes system packs (core, local) and bundled default-active packs
+  // (demos, pwr-ops). Always present; empty list is valid and meaningful
+  // ("user has deactivated every pack including system-suggested ones",
+  // though the activation route guards against removing system packs).
+  readonly activePacks: ReadonlyArray<string>
 }
 
 export interface AgentSnapshot {
@@ -147,7 +157,7 @@ export interface DocumentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '23'
+  readonly version: '24'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -213,7 +223,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       compressedIds: room.getCompressedIds().size > 0 ? [...room.getCompressedIds()] : undefined,
       summaryConfig: room.summaryConfig,
       ...(state.latestSummary ? { latestSummary: state.latestSummary } : {}),
-      ...(room.getActivePacks().length > 0 ? { activePacks: [...room.getActivePacks()] } : {}),
+      activePacks: [...room.getActivePacks()],
     })
   }
 
@@ -244,7 +254,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const responseFormat = system.house.getResponseFormat()
 
   return {
-    version: '23',
+    version: '24',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -428,9 +438,7 @@ export const restoreFromSnapshot = async (
   for (const roomSnap of snapshot.rooms) {
     const room = system.house.restoreRoom(roomSnap.profile)
     room.injectMessages(roomSnap.messages)
-    const filteredActive = roomSnap.activePacks
-      ? roomSnap.activePacks.filter(ns => !scrubbed.has(ns))
-      : undefined
+    const filteredActive = roomSnap.activePacks.filter(ns => !scrubbed.has(ns))
     room.restoreState({
       members: roomSnap.members,
       muted: roomSnap.muted,
@@ -439,7 +447,7 @@ export const restoreFromSnapshot = async (
       compressedIds: roomSnap.compressedIds,
       ...(roomSnap.summaryConfig ? { summaryConfig: roomSnap.summaryConfig } : {}),
       ...(roomSnap.latestSummary ? { latestSummary: roomSnap.latestSummary } : {}),
-      ...(filteredActive ? { activePacks: filteredActive } : {}),
+      activePacks: filteredActive,
     })
     roomMap.set(room.profile.id, room)
   }

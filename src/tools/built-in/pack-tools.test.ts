@@ -392,7 +392,7 @@ describe('list_packs', () => {
   let parent: string
   afterEach(async () => { if (parent) await rm(parent, { recursive: true, force: true }) })
 
-  it('returns installed packs with their tool/skill keys, prefixed by synthetic system packs', async () => {
+  it('returns the four bundled packs (core/local/demos/pwr-ops) followed by any filesystem-installed packs', async () => {
     const env = await makeDeps()
     parent = env.parent
     const url = await buildRepo(env.parent, 'atc')
@@ -405,29 +405,37 @@ describe('list_packs', () => {
       namespace: string
       tools: string[]
       skills: string[]
-      system?: boolean
+      system: boolean
+      defaultActive: boolean
     }>
 
-    // Two synthetic system packs (core, local) followed by the installed
-    // 'atc' pack. System packs are first so the UI surfaces the always-on
-    // baseline before user-controlled entries.
-    expect(data.map(p => p.namespace)).toEqual(['core', 'local', 'atc'])
+    // v24: bundled packs first (table-driven from src/packs/bundled.ts),
+    // then filesystem-installed packs.
+    expect(data.map(p => p.namespace)).toEqual(['core', 'local', 'demos', 'pwr-ops', 'atc'])
 
-    expect(data[0]?.system).toBe(true)
-    expect(data[1]?.system).toBe(true)
-    expect(data[2]?.system).toBe(false)
+    // System flag: only core and local.
+    expect(data.find(p => p.namespace === 'core')?.system).toBe(true)
+    expect(data.find(p => p.namespace === 'local')?.system).toBe(true)
+    expect(data.find(p => p.namespace === 'demos')?.system).toBe(false)
+    expect(data.find(p => p.namespace === 'pwr-ops')?.system).toBe(false)
+    expect(data.find(p => p.namespace === 'atc')?.system).toBe(false)
+
+    // defaultActive flag: all four bundled packs are default-active; the
+    // installed pack isn't (operator opted in by installing).
+    expect(data.find(p => p.namespace === 'core')?.defaultActive).toBe(true)
+    expect(data.find(p => p.namespace === 'demos')?.defaultActive).toBe(true)
+    expect(data.find(p => p.namespace === 'pwr-ops')?.defaultActive).toBe(true)
+    expect(data.find(p => p.namespace === 'atc')?.defaultActive).toBe(false)
 
     // The installed pack reports its own tools/skills correctly.
-    expect(data[2]?.namespace).toBe('atc')
-    expect(data[2]?.tools).toEqual(['atc_ping'])
-    expect(data[2]?.skills).toEqual(['atc/demo'])
+    const atc = data.find(p => p.namespace === 'atc')!
+    expect(atc.tools).toEqual(['atc_ping'])
+    expect(atc.skills).toEqual(['atc/demo'])
 
     // System pack tool/skill counts depend on what the test's tool registry
     // contains — makeDeps doesn't pre-load built-ins or external dropins,
     // so core/local should be empty here. (Production has the full set.)
-    expect(data[0]?.tools).toEqual([])
-    expect(data[0]?.skills).toEqual([])
-    expect(data[1]?.tools).toEqual([])
-    expect(data[1]?.skills).toEqual([])
+    expect(data.find(p => p.namespace === 'core')?.tools).toEqual([])
+    expect(data.find(p => p.namespace === 'local')?.tools).toEqual([])
   })
 })
