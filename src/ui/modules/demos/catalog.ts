@@ -39,19 +39,34 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
     requiredTools: ['procedure_lookup', 'procedure_search', 'wiki_lookup', 'eal_classify'],
     prompts: [
       {
-        label: 'Fetch E-0 + flowchart',
-        description: 'Show procedure E-0 as a numbered step list plus a mermaid decision flowchart.',
-        prompt: 'Use the procedure_lookup tool to fetch procedure E-0 and show me a numbered step list plus a mermaid flowchart of the decision flow.',
+        label: 'E-0 → E-3 transition criteria',
+        description: 'Decision points and criteria for the transfer from E-0 (reactor trip) to E-3 (SGTR), as a diagram.',
+        prompt: 'Use procedure_lookup to fetch E-0 then E-3. Explain the decision points and decision criteria for the transfer from E-0 to E-3 — which step in E-0 triggers the branch, what symptoms qualify, what disqualifies it (faulted SG vs. ruptured SG), and what E-3 does first. Show the relevant steps as a mermaid flowchart.',
       },
       {
-        label: 'Search "loss of coolant"',
-        description: 'BM25 keyword search across all EOPs for matching procedures.',
-        prompt: 'Use the procedure_search tool to search the procedure wiki for "loss of coolant" and show me the top 5 matches with their titles and brief snippets.',
+        label: 'SGTR recovery: pick ECA-3.1 vs 3.2 vs 3.3',
+        description: 'Cross-procedure: how the operator chooses between the three SGTR recovery paths.',
+        prompt: 'Use procedure_lookup with mode=summary to fetch E-3, then ECA-3.1, then ECA-3.2, then ECA-3.3 (four calls). Then produce a mermaid flowchart showing how an operator decides between the three recovery procedures once an SGTR is confirmed in E-3. Label each branch with the actual entry criterion (subcooling margin state, pressurizer pressure control, etc.) drawn from the procedures.',
       },
       {
-        label: 'EAL classify SGTR',
+        label: 'Diagnose E-1 vs E-2 vs E-3 from E-0',
+        description: 'How E-0 distinguishes a LOCA, a faulted SG, and a ruptured SG.',
+        prompt: 'Use procedure_lookup to fetch E-0, E-1, E-2, and E-3 (mode=summary is fine). Then explain how an operator in E-0 distinguishes between transitioning to E-1 (LOCA), E-2 (faulted SG), and E-3 (SGTR) — which symptoms point to which procedure, and what the disambiguation order is. Render the decision tree as a mermaid flowchart.',
+      },
+      {
+        label: 'Station-blackout vs E-0',
+        description: 'What in E-0 becomes unavailable under ECA-0.0, and how the procedure copes.',
+        prompt: 'Use procedure_lookup to fetch E-0 and ECA-0.0. Identify the E-0 verification steps that cannot be performed once both AC trains are de-energized (e.g. ECCS, Phase-A isolation, charging pumps), and explain what ECA-0.0 substitutes (TDAFW, natural circulation, DC load shedding, RCP seal-LOCA risk). Summarise as a side-by-side table plus a short mermaid diagram of the SBO coping timeline.',
+      },
+      {
+        label: 'CSF red-path priority',
+        description: 'Compare the five red-path Function Restoration procedures.',
+        prompt: 'Use procedure_lookup to fetch FR-S.1, FR-C.1, FR-H.1, FR-P.1, and FR-Z.1 (mode=summary). Build a comparison table with columns: CSF, entry trigger, first immediate action, and the EOP it would override. Then explain in 2-3 sentences why CSF status trees take priority over the active EOP, and render a mermaid diagram showing how a red-path CSF interrupts the running E-procedure.',
+      },
+      {
+        label: 'EAL classify SGTR scenario',
         description: 'Classify a steam-generator-tube-rupture scenario against NEI 99-01 EALs.',
-        prompt: 'Use the eal_classify tool to classify a scenario where a steam generator tube rupture (SGTR) is detected with primary-to-secondary leakage of 50 gpm. What EAL class does this map to?',
+        prompt: 'Use the eal_classify tool to classify a scenario where a steam generator tube rupture is detected with primary-to-secondary leakage of 50 gpm and rising secondary-side radiation on SG-B. What EAL class does this map to, and why?',
       },
       {
         label: 'Reference: Tag catalogue index',
