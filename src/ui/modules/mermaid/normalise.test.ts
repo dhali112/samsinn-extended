@@ -19,6 +19,10 @@ describe('normaliseMermaidSource — trailing semicolons', () => {
 })
 
 describe('normaliseMermaidSource — bracket label quoting', () => {
+  // Policy: always quote bracket-delimited bodies (unless already quoted).
+  // Mermaid accepts quoted labels everywhere, so this is the safe uniform
+  // rewrite — no character allowlist to maintain.
+
   it('quotes [body] containing /', () => {
     expect(normaliseMermaidSource('D[Divert / Abort]'))
       .toBe('D["Divert / Abort"]')
@@ -34,18 +38,20 @@ describe('normaliseMermaidSource — bracket label quoting', () => {
       .toBe('E("foo#bar")')
   })
 
-  it('leaves plain bodies alone', () => {
-    expect(normaliseMermaidSource('A[Start]')).toBe('A[Start]')
-    expect(normaliseMermaidSource('B{Decision}')).toBe('B{Decision}')
-    expect(normaliseMermaidSource('C(Process)')).toBe('C(Process)')
+  it('always quotes — even plain bodies (uniform rewrite policy)', () => {
+    expect(normaliseMermaidSource('A[Start]')).toBe('A["Start"]')
+    expect(normaliseMermaidSource('B{Decision}')).toBe('B{"Decision"}')
+    expect(normaliseMermaidSource('C(Process)')).toBe('C("Process")')
   })
 
   it('does not double-quote already-quoted bodies', () => {
     expect(normaliseMermaidSource('D["Divert / Abort"]'))
       .toBe('D["Divert / Abort"]')
+    expect(normaliseMermaidSource('A["Already quoted"]'))
+      .toBe('A["Already quoted"]')
   })
 
-  it('quotes when body has leading whitespace before a special char', () => {
+  it('trims whitespace inside the brackets', () => {
     expect(normaliseMermaidSource('X[ foo/bar ]'))
       .toBe('X["foo/bar"]')
   })
@@ -143,11 +149,35 @@ describe('normaliseMermaidSource — edge cases', () => {
     expect(out).not.toMatch(/n\d+\["https/)
   })
 
-  it('leaves pipe edge labels alone (regression for the procedure_lookup bug)', () => {
+  it('leaves already-quoted pipe edge labels alone', () => {
     const src = 'A --> B\nA -->|"If x: continue"| B'
     const out = normaliseMermaidSource(src)
     expect(out).toContain('-->|"If x: continue"|')
     expect(out).not.toMatch(/n\d+\["If x: continue"\]/)
+  })
+
+  it('quotes pipe edge labels (SGTR diagram regression — slashes, semicolons, parens, degree signs)', () => {
+    // Exact shape the LLM produced for the E-3 / ECA-3.1/3.2/3.3 decision
+    // diagram on prod — pipe labels with slashes, semicolons, parens, and
+    // a degree sign. Pre-fix, mermaid rejected this and the fallback fired.
+    const src = `flowchart TD
+  B -->|PORVs PORV-456A / PORV-456B stuck or unresponsive; PT-455 drifting uncontrollably| C[ECA-3.3]
+  D -->|SUB-MARGIN >= 30 degC at lowest cold-leg (and core exit)| E[ECA-3.1]`
+    const out = normaliseMermaidSource(src)
+    expect(out).toContain('-->|"PORVs PORV-456A / PORV-456B stuck or unresponsive; PT-455 drifting uncontrollably"|')
+    expect(out).toContain('-->|"SUB-MARGIN >= 30 degC at lowest cold-leg (and core exit)"|')
+  })
+
+  it('always quotes pipe edge labels — even plain text (uniform rewrite policy)', () => {
+    expect(normaliseMermaidSource('A -->|simple label| B'))
+      .toBe('A -->|"simple label"| B')
+  })
+
+  it('does not double-quote already-quoted pipe edge labels', () => {
+    const src = 'A -->|"already quoted / with slash"| B'
+    const out = normaliseMermaidSource(src)
+    expect(out).toContain('-->|"already quoted / with slash"|')
+    expect(out).not.toContain('""')
   })
 })
 
