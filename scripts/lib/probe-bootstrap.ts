@@ -7,12 +7,16 @@
 //   3. Pick a target instance + return the cookie string ready for use.
 //
 // Centralizing here means both scripts share the SAME instance-selection
-// behavior. As of the post-deploy gate work (plan #3), the rule is:
-//   * The probe MUST issue a fresh cookie / use a fresh instance, NEVER
-//     evict or otherwise interfere with a real user's session.
-//   * Because the registry's getOrLoad is the only path that materializes
-//     an instance, just pointing a fresh cookie at a fresh id is enough —
-//     the first /api/system/diagnostics or WS upgrade triggers the load.
+// behavior. Rules:
+//   * The probe MUST use a fresh instance, NEVER evict or otherwise
+//     interfere with a real user's session.
+//   * Post f2eda78 (F1–F5 cookieless-instance hardening), pointing a
+//     made-up cookie at a made-up id no longer materializes anything —
+//     F3 soft-expires unknown ids and mints a server-chosen one,
+//     returning Set-Cookie. The probe sends a seed cookie to trigger
+//     F3 and CAPTURES the server-issued cookie for all subsequent
+//     requests. F5 (cookieless /api/* → 401) is satisfied because the
+//     seed request still carries a cookie.
 // ============================================================================
 
 const SESSION_COOKIE_PREFIX = 'samsinn_session='
@@ -69,15 +73,27 @@ export const bootstrapProbe = async (opts: BootstrapOptions): Promise<ProbeConte
   const sessionCookie = token ? await authenticate(baseUrl, token) : undefined
 
   if (target === 'fresh') {
-    const instance = generateProbeInstanceId()
-    const cookie = sessionCookie
-      ? `${sessionCookie}; ${INSTANCE_COOKIE_PREFIX}${instance}`
-      : `${INSTANCE_COOKIE_PREFIX}${instance}`
-    // Materialize the instance by hitting any cookie-aware endpoint.
-    // /api/rooms triggers registry.getOrLoad through the per-request cookie
-    // resolution in server.ts.
-    const warm = await fetch(`${baseUrl}/api/rooms`, { headers: { Cookie: cookie } })
+    // Send a fresh probe-id cookie. The server's F3 stale-cookie soft-
+    // expiry fires (the id isn't on disk), mints a new id, materializes
+    // the instance via getOrLoad, and returns Set-Cookie with the real
+    // id. We capture that and use it for every subsequent request — the
+    // probe's intent ("give me a fresh instance") is satisfied; the
+    // server, not the probe, picks the final id. The 'probe' prefix was
+    // useful for journal-greppability before F3; now the server-minted
+    // id is authoritative and the prefix is moot.
+    const seedInstance = generateProbeInstanceId()
+    const seedCookie = sessionCookie
+      ? `${sessionCookie}; ${INSTANCE_COOKIE_PREFIX}${seedInstance}`
+      : `${INSTANCE_COOKIE_PREFIX}${seedInstance}`
+    const warm = await fetch(`${baseUrl}/api/rooms`, { headers: { Cookie: seedCookie } })
     if (!warm.ok) fail(`probe instance warmup ${warm.status}`)
+    const issued = warm.headers
+      .getSetCookie()
+      .find(c => c.startsWith(`${INSTANCE_COOKIE_PREFIX}`))
+      ?.split(';')[0]
+    if (!issued) fail('probe warmup did not return a samsinn_instance Set-Cookie (F3 soft-expiry expected to fire)')
+    const instance = issued!.slice(INSTANCE_COOKIE_PREFIX.length)
+    const cookie = sessionCookie ? `${sessionCookie}; ${issued}` : issued!
     return { baseUrl, wsBaseUrl, cookie, instance, sessionCookie }
   }
 

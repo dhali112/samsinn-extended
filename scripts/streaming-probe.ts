@@ -217,36 +217,24 @@ const main = async (): Promise<void> => {
     return
   }
 
-  // Evict the probe instance via the cookie-bound endpoint, wait for
-  // diagnostics to confirm it's gone (or at least that the registry no
-  // longer reports it as live), then run a second eval — which forces
-  // lazy-reload via restoreFromSnapshot.
+  // Evict the probe instance via the cookie-bound endpoint, then run a
+  // second eval — which forces lazy-reload via restoreFromSnapshot.
+  //
+  // We used to poll /api/system/diagnostics here to confirm the instance
+  // dropped from the registry, but post f2eda78 that's a contradiction:
+  // any cookie naming the just-evicted id triggers F3/getOrLoad and
+  // re-materialises the instance. The /api/system/evict response is
+  // already authoritative; Run 2 below is the actual regression check
+  // (it fails loud if reload didn't re-wire the agent-state subscription).
   console.log('\n=== evict ===')
   const evictRes = await fetch(`${ctx.baseUrl}/api/system/evict`, {
     method: 'POST',
     headers: { Cookie: ctx.cookie },
   })
   if (!evictRes.ok) fail(1, `/api/system/evict ${evictRes.status}: ${await evictRes.text()}`)
-  console.log(`evicted: ${(await evictRes.json() as { evicted: boolean }).evicted}`)
-
-  // Wait for diagnostics to no longer report this instance.
-  // tryGetLive returns undefined for evicted instances, so registry.list()
-  // omits them. Poll up to 3s.
-  const pollDeadline = Date.now() + 3_000
-  let stillLive = true
-  while (Date.now() < pollDeadline) {
-    const diagRes = await fetch(`${ctx.baseUrl}/api/system/diagnostics`, {
-      headers: ctx.sessionCookie ? { Cookie: ctx.sessionCookie } : {},
-    })
-    if (diagRes.ok) {
-      const diag = await diagRes.json() as { instances: Array<{ id: string }> }
-      stillLive = diag.instances.some(i => i.id === ctx.instance)
-      if (!stillLive) break
-    }
-    await new Promise(r => setTimeout(r, 100))
-  }
-  if (stillLive) fail(1, 'evict did not drop instance from registry within 3s')
-  console.log('confirmed: instance dropped from registry')
+  const { evicted } = await evictRes.json() as { evicted: boolean }
+  if (!evicted) fail(1, '/api/system/evict returned evicted:false')
+  console.log('evicted: true')
 
   // Run 2 — post-reload. This is the regression check. The instance
   // gets lazy-reloaded by /api/rooms inside ensureSeeded → registry
