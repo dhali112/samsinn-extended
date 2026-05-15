@@ -41,6 +41,7 @@ interface ThinkingDeps {
   readonly $agentWarnings: MapStore<Record<string, string[]>>
   readonly $thinkingTools: MapStore<Record<string, string>>
   readonly $thinkingPreviews: MapStore<Record<string, string>>
+  readonly $pendingToolCheckins: MapStore<Record<string, { iterations: number; roomId: string; recentTools: ReadonlyArray<{ tool: string; success: boolean }> }>>
   readonly $selectedRoomId: ReadableAtom<string | null>
   readonly $visibleThinkingIndicators: ReadableAtom<ReadonlyArray<IndicatorState>>
   readonly showContextModal: (context: AgentContext, warnings?: string[]) => void
@@ -55,7 +56,7 @@ interface ThinkingController {
 export const createThinkingController = (deps: ThinkingDeps): ThinkingController => {
   const {
     messagesDiv, send,
-    $agentContexts, $agentWarnings, $thinkingTools, $thinkingPreviews,
+    $agentContexts, $agentWarnings, $thinkingTools, $thinkingPreviews, $pendingToolCheckins,
     $visibleThinkingIndicators,
     showContextModal,
   } = deps
@@ -120,6 +121,8 @@ export const createThinkingController = (deps: ThinkingDeps): ThinkingController
     if (agentId in ctxs) { delete ctxs[agentId]; $agentContexts.set(ctxs) }
     const warns = { ...$agentWarnings.get() }
     if (agentId in warns) { delete warns[agentId]; $agentWarnings.set(warns) }
+    const checkins = { ...$pendingToolCheckins.get() }
+    if (agentId in checkins) { delete checkins[agentId]; $pendingToolCheckins.set(checkins) }
   }
 
   // Reconcile DOM against the current visible-indicators set. Called by

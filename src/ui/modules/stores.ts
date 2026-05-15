@@ -189,6 +189,19 @@ export const $agentContexts = map<Record<string, AgentContext>>({})
 /** agentId → accumulated warnings from current generation */
 export const $agentWarnings = map<Record<string, string[]>>({})
 
+/**
+ * agentId → pending tool-iteration check-in. The agent's tool loop has
+ * paused awaiting user input ("Continue" or "Stop"). Cleared when the
+ * agent goes idle or the user resolves the prompt. At most one pending
+ * checkin per agent — newer events replace older ones for the same agent.
+ */
+export interface PendingToolCheckin {
+  readonly iterations: number
+  readonly roomId: string
+  readonly recentTools: ReadonlyArray<{ readonly tool: string; readonly success: boolean }>
+}
+export const $pendingToolCheckins = map<Record<string, PendingToolCheckin>>({})
+
 /** messageId → context snapshot (transferred from $agentContexts when message arrives) */
 export const $messageContexts = map<Record<string, AgentContext>>({})
 

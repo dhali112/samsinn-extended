@@ -187,6 +187,21 @@ export const createAIAgent = (
   // Active abort controller for stream cancellation
   let activeAbortController: AbortController | null = null
 
+  // Tool-iteration check-in registry. Keyed by triggerRoomId — at most one
+  // in-flight eval per room means at most one pending checkin per room.
+  // The resolver takes `number | null`: number → continue (raise cap by N),
+  // null → stop (user clicked Stop, abandonment fired, or signal aborted).
+  //
+  // Set SAMSINN_TOOL_CHECKIN_ABANDON_MS=0 to disable the pause entirely
+  // (headless / batch / test mode): the loop falls through to the legacy
+  // tool_loop_exceeded behaviour at maxToolIterations as before.
+  const pendingCheckins = new Map<string, (v: number | null) => void>()
+  const parsedAbandonMs = Number.parseInt(process.env.SAMSINN_TOOL_CHECKIN_ABANDON_MS ?? '', 10)
+  const abandonMs = Number.isFinite(parsedAbandonMs) && parsedAbandonMs >= 0
+    ? parsedAbandonMs
+    : 10 * 60_000  // 10 minutes default
+  const checkinEnabled = abandonMs > 0
+
   // --- Name resolution ---
 
   const resolveName = (senderId: string): string => {
@@ -267,11 +282,33 @@ export const createAIAgent = (
     const evalEventCb = onEvalEvent
       ? (event: EvalEventCore) => onEvalEvent(config.name, { ...event, traceId } as EvalEvent)
       : undefined
+    // Tool-iteration check-in wiring. Returns a Promise the evaluate loop
+    // awaits; the room's pending checkin Map below is keyed by roomId so
+    // the agent-level continueTools() can resolve it from the HTTP route.
+    // Abandonment timeout bounds state-machine leak when the user never
+    // clicks anything (default 10min, env-overridable).
+    const requestToolCheckin = (info: { iterations: number; recentTools: ReadonlyArray<{ tool: string; success: boolean }> }): Promise<number | null> => {
+      void info  // info already mirrored in the tool_iteration_checkin event onEvent fired
+      return new Promise<number | null>(resolve => {
+        let resolved = false
+        const finish = (v: number | null): void => {
+          if (resolved) return
+          resolved = true
+          pendingCheckins.delete(triggerRoomId)
+          if (timer) clearTimeout(timer)
+          if (signal.aborted) resolve(null); else resolve(v)
+        }
+        const timer = setTimeout(() => finish(null), abandonMs)
+        signal.addEventListener('abort', () => finish(null), { once: true })
+        pendingCheckins.set(triggerRoomId, finish)
+      })
+    }
     const evalOpts = {
       ...(evalToolDefs ? { toolDefinitions: evalToolDefs } : {}),
       ...(inReplyTo ? { inReplyTo } : {}),
       ...(evalEventCb ? { onEvent: evalEventCb } : {}),
       signal,
+      ...(checkinEnabled ? { requestToolCheckin } : {}),
     }
     return evaluate(
       contextResult, evalConfig, llmProvider, evalToolExec,
@@ -625,6 +662,15 @@ export const createAIAgent = (
       ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
     }),
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },
+    continueTools: (roomId: string, additionalIterations: number): boolean => {
+      const pending = pendingCheckins.get(roomId)
+      if (!pending) return false
+      const n = Number.isFinite(additionalIterations) && additionalIterations > 0
+        ? Math.floor(additionalIterations)
+        : 5
+      pending(n)
+      return true
+    },
     refreshTools: (support) => {
       if (support.toolExecutor !== undefined) toolExecutor = support.toolExecutor
       if (support.toolDefinitions !== undefined) toolDefinitions = support.toolDefinitions

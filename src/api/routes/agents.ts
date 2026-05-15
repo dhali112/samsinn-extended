@@ -304,6 +304,27 @@ export const agentRoutes: RouteEntry[] = [
       return json({ cancelled: true, name: agent.name })
     },
   },
+  // Resume a paused tool-iteration check-in. Body: { roomId, additionalIterations? }.
+  // Returns { resumed: boolean } — false when there was no pending checkin
+  // (rare race: user clicked after timeout/cancel/eval completion).
+  {
+    method: 'POST',
+    pattern: /^\/api\/agents\/([^/]+)\/continue-tools$/,
+    handler: async (req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const agent = system.team.getAgent(name)
+      if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
+      const aiAgent = asAIAgent(agent)
+      if (!aiAgent || !aiAgent.continueTools) return errorResponse('Only AI agents can continue tool loops')
+      const body = await req.json().catch(() => ({})) as { roomId?: unknown; additionalIterations?: unknown }
+      if (typeof body.roomId !== 'string' || !body.roomId) return errorResponse('roomId is required')
+      const additional = typeof body.additionalIterations === 'number' && body.additionalIterations > 0
+        ? body.additionalIterations
+        : 5
+      const resumed = aiAgent.continueTools(body.roomId, additional)
+      return json({ resumed, additional, name: agent.name })
+    },
+  },
   {
     method: 'DELETE',
     pattern: /^\/api\/agents\/([^/]+)$/,

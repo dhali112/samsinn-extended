@@ -32,6 +32,20 @@ export type EvalEventCore =
   | { readonly kind: 'warning'; readonly message: string }
   | { readonly kind: 'model_fallback'; readonly preferred: string; readonly effective: string; readonly reason: string }
   | { readonly kind: 'eval_completed'; readonly outcome: 'respond' | 'pass' | 'error' }
+  // Tool-iteration check-in: the agent's tool loop has used `iterations`
+  // calls without finishing. Pre-PR-3 the loop silently exited at the
+  // maxToolIterations cap with a "tool_loop_exceeded" error; now it
+  // emits this event and waits for explicit user input. The UI surfaces
+  // [Continue +N] [Stop] buttons; calling /api/agents/:id/continue-tools
+  // raises the cap, cancelGeneration stops cleanly, and an abandonment
+  // timeout (default 10min, env SAMSINN_TOOL_CHECKIN_ABANDON_MS) auto-
+  // stops if neither happens — bounding state-machine leakage.
+  | {
+      readonly kind: 'tool_iteration_checkin'
+      readonly iterations: number
+      readonly roomId: string
+      readonly recentTools: ReadonlyArray<{ readonly tool: string; readonly success: boolean }>
+    }
 
 // traceId is OPTIONAL on the public event type — most events come from
 // inside an evaluate() call and carry one, but some are emitted out-of-

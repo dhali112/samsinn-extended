@@ -1,4 +1,12 @@
 import { describe, test, expect } from 'bun:test'
+
+// Tests construct agents headlessly with no UI consumer, so the new
+// tool-iteration check-in pause has no resolver and would hang for the
+// 10-minute abandonment timeout. Force legacy behaviour (silent
+// tool_loop_exceeded at the cap) for the whole file. Production sets
+// this env unset and gets the new "user decides" UX.
+process.env.SAMSINN_TOOL_CHECKIN_ABANDON_MS = '0'
+
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import type { AIAgentConfig } from '../core/types/agent.ts'

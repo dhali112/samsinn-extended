@@ -26,6 +26,7 @@ import {
   $messageWarnings,
   $roomIdByName,
   $agentIdByName,
+  $pendingToolCheckins,
 } from '../../stores.ts'
 import type { WSOutbound } from '../../../../core/types/ws-protocol.ts'
 import { showToast } from '../../toast.ts'
@@ -257,6 +258,12 @@ export const stateHandlers: StateHandlers = {
     } else if (event.kind === 'warning') {
       const existing = $agentWarnings.get()[id] ?? []
       $agentWarnings.setKey(id, [...existing, event.message])
+    } else if (event.kind === 'tool_iteration_checkin') {
+      $pendingToolCheckins.setKey(id, {
+        iterations: event.iterations,
+        roomId: event.roomId,
+        recentTools: event.recentTools,
+      })
     } else if (event.kind === 'model_fallback') {
       // Non-blocking notice that the agent's preferred model resolved to
       // a different effective model. Reason determines the copy:

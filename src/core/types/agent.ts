@@ -111,6 +111,12 @@ export interface AIAgent extends Agent {
   readonly updateContextEnabled: (enabled: boolean) => void
   readonly getMaxToolIterations: () => number | undefined
   readonly updateMaxToolIterations: (n: number | undefined) => void
+  // Resume a paused tool-iteration check-in (see EvalEventCore
+  // `tool_iteration_checkin`). Raises the iteration cap for the in-flight
+  // eval by `additionalIterations` and lets the loop continue. Returns
+  // true iff a checkin was actually pending; false means there was
+  // nothing to resume (rare race — user clicked after timeout/cancel).
+  readonly continueTools?: (roomId: string, additionalIterations: number) => boolean
   // Context preview — runs buildSystemSections for a specific room and
   // returns section-by-section text + token estimate plus budget resolution.
   // Used by the UI panel so every magnifier has ground truth.

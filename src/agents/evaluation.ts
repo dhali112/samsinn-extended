@@ -267,6 +267,17 @@ export interface EvalOptions {
   readonly inReplyTo?: ReadonlyArray<string>
   readonly onEvent?: (event: EvalEventCore) => void
   readonly signal?: AbortSignal
+  // Tool-iteration check-in hook. Called by the loop when maxToolIterations
+  // is about to be exceeded with more tool calls pending. Returns the
+  // number of additional iterations to allow (user clicked Continue) or
+  // null to stop (user clicked Stop, or abandonment timeout fired, or
+  // cancel was signalled). When absent, the loop falls back to the
+  // legacy `tool_loop_exceeded` behaviour for back-compat with callers
+  // that don't wire the checkin facility yet.
+  readonly requestToolCheckin?: (info: {
+    readonly iterations: number
+    readonly recentTools: ReadonlyArray<{ readonly tool: string; readonly success: boolean }>
+  }) => Promise<number | null>
 }
 
 export const evaluate = async (
@@ -281,7 +292,9 @@ export const evaluate = async (
   const context = [...contextResult.messages]
   let totalGenerationMs = 0
   let lastMetrics: LLMCallMetrics = {}
-  const { toolDefinitions, inReplyTo, onEvent, signal } = options ?? {}
+  const { toolDefinitions, inReplyTo, onEvent, signal, requestToolCheckin } = options ?? {}
+  // Mutable cap so the user-driven checkin can raise it mid-loop.
+  let effectiveMaxIterations = maxToolIterations
 
   // Accumulates one entry per tool call across every loop iteration. Attached
   // to the final Decision — lets downstream consumers (export_room, UI)
@@ -324,7 +337,7 @@ export const evaluate = async (
   let lastAssistantText = ''
 
   try {
-    for (let toolRound = 0; toolRound <= maxToolIterations; toolRound++) {
+    for (let toolRound = 0; toolRound <= effectiveMaxIterations; toolRound++) {
       const request: ChatRequest = {
         model: config.model,
         messages: context as ReadonlyArray<{ role: 'system' | 'user' | 'assistant'; content: string }>,
@@ -381,6 +394,27 @@ export const evaluate = async (
         }
         context.push({ role: 'assistant' as const, content: streamResult.content })
         context.push({ role: 'user' as const, content: formatToolResults(calls, results) })
+
+        // If this iteration just used the LAST allowed slot, ask the user
+        // before proceeding (so the next loop iteration doesn't silently
+        // get cut off by the for-condition). Only when a checkin handler
+        // is wired — otherwise fall through to legacy tool_loop_exceeded.
+        if (requestToolCheckin && toolRound + 1 > effectiveMaxIterations) {
+          const recentTools = toolTrace.slice(-3).map(t => ({ tool: t.tool, success: t.success }))
+          onEvent?.({
+            kind: 'tool_iteration_checkin',
+            iterations: toolRound + 1,
+            roomId: triggerRoomId,
+            recentTools,
+          })
+          const additional = await requestToolCheckin({ iterations: toolRound + 1, recentTools })
+          if (additional === null || additional <= 0) {
+            // User said Stop, or abandonment timeout, or signal aborted.
+            // Fall through to the post-loop exceeded path.
+            break
+          }
+          effectiveMaxIterations += additional
+        }
         continue
       }
 
@@ -422,7 +456,7 @@ export const evaluate = async (
     // the way, deliver it with a footer instead of replacing it with a bare
     // pass. Without this, the user sees streamed text disappear and a terse
     // [pass] error take its place.
-    const loopReason = `Tool call loop exceeded ${maxToolIterations} iterations`
+    const loopReason = `Tool call loop exceeded ${effectiveMaxIterations} iterations`
     if (lastAssistantText.length > 0) {
       return makeResult({
         response: {

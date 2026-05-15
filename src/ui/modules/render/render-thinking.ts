@@ -120,3 +120,50 @@ export const addThinkingWarning = (container: HTMLElement, agentName: string, me
   if (preview) indicator.insertBefore(warn, preview)
   else indicator.appendChild(warn)
 }
+
+// Inline "agent has used N tool calls without finishing" notice with
+// [Continue +5] [Stop] buttons. Replaces the silent maxToolIterations
+// cliff — the user decides whether to extend or stop. onContinue calls
+// POST /api/agents/:name/continue-tools; onStop calls the existing
+// cancel-generation path. Removed automatically by clearThinkingIndicator
+// when the agent goes idle (eval completes or is cancelled).
+export const addToolCheckinNotice = (
+  container: HTMLElement,
+  agentName: string,
+  iterations: number,
+  recentTools: ReadonlyArray<{ tool: string; success: boolean }>,
+  onContinue: () => void,
+  onStop: () => void,
+): void => {
+  const indicator = container.querySelector(`[data-thinking-agent="${agentName}"]`)
+  if (!indicator) return
+  // Replace any prior checkin notice for this agent (don't stack).
+  indicator.querySelector('[data-checkin-notice]')?.remove()
+
+  const box = document.createElement('div')
+  box.setAttribute('data-checkin-notice', '')
+  box.className = 'text-xs rounded px-2 py-1 mt-1 border border-warning/40 bg-warning-bg flex items-center gap-2 flex-wrap'
+
+  const label = document.createElement('span')
+  const recent = recentTools.length > 0
+    ? ` (recent: ${recentTools.slice(-2).map(t => `${t.tool}${t.success ? '' : '✗'}`).join(', ')})`
+    : ''
+  label.textContent = `Agent used ${iterations} tool calls without finishing${recent}. Continue?`
+  box.appendChild(label)
+
+  const cont = document.createElement('button')
+  cont.className = 'px-2 py-0.5 rounded border border-success/40 text-success-text hover:bg-success/10 ml-auto'
+  cont.textContent = 'Continue +5'
+  cont.onclick = (e) => { e.stopPropagation(); cont.disabled = true; stop.disabled = true; onContinue() }
+  box.appendChild(cont)
+
+  const stop = document.createElement('button')
+  stop.className = 'px-2 py-0.5 rounded border border-danger/40 text-danger hover:bg-danger/10'
+  stop.textContent = 'Stop'
+  stop.onclick = (e) => { e.stopPropagation(); cont.disabled = true; stop.disabled = true; onStop() }
+  box.appendChild(stop)
+
+  const preview = indicator.querySelector(`[data-thinking-preview="${agentName}"]`)
+  if (preview) indicator.insertBefore(box, preview)
+  else indicator.appendChild(box)
+}

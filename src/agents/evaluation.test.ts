@@ -390,6 +390,73 @@ describe('evaluate (tool loop)', () => {
     }
   })
 
+  test('checkin: paused at cap, user continues → loop resumes', async () => {
+    const { provider, calls } = makeScriptedProvider([
+      { toolCalls: [{ function: { name: 'a', arguments: {} } }] },
+      { toolCalls: [{ function: { name: 'b', arguments: {} } }] },
+      { content: 'finally done' },
+    ])
+    const exec: ToolExecutor = async (toolCalls) =>
+      toolCalls.map(() => ({ success: true, data: 'k' }))
+    let checkinCalls = 0
+    const requestToolCheckin = async (info: { iterations: number; recentTools: ReadonlyArray<{ tool: string; success: boolean }> }) => {
+      checkinCalls++
+      expect(info.iterations).toBeGreaterThan(0)
+      expect(info.recentTools.length).toBeGreaterThan(0)
+      return 5  // continue +5
+    }
+    // maxToolIterations = 1 → would normally cap at 2 rounds. With checkin
+    // returning +5, the loop continues until the content round.
+    const result = await evaluate(
+      baseContextResult(), baseConfig, provider, exec, 1, 'room-1',
+      { toolDefinitions: [], requestToolCheckin },
+    )
+    expect(checkinCalls).toBeGreaterThan(0)
+    const r = result.decision.response
+    expect(r.action).toBe('respond')
+    if (r.action === 'respond') expect(r.content).toBe('finally done')
+    expect(calls).toHaveLength(3)
+  })
+
+  test('checkin: user stops (null) → falls through to exceeded path with partial', async () => {
+    const { provider } = makeScriptedProvider([
+      { content: 'work in progress', toolCalls: [{ function: { name: 'a', arguments: {} } }] },
+      { toolCalls: [{ function: { name: 'b', arguments: {} } }] },
+    ])
+    const exec: ToolExecutor = async (toolCalls) =>
+      toolCalls.map(() => ({ success: true, data: 'k' }))
+    const requestToolCheckin = async () => null  // user clicks Stop
+    const result = await evaluate(
+      baseContextResult(), baseConfig, provider, exec, 1, 'room-1',
+      { toolDefinitions: [], requestToolCheckin },
+    )
+    const r = result.decision.response
+    // Partial content was captured → delivered with footer.
+    expect(r.action).toBe('respond')
+    if (r.action === 'respond') {
+      expect(r.content).toContain('work in progress')
+      expect(r.content).toContain('partial result')
+    }
+  })
+
+  test('checkin not wired → legacy tool_loop_exceeded behaviour preserved', async () => {
+    const { provider } = makeScriptedProvider([
+      { toolCalls: [{ function: { name: 'a', arguments: {} } }] },
+      { toolCalls: [{ function: { name: 'b', arguments: {} } }] },
+    ])
+    const exec: ToolExecutor = async (toolCalls) =>
+      toolCalls.map(() => ({ success: true, data: 'k' }))
+    // No requestToolCheckin in EvalOptions → falls through to legacy.
+    const result = await evaluate(
+      baseContextResult(), baseConfig, provider, exec, 1, 'room-1',
+      { toolDefinitions: [] },
+    )
+    const r = result.decision.response
+    // No prior text → error path, not respond path.
+    expect(r.action).toBe('error')
+    if (r.action === 'error') expect(r.code).toBe('tool_loop_exceeded')
+  })
+
   test('large tool results are passed through verbatim (no truncation)', async () => {
     // Fence-emitting tools like procedure_lookup / vatsim_arrivals routinely
     // produce 5-50 KB payloads that must reach the model intact. Any cap
