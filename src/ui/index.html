@@ -324,15 +324,28 @@
     body.mh-hide-duration [data-mh-piece="duration"] { display: none !important; }
     body.mh-hide-context  [data-mh-piece="context"]  { display: none !important; }
     body.mh-hide-model    [data-mh-piece="model"]    { display: none !important; }
-    /* Thinking visibility — special case. When globally hidden, we don't
-       remove the thinking pane (the user can still inspect individual
-       messages by clicking the disclosure triangle); we collapse it to a
-       single-line preview with an animated ellipsis to show the model
-       IS thinking, just without the spam. The persisted <details>
-       collapses by default; the live indicator's thinking preview gets
-       clamped to one line + animated dots. */
-    body.mh-hide-thinking [data-mh-piece="thinking"][open] { /* user-clicked open: respect */ }
+    /* Thinking visibility — special case. When globally hidden, the
+       <details> body is suppressed UNLESS the user has explicitly opened
+       that one message (the [open] attribute acts as the per-message
+       opt-in). The user can still click the disclosure triangle on any
+       individual message to inspect — that flips [open] and the CSS
+       below no longer matches. The live indicator's thinking preview is
+       clamped to one line + animated dots so the user sees the model IS
+       thinking without the wall of text. */
     body.mh-hide-thinking details[data-mh-piece="thinking"]:not([open]) > summary { color: var(--text-subtle); }
+    body.mh-hide-thinking details[data-mh-piece="thinking"]:not([open]) > div {
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      max-height: 1.4em;
+      opacity: 0.6;
+    }
+    body.mh-hide-thinking details[data-mh-piece="thinking"]:not([open]) > div::after {
+      content: ' …';
+      display: inline-block;
+      animation: think-pulse 1.2s steps(4, end) infinite;
+    }
     /* Live indicator clamp (the in-progress yellow-card preview area).
        When hidden, clamp the preview to one line and reveal an animated
        ellipsis after, so the user sees motion without the wall of text. */

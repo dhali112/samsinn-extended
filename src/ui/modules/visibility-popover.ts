@@ -191,6 +191,17 @@ export const mountVisibilityPopover = (deps: VisibilityPopoverDeps): void => {
       eyeBtn.innerHTML = `<span data-icon="${visible ? 'eye' : 'eye-off'}"></span>`
       eyeBtn.onclick = () => {
         mhPrefs = togglePiece(piece as MessageHeaderPiece)
+        // Thinking is special-cased: the body-class CSS only affects
+        // <details>:not([open]). Already-rendered messages keep their
+        // [open] state, so they don't visually collapse when the user
+        // turns the global toggle off. Sweep them here to reset open to
+        // the new pref. Users can still click any one disclosure
+        // triangle afterward to inspect that message.
+        if (piece === 'thinking') {
+          const visible = mhPrefs.thinking
+          const details = document.querySelectorAll('details[data-mh-piece="thinking"]') as NodeListOf<HTMLDetailsElement>
+          for (const det of details) det.open = visible
+        }
         render()  // refresh popover icons
       }
       row.appendChild(eyeBtn)
