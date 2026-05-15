@@ -20,6 +20,7 @@ import { handleAgentCommand } from './ws-commands/agent-commands.ts'
 import { handleMessageCommand } from './ws-commands/message-commands.ts'
 import { handleBiometricCommand } from './ws-commands/biometric-commands.ts'
 import { sendError } from './ws-commands/types.ts'
+import { validateWSInbound } from './ws-commands/validate.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
 
 // === Constants ===
@@ -277,7 +278,13 @@ export const handleWSMessage = async (
 ): Promise<void> => {
   let msg: WSInbound
   try {
-    msg = JSON.parse(raw) as WSInbound
+    const parsed = JSON.parse(raw) as unknown
+    const valid = validateWSInbound(parsed)
+    if (!valid.ok) {
+      sendError(wsManager, ws, `Invalid message: ${valid.error}`)
+      return
+    }
+    msg = valid.value
   } catch {
     sendError(wsManager, ws, 'Invalid JSON')
     return

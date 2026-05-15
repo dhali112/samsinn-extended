@@ -53,6 +53,7 @@ const makeSystem = (): System => {
     ollama: makeLLMProvider(),
     providerConfig: { order: ['ollama'], ollamaUrl: 'http://localhost:11434', ollamaMaxConcurrent: 2, cloud: {}, ollamaOnly: false, forceFailProvider: null, droppedFromOrder: [], orderFromUser: false },
     toolRegistry: { register: () => {}, get: () => undefined, list: () => [] },
+    refreshAllAgentTools: async () => {},
     removeAgent: (id: string) => team.removeAgent(id),
     removeRoom: (id: string) => house.removeRoom(id),
     addAgentToRoom: async () => {},
@@ -143,6 +144,13 @@ describe('WS Handler', () => {
     expect(String(errors()[0]!.message)).toContain('Unknown message type')
   })
 
+  test('malformed known message sends validation error before dispatch', async () => {
+    const { ws, errors } = makeWS()
+    await dispatch(ws, session, system, wsManager, { type: 'set_paused', roomName: 'TestRoom', paused: 'yes' })
+    expect(errors()).toHaveLength(1)
+    expect(String(errors()[0]!.message)).toContain('paused must be a boolean')
+  })
+
   // --- cancel_generation ---
 
   test('cancel_generation for unknown agent sends error', async () => {
@@ -185,15 +193,52 @@ describe('WS Handler', () => {
 
   // --- set_paused ---
 
-  test('set_paused pauses room and broadcasts', async () => {
+  test('set_paused pauses room and broadcasts only to the session instance', async () => {
     let broadcasted: WSOutbound | null = null
-    ;(wsManager as unknown as Record<string, unknown>).broadcast = (msg: WSOutbound) => { broadcasted = msg }
+    let broadcastInstance: string | undefined
+    ;(wsManager as unknown as Record<string, unknown>).broadcastToInstance = (instanceId: string, msg: WSOutbound) => {
+      broadcastInstance = instanceId
+      broadcasted = msg
+    }
     const { ws } = makeWS()
     await dispatch(ws, session, system, wsManager, { type: 'set_paused', roomName: 'TestRoom', paused: true })
     const room = system.house.getRoom('TestRoom')!
     expect(room.paused).toBe(true)
+    expect(broadcastInstance).toBe(session.instanceId)
     expect(broadcasted).not.toBeNull()
     expect(((broadcasted as unknown) as { type: string; paused: boolean }).paused).toBe(true)
+  })
+
+  // --- summary config ---
+
+  test('set_summary_config rejects invalid config', async () => {
+    const { ws, errors } = makeWS()
+    await dispatch(ws, session, system, wsManager, {
+      type: 'set_summary_config',
+      roomName: 'TestRoom',
+      config: {
+        summary: { enabled: true, schedule: { kind: 'invalid' } },
+        compression: { enabled: false, schedule: { kind: 'messages', everyMessages: 30 }, keepFresh: 40, batchSize: 30, aggressiveness: 'med' },
+      },
+    })
+    expect(errors()).toHaveLength(1)
+    expect(String(errors()[0]!.message)).toContain('schedule.kind')
+  })
+
+  test('set_summary_config accepts validated config', async () => {
+    const { ws, errors } = makeWS()
+    await dispatch(ws, session, system, wsManager, {
+      type: 'set_summary_config',
+      roomName: 'TestRoom',
+      config: {
+        model: 'ollama:test',
+        summary: { enabled: true, schedule: { kind: 'messages', everyMessages: 7 } },
+        compression: { enabled: true, schedule: { kind: 'time', everySeconds: 60 }, keepFresh: 12, batchSize: 8, aggressiveness: 'high' },
+      },
+    })
+    expect(errors()).toHaveLength(0)
+    expect(system.house.getRoom('TestRoom')!.summaryConfig.summary.enabled).toBe(true)
+    expect(system.house.getRoom('TestRoom')!.summaryConfig.compression.aggressiveness).toBe('high')
   })
 
   test('set_paused on unknown room sends error', async () => {
@@ -244,6 +289,27 @@ describe('WS Handler', () => {
     await dispatch(ws, session, system, wsManager, { type: 'remove_from_room', roomName: 'TestRoom', agentName: 'Human' })
     expect(errors()).toHaveLength(0)
     expect(called).toBe(true)
+  })
+
+  // --- update_agent ---
+
+  test('update_agent tools refreshes system tool support', async () => {
+    const bot = createAIAgent(
+      { name: 'Bot', model: 'test', persona: 'You are a test bot.' },
+      makeLLMProvider(),
+      () => {},
+    )
+    system.team.addAgent(bot)
+    ;(system as unknown as { toolRegistry: { list: () => ReadonlyArray<{ name: string }> } }).toolRegistry = {
+      list: () => [{ name: 'pass' }],
+    }
+    let refreshes = 0
+    ;(system as unknown as Record<string, unknown>).refreshAllAgentTools = async () => { refreshes += 1 }
+    const { ws, errors } = makeWS()
+    await dispatch(ws, session, system, wsManager, { type: 'update_agent', name: 'Bot', tools: ['pass', 'missing'] })
+    expect(errors()).toHaveLength(0)
+    expect(bot.getTools()).toEqual(['pass'])
+    expect(refreshes).toBe(1)
   })
 
   // --- create_room ---

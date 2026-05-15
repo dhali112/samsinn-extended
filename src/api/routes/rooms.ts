@@ -249,21 +249,23 @@ export const roomRoutes: RouteEntry[] = [
   {
     method: 'PUT',
     pattern: /^\/api\/rooms\/([^/]+)\/pause$/,
-    handler: async (req, match, { system, broadcast }) => {
+    handler: async (req, match, { system, instanceId, broadcast, broadcastToInstance }) => {
       const name = decodeURIComponent(match[1]!)
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
       const body = await parseBody(req)
       if (typeof body.paused !== 'boolean') return errorResponse('paused must be a boolean')
       room.setPaused(body.paused)
-      broadcast({ type: 'delivery_mode_changed', roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused })
+      const evt = { type: 'delivery_mode_changed' as const, roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused }
+      if (broadcastToInstance) broadcastToInstance(instanceId, evt)
+      else broadcast(evt)
       return json({ paused: room.paused })
     },
   },
   {
     method: 'PUT',
     pattern: /^\/api\/rooms\/([^/]+)\/mute$/,
-    handler: async (req, match, { system, broadcast }) => {
+    handler: async (req, match, { system, instanceId, broadcast, broadcastToInstance }) => {
       const name = decodeURIComponent(match[1]!)
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
@@ -273,7 +275,9 @@ export const roomRoutes: RouteEntry[] = [
       const agent = system.team.getAgent(body.agentName)
       if (!agent) return errorResponse(`Agent "${body.agentName}" not found`, 404)
       room.setMuted(agent.id, body.muted)
-      broadcast({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: body.muted })
+      const evt = { type: 'mute_changed' as const, roomName: room.profile.name, agentName: agent.name, muted: body.muted }
+      if (broadcastToInstance) broadcastToInstance(instanceId, evt)
+      else broadcast(evt)
       return json({ muted: room.isMuted(agent.id) })
     },
   },

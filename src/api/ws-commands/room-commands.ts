@@ -5,7 +5,10 @@ import { requireRoom, requireAgent, sendError, type CommandContext } from './typ
 import { asAIAgent } from '../../agents/shared.ts'
 
 export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Promise<boolean> => {
-  const { ws, system, broadcast, wsManager } = ctx
+  const { ws, system, wsManager } = ctx
+  const broadcastToSessionInstance = (outbound: Parameters<typeof wsManager.broadcastToInstance>[1]): void => {
+    wsManager.broadcastToInstance(ctx.session.instanceId, outbound)
+  }
   // v15+: WS sessions don't own a default actor. Non-content commands
   // attribute to 'system' as createdBy / initiator-name. Future PRs can
   // plumb the per-room selected human through to these commands too.
@@ -44,14 +47,14 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
         return true
       }
       room.setDeliveryMode(msg.mode as SettableDeliveryMode)
-      broadcast({ type: 'delivery_mode_changed', roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused })
+      broadcastToSessionInstance({ type: 'delivery_mode_changed', roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused })
       return true
     }
     case 'set_paused': {
       const room = requireRoom(wsManager, ws, system, msg.roomName)
       if (!room) return true
       room.setPaused(msg.paused)
-      broadcast({ type: 'delivery_mode_changed', roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused })
+      broadcastToSessionInstance({ type: 'delivery_mode_changed', roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused })
       return true
     }
     case 'set_muted': {
@@ -59,7 +62,7 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
       const agent = requireAgent(wsManager, ws, system, msg.agentName)
       if (!room || !agent) return true
       room.setMuted(agent.id, msg.muted)
-      broadcast({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: msg.muted })
+      broadcastToSessionInstance({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: msg.muted })
       return true
     }
     case 'delete_room': {
@@ -72,7 +75,7 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
       const room = requireRoom(wsManager, ws, system, msg.roomName)
       if (!room) return true
       const deleted = room.deleteMessage(msg.messageId)
-      if (deleted) broadcast({ type: 'message_deleted', roomName: room.profile.name, messageId: msg.messageId })
+      if (deleted) broadcastToSessionInstance({ type: 'message_deleted', roomName: room.profile.name, messageId: msg.messageId })
       return true
     }
     case 'clear_messages': {
@@ -86,7 +89,7 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
         const ai = agent ? asAIAgent(agent) : undefined
         ai?.clearHistory?.(room.profile.id)
       }
-      broadcast({ type: 'messages_cleared', roomName: room.profile.name })
+      broadcastToSessionInstance({ type: 'messages_cleared', roomName: room.profile.name })
       return true
     }
     case 'activate_agent': {

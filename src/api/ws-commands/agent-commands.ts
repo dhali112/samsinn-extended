@@ -1,6 +1,5 @@
 import type { WSInbound } from '../../core/types/ws-protocol.ts'
 import { asAIAgent } from '../../agents/shared.ts'
-import { buildToolSupport } from '../../agents/spawn.ts'
 import { requireAgent, sendError, type CommandContext } from './types.ts'
 
 export const handleAgentCommand = async (msg: WSInbound, ctx: CommandContext): Promise<boolean> => {
@@ -39,12 +38,7 @@ export const handleAgentCommand = async (msg: WSInbound, ctx: CommandContext): P
           const known = new Set(system.toolRegistry.list().map(t => t.name))
           const resolved = msg.tools.filter(n => known.has(n))
           aiAgent.updateTools?.(resolved)
-          const support = await buildToolSupport(
-            resolved, system.toolRegistry,
-            { id: aiAgent.id, name: aiAgent.name, currentModel: () => aiAgent.getModel() },
-            system.llm,
-          )
-          aiAgent.refreshTools?.(support)
+          await system.refreshAllAgentTools()
         }
       }
       return true
