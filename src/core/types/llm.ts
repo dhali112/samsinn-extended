@@ -128,6 +128,12 @@ export interface StreamChunk {
   readonly delta: string   // raw text fragment — may be empty for final done chunk
   readonly done: boolean
   readonly thinking?: string  // qwen3 CoT thinking tokens (before visible response)
+  // Emitted once per stream when the inter-chunk gap exceeds the
+  // adapter's warn threshold. Informational — does NOT abort. The hard-
+  // abort still fires at a longer threshold (provider-dependent) so a
+  // truly stuck stream is bounded. Forwarded by evaluation.ts as a
+  // user-visible `warning` evalEvent.
+  readonly slowWarning?: { readonly elapsedMs: number; readonly provider: string }
   readonly toolCalls?: ReadonlyArray<NativeToolCall>  // native tool calls from final chunk
   // Populated on the final done=true chunk when available (per-provider).
   readonly tokensUsed?: {

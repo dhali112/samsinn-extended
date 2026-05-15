@@ -134,6 +134,13 @@ const callLLMOnce = async (
     let metrics: LLMCallMetrics = {}
     for await (const chunk of provider.stream(request, signal)) {
       if (chunk.thinking) onEvent?.({ kind: 'thinking', delta: chunk.thinking })
+      if (chunk.slowWarning) {
+        const elapsedS = Math.round(chunk.slowWarning.elapsedMs / 1000)
+        onEvent?.({
+          kind: 'warning',
+          message: `Provider "${chunk.slowWarning.provider}" hasn't sent a chunk in ${elapsedS}s — the model may be reasoning or the provider may be slow. Use the Stop button to cancel, or wait. Will switch automatically if the stream stalls completely.`,
+        })
+      }
       if (chunk.delta) {
         content += chunk.delta
         onEvent?.({ kind: 'chunk', delta: chunk.delta })

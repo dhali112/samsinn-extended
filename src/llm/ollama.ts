@@ -48,7 +48,11 @@ interface OllamaPsResponse {
 
 const CHAT_TIMEOUT_MS = 300_000 // 5 minutes — large models can be slow
 const TAGS_TIMEOUT_MS = 10_000
-const STREAM_IDLE_TIMEOUT_MS = 30_000  // abort if no chunk arrives within 30s
+// Two-tier idle handling (see openai-compatible.ts for full rationale).
+// Warn the user at warnMs so they know Ollama is slow; hard-abort at
+// hardMs so a truly dead stream eventually fails over.
+const STREAM_SLOW_WARN_MS = 15_000
+const STREAM_HARD_ABORT_MS = 90_000
 const DEFAULT_NUM_CTX = 16384  // modern models support 32K+; 16K gives room for rich context + history
 
 const validateChatResponse = (data: unknown): OllamaChatResponse => {
@@ -206,7 +210,7 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
     if (request.think !== undefined) body.think = request.think
 
     const controller = new AbortController()
-    let idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
+    let hardAbortTimer = setTimeout(() => controller.abort(), STREAM_HARD_ABORT_MS)
 
     // Abort on external signal (user cancellation)
     if (externalSignal) {
@@ -221,26 +225,56 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
     })
 
     if (!response.ok) {
-      clearTimeout(idleTimer)
+      clearTimeout(hardAbortTimer)
       const text = await response.text()
       throw createOllamaError(response.status, `Ollama stream error ${response.status}: ${text}`)
     }
 
     const reader = response.body?.getReader()
     if (!reader) {
-      clearTimeout(idleTimer)
+      clearTimeout(hardAbortTimer)
       throw createOllamaError(0, 'Ollama stream: no response body')
     }
 
     const decoder = new TextDecoder()
     let buffer = ''
+    // Race read vs warn timer (see openai-compatible.ts for rationale).
+    let pendingRead: Promise<{ done: boolean; value: Uint8Array | undefined }> | null = null
+    let warnEmitted = false
+    let lastChunkAt = Date.now()
     try {
       while (true) {
-        clearTimeout(idleTimer)
-        idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
+        clearTimeout(hardAbortTimer)
+        hardAbortTimer = setTimeout(() => controller.abort(), STREAM_HARD_ABORT_MS)
+        if (!pendingRead) pendingRead = reader.read()
 
-        const { done, value } = await reader.read()
+        type ReadResult = { done: boolean; value: Uint8Array | undefined }
+        let raceResult: ReadResult | 'warn'
+        if (!warnEmitted) {
+          const sinceLast = Date.now() - lastChunkAt
+          const remainingToWarn = Math.max(0, STREAM_SLOW_WARN_MS - sinceLast)
+          raceResult = await Promise.race([
+            pendingRead,
+            new Promise<'warn'>(r => setTimeout(() => r('warn'), remainingToWarn)),
+          ])
+        } else {
+          raceResult = await pendingRead
+        }
+
+        if (raceResult === 'warn') {
+          warnEmitted = true
+          yield {
+            delta: '', done: false,
+            slowWarning: { elapsedMs: Date.now() - lastChunkAt, provider: 'ollama' },
+          }
+          continue
+        }
+
+        pendingRead = null
+        const { done, value } = raceResult
         if (done) break
+        lastChunkAt = Date.now()
+        warnEmitted = false
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
@@ -272,7 +306,7 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
         } catch { /* ignore malformed final chunk */ }
       }
     } finally {
-      clearTimeout(idleTimer)
+      clearTimeout(hardAbortTimer)
       reader.releaseLock()
     }
   }

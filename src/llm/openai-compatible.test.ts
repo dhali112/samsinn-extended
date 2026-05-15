@@ -239,6 +239,99 @@ describe('createOpenAICompatibleProvider', () => {
     } finally { fx.stop() }
   })
 
+  test('streaming: slowWarning emitted when inter-chunk gap exceeds warnMs, stream NOT aborted', async () => {
+    // Custom fixture — delay between frames so warn timer fires before chunk 2.
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          async start(controller) {
+            // First chunk arrives immediately (so the adapter commits to this provider).
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}\n\n`))
+            // 80ms gap > 50ms warnMs but < 500ms hardAbortMs — warn should fire.
+            await new Promise(r => setTimeout(r, 80))
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'there' } }] })}\n\n`))
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] })}\n\n`))
+            controller.enqueue(encoder.encode(`data: [DONE]\n\n`))
+            controller.close()
+          },
+        })
+        return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      },
+    })
+    try {
+      const provider = createOpenAICompatibleProvider({
+        name: 'slowtest',
+        getBaseUrl: () => `http://localhost:${server.port}`,
+        getApiKey: () => 'k',
+        streamSlowWarnMs: 50,
+        streamHardAbortMs: 500,
+      })
+      const chunks: Array<{ delta: string; done: boolean; thinking?: string; slowWarning?: { elapsedMs: number; provider: string } }> = []
+      for await (const chunk of provider.stream!({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
+        chunks.push(chunk as never)
+      }
+      const slow = chunks.filter(c => c.slowWarning)
+      expect(slow).toHaveLength(1)
+      expect(slow[0]!.slowWarning?.provider).toBe('slowtest')
+      expect(slow[0]!.slowWarning?.elapsedMs).toBeGreaterThanOrEqual(50)
+      // Stream completed normally — both content chunks delivered, not aborted.
+      const content = chunks.map(c => c.delta).join('')
+      expect(content).toContain('hi')
+      expect(content).toContain('there')
+      // Final done chunk arrived (not an error mid-stream).
+      expect(chunks.some(c => c.done)).toBe(true)
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test('streaming: hard-abort fires when stream truly stuck past hardAbortMs', async () => {
+    // Server commits with first chunk, then NEVER emits anything else. Adapter
+    // should warn at warnMs, then abort at hardAbortMs (closing the stream).
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}\n\n`))
+            // Hold the stream open forever (well, until test timeout).
+            await new Promise(() => {})
+          },
+        })
+        return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      },
+    })
+    try {
+      const provider = createOpenAICompatibleProvider({
+        name: 'stucktest',
+        getBaseUrl: () => `http://localhost:${server.port}`,
+        getApiKey: () => 'k',
+        streamSlowWarnMs: 30,
+        streamHardAbortMs: 120,
+      })
+      const chunks: Array<{ delta: string; done: boolean; slowWarning?: { elapsedMs: number; provider: string } }> = []
+      let aborted = false
+      try {
+        for await (const chunk of provider.stream!({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
+          chunks.push(chunk as never)
+        }
+      } catch {
+        aborted = true
+      }
+      // SlowWarning fired before hard-abort. Adapter then aborted.
+      // (The 'hi' content stays in <think>-tag carry buffer because it's
+      // shorter than the partial-tag safety window — that's existing
+      // adapter behavior unrelated to slowWarning.)
+      expect(chunks.some(c => c.slowWarning)).toBe(true)
+      expect(aborted).toBe(true)
+    } finally {
+      server.stop(true)
+    }
+  })
+
   test('streaming: delta.reasoning (alt field name) also routed to thinking', async () => {
     const fx = startFixture(() => ({
       status: 200, body: '',

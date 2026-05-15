@@ -21,7 +21,14 @@ import { normalizeModelId, expandAnthropicAliases } from './models/normalize.ts'
 
 const DEFAULT_CHAT_TIMEOUT_MS = 300_000
 const DEFAULT_MODELS_TIMEOUT_MS = 10_000
-const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000
+// Two-tier idle handling: warn the user at warnMs (emits a slowWarning
+// StreamChunk, does NOT abort) so they know the provider is slow and
+// can intervene with the existing Stop button; hard-abort at hardMs so
+// a genuinely dead stream still eventually fails over to the next
+// provider via the router. Pre-PR-2 there was a single 60s threshold
+// that silently aborted with no user-visible explanation.
+const DEFAULT_STREAM_SLOW_WARN_MS = 30_000
+const DEFAULT_STREAM_HARD_ABORT_MS = 180_000
 // Hard cap on the SSE re-assembly buffer. Frames are normally a few KB; a
 // runaway provider sending one giant unterminated `data:` line would otherwise
 // grow this buffer without bound. 10 MB is well above any legitimate frame
@@ -47,7 +54,11 @@ export interface OpenAICompatConfig {
   readonly extraHeaders?: () => Record<string, string>
   readonly chatTimeoutMs?: number
   readonly modelsTimeoutMs?: number
-  readonly streamIdleTimeoutMs?: number
+  // Two-tier idle thresholds. `warn` emits a slowWarning chunk and
+  // continues waiting; `hard` aborts the stream so the router can
+  // fail over. Tests can shorten both.
+  readonly streamSlowWarnMs?: number
+  readonly streamHardAbortMs?: number
   // Optional process-global counters; when present, SSE-buffer overflow is
   // tracked. Tests omit.
   readonly limitMetrics?: LimitMetrics
@@ -388,7 +399,8 @@ const splitThinkAndContent = (raw: string): { thinking: string; content: string 
 export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMProvider => {
   const chatTimeoutMs = config.chatTimeoutMs ?? DEFAULT_CHAT_TIMEOUT_MS
   const modelsTimeoutMs = config.modelsTimeoutMs ?? DEFAULT_MODELS_TIMEOUT_MS
-  const streamIdleTimeoutMs = config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS
+  const streamSlowWarnMs = config.streamSlowWarnMs ?? DEFAULT_STREAM_SLOW_WARN_MS
+  const streamHardAbortMs = config.streamHardAbortMs ?? DEFAULT_STREAM_HARD_ABORT_MS
 
   // Anthropic ships dated canonical ids in /models (`claude-haiku-4-5-20251001`)
   // but the curated UI list and agents carry the bare alias (`claude-haiku-4-5`).
@@ -493,7 +505,10 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
     const body = buildOAIBody(wireRequest, true, config.name)
 
     const controller = new AbortController()
-    let idleTimer = setTimeout(() => controller.abort(), streamIdleTimeoutMs)
+    // Hard-abort timer — fires only if the stream is genuinely dead for
+    // streamHardAbortMs. Reset on every chunk arrival. The earlier warn
+    // tier (raced against reader.read below) handles user notification.
+    let hardAbortTimer = setTimeout(() => controller.abort(), streamHardAbortMs)
     if (externalSignal) {
       externalSignal.addEventListener('abort', () => controller.abort(), { once: true })
     }
@@ -506,14 +521,14 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
     })
 
     if (!response.ok) {
-      clearTimeout(idleTimer)
+      clearTimeout(hardAbortTimer)
       const text = await response.text().catch(() => '')
       throw mapHttpError(config.name, response.status, text, response.headers.get('retry-after'))
     }
 
     const reader = response.body?.getReader()
     if (!reader) {
-      clearTimeout(idleTimer)
+      clearTimeout(hardAbortTimer)
       throw createCloudProviderError({
         code: 'provider_down', provider: config.name,
         message: `${config.name} stream: no response body`,
@@ -588,12 +603,49 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       return chunk
     }
 
+    // Race read vs warn timer. The Web Streams API forbids overlapping
+    // .read() calls on a locked reader, so we keep ONE pending read across
+    // a race-loss and re-await it on the next iteration. `warnEmitted`
+    // resets after each real chunk so a subsequent gap can warn again
+    // (e.g. provider stalls, recovers, stalls).
+    let pendingRead: Promise<{ done: boolean; value: Uint8Array | undefined }> | null = null
+    let warnEmitted = false
+    let lastChunkAt = Date.now()
+
     try {
       while (true) {
-        clearTimeout(idleTimer)
-        idleTimer = setTimeout(() => controller.abort(), streamIdleTimeoutMs)
-        const { done, value } = await reader.read()
+        clearTimeout(hardAbortTimer)
+        hardAbortTimer = setTimeout(() => controller.abort(), streamHardAbortMs)
+        if (!pendingRead) pendingRead = reader.read()
+
+        type ReadResult = { done: boolean; value: Uint8Array | undefined }
+        let raceResult: ReadResult | 'warn'
+        if (!warnEmitted) {
+          const sinceLast = Date.now() - lastChunkAt
+          const remainingToWarn = Math.max(0, streamSlowWarnMs - sinceLast)
+          raceResult = await Promise.race([
+            pendingRead,
+            new Promise<'warn'>(r => setTimeout(() => r('warn'), remainingToWarn)),
+          ])
+        } else {
+          raceResult = await pendingRead
+        }
+
+        if (raceResult === 'warn') {
+          warnEmitted = true
+          yield {
+            delta: '', done: false,
+            slowWarning: { elapsedMs: Date.now() - lastChunkAt, provider: config.name },
+          }
+          continue  // pendingRead still pending — loop awaits it again
+        }
+
+        // Real read settled.
+        pendingRead = null
+        const { done, value } = raceResult
         if (done) break
+        lastChunkAt = Date.now()
+        warnEmitted = false
         buffer += decoder.decode(value, { stream: true })
 
         // Bound the unframed buffer. Treat as a recoverable provider issue
@@ -709,7 +761,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       yield emitFinal()
       void finishSeen  // value consumed by the loop logic above
     } finally {
-      clearTimeout(idleTimer)
+      clearTimeout(hardAbortTimer)
       reader.releaseLock()
     }
   }
