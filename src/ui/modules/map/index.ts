@@ -26,6 +26,9 @@ const buildMapContainer = (height = DEFAULT_HEIGHT_PX): HTMLElement => {
   wrapper.className = 'my-2 rounded overflow-hidden border border-border'
   wrapper.style.height = `${height}px`
   wrapper.style.width = '100%'
+  wrapper.style.position = 'relative'
+  wrapper.style.isolation = 'isolate'
+  wrapper.style.zIndex = '0'
   return wrapper
 }
 
@@ -195,6 +198,9 @@ export const renderMapSource = async (container: HTMLElement, source: string): P
   // has a sized box for Leaflet to measure against.
   if (!container.style.height) container.style.height = `${DEFAULT_HEIGHT_PX}px`
   if (!container.style.width) container.style.width = '100%'
+  container.style.position = 'relative'
+  container.style.isolation = 'isolate'
+  container.style.zIndex = '0'
   container.className = 'my-2 rounded overflow-hidden border border-border'
   await renderInto(container, source)
 }
