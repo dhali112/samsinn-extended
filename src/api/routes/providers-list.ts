@@ -93,7 +93,10 @@ export const providersListRoutes: RouteEntry[] = [
       for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
         const m = merged.cloud[name]
         if (!m) continue
-        const hasKey = m.apiKey.length > 0
+        // Read hasKey from the in-memory registry (the same source the
+        // monitor and gateway use) so the UI never reports green when the
+        // chat path would fail, or gray when the registry has a key.
+        const hasKey = system.providerKeys.get(name).length > 0
         const userEnabled = system.providerKeys.isUserEnabled(name)
         const monState = monitorSnap[name] ?? null
         const failures = monitors[name]?.getRecentFailures() ?? []

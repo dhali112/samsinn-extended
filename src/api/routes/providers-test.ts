@@ -163,7 +163,13 @@ export const providersTestRoutes: RouteEntry[] = [
         // upstream content) doesn't get echoed back to the client wholesale.
         if (reason.length > 500) reason = reason.slice(0, 500) + '… [truncated]'
         const code = isCloudProviderError(err) ? err.code : 'error'
-        system.monitors[name]?.markUnhealthy(reason.slice(0, 200), code)
+        // Only flip the dot to red on authoritative provider errors (auth,
+        // bad_request, quota, etc.). Transient network blips or local
+        // timeouts surface in the response but don't lie about provider
+        // health — the next heartbeat decides.
+        if (isCloudProviderError(err)) {
+          system.monitors[name]?.markUnhealthy(reason.slice(0, 200), code)
+        }
         return json({ ok: false, error: reason, code, elapsedMs })
       }
     },
@@ -283,13 +289,14 @@ export const providersTestRoutes: RouteEntry[] = [
         if (apiKey) reason = reason.split(apiKey).join('•••REDACTED•••')
         let code: string = 'error'
         if (isCloudProviderError(err)) code = err.code
-        // Surface the test result in monitor state. A failed user-initiated
-        // test is authoritative — we don't need to wait for a streak. This
-        // is what fixes "anthropic shows green even though Test returns
-        // red": the monitor's rate-limit/streak logic doesn't apply to
-        // permanent errors like auth, so without this push the dot stays
-        // green forever despite a broken key.
-        system.monitors[name]?.markUnhealthy(reason.slice(0, 200), code)
+        // Surface authoritative test failures (auth, bad_request, quota)
+        // in monitor state — these don't recover on their own. Transient
+        // network errors / timeouts return ok:false to the user but leave
+        // the dot alone; the next heartbeat decides. Fixes the "test failed
+        // once → dot red forever despite a working key" UX.
+        if (isCloudProviderError(err)) {
+          system.monitors[name]?.markUnhealthy(reason.slice(0, 200), code)
+        }
         try { broadcast({ type: 'providers_changed', providers: [name] }) } catch { /* ignore */ }
         return json({ ok: false, error: reason, code, elapsedMs })
       }

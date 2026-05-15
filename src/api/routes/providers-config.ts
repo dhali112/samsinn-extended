@@ -117,6 +117,7 @@ export const providersConfigRoutes: RouteEntry[] = [
       if (clearKey) delete (updated as { apiKey?: string }).apiKey
 
       const next: ProvidersFileShape = {
+        ...store,
         version: STORE_VERSION,
         providers: {
           ...store.providers,
@@ -143,7 +144,12 @@ export const providersConfigRoutes: RouteEntry[] = [
       let requiresRestart = false
       if (name !== 'ollama') {
         const nextKey = clearKey ? '' : (updated.apiKey ?? '')
-        system.providerKeys.set(name, nextKey)
+        // Only mutate the in-memory key when the PUT actually carried an
+        // apiKey field (or an explicit clear). An unrelated edit (pinning
+        // models, toggling enabled, changing maxConcurrent) must NOT wipe
+        // a key that lives only in env — the in-memory registry is the
+        // source of truth the gateway and monitor both read.
+        if (clearKey || 'apiKey' in body) system.providerKeys.set(name, nextKey)
         // Reflect the stored `enabled` flag in the runtime registry.
         // Saving a fresh key auto-enables the provider (matches UI expectation
         // that a successful save brings the provider online).
