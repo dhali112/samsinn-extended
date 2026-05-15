@@ -38,9 +38,15 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     { id: 'gpt-4o',       label: '4o (premium)' },
   ],
   kimi: [
-    { id: 'kimi-k2.6',        label: 'K2.6 (latest)' },
-    { id: 'kimi-k2.5',        label: 'K2.5' },
-    { id: 'moonshot-v1-128k', label: 'Moonshot v1 128k' },
+    // moonshot-v1-* first: non-thinking models. The kimi-k2.x family
+    // always emits `reasoning_content` (no off-switch — verified that
+    // `reasoning_effort: minimal` and `enable_thinking: false` are both
+    // ignored). Samsinn doesn't surface OAI-compat `reasoning_content`
+    // yet, so k2.x responses look truncated/empty when reasoning eats
+    // the token budget. k2.x stays reachable via "Show all" in the UI.
+    { id: 'moonshot-v1-128k', label: '128k (default)' },
+    { id: 'moonshot-v1-32k',  label: '32k' },
+    { id: 'moonshot-v1-8k',   label: '8k (cheapest)' },
   ],
   gemini: [
     // Flash first: Pro's capacity has been chronically tight (frequent 503

@@ -471,4 +471,29 @@ describe('createOpenAICompatibleProvider', () => {
       }
     } finally { fx.stop() }
   })
+
+  // Kimi/Moonshot rejects assistant messages with empty content (400
+  // "must not be empty"). Empty content reaches the wire from
+  // tool-call-only assistant turns or thinking models that hit max_tokens
+  // mid-reasoning. Substitute a single space at the wire layer; never
+  // mutate the caller's ChatRequest.
+  test('empty assistant content is substituted on the wire (all providers)', async () => {
+    for (const name of ['openai', 'kimi', 'anthropic', 'gemini'] as const) {
+      const fx = startFixture(() => ({ status: 200, body: okBody }))
+      try {
+        const provider = createOpenAICompatibleProvider({ name, getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+        const messages = [
+          { role: 'user' as const, content: 'hi' },
+          { role: 'assistant' as const, content: '' },
+          { role: 'user' as const, content: 'still there?' },
+        ]
+        await provider.chat({ model: 'm', messages })
+        const body = fx.last.body as { messages: ReadonlyArray<{ role: string; content: unknown }> }
+        const assistantOnWire = body.messages.find(m => m.role === 'assistant')
+        expect(assistantOnWire?.content).toBe(' ')
+        // Caller's input must not be mutated — the empty string survives.
+        expect(messages[1]!.content).toBe('')
+      } finally { fx.stop() }
+    }
+  })
 })

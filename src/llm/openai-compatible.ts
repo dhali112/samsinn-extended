@@ -215,6 +215,15 @@ const markLastCacheable = <T>(arr: ReadonlyArray<T>): T[] => {
 
 // === Request conversion ===
 
+// Moonshot/Kimi rejects assistant messages with empty `content` (400
+// "must not be empty"), while OpenAI/Anthropic/Gemini accept them
+// (legitimate for tool-call-only turns or thinking-model responses that
+// hit max_tokens during reasoning). Substitute a single space at the
+// wire layer so the history round-trips without changing internal state.
+// Applied to all providers — every OAI-compat target accepts " ".
+const safeAssistantContent = (m: { role: string; content: string }): string =>
+  m.role === 'assistant' && (!m.content || m.content.length === 0) ? ' ' : m.content
+
 const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[] => {
   // Anthropic path: if systemBlocks are provided, emit the system message as
   // an array of content parts with `cache_control: ephemeral` on the last
@@ -241,12 +250,12 @@ const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[]
     // Remaining non-system messages pass through as strings.
     for (const m of request.messages) {
       if (m.role === 'system') continue // superseded by systemParts above
-      out.push({ role: m.role, content: m.content })
+      out.push({ role: m.role, content: safeAssistantContent(m) })
     }
     return out
   }
   // Default path — plain strings.
-  return request.messages.map(m => ({ role: m.role, content: m.content }))
+  return request.messages.map(m => ({ role: m.role, content: safeAssistantContent(m) }))
 }
 
 // OpenAI's gpt-5 family AND the o-series reasoning models (o1, o3, o4)
