@@ -29,7 +29,7 @@ samsinn.example.com {
 		# connect-src adds storage.googleapis.com for the MediaPipe FaceLandmarker
 		# .task model file (hosted by Google's model CDN; jsDelivr is the ESM
 		# bundle but the model itself fetches from googleapis).
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://*.openstreetmap.org; connect-src 'self' wss: ws: https://cdn.jsdelivr.net https://storage.googleapis.com; font-src 'self' data:; frame-ancestors 'none'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://*.openstreetmap.org; connect-src 'self' wss: ws: https://cdn.jsdelivr.net https://storage.googleapis.com; font-src 'self' data:; frame-src 'self' https://leitbild.samsinn.app https://*.samsinn.app; frame-ancestors 'none'"
 
 		# Strip Caddy's default Server header.
 		-Server
