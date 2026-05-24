@@ -18,6 +18,7 @@
 
 import type { MessageAttachment } from '../../core/types/messaging.ts'
 import { addAttachment } from './composer-attachments.ts'
+import { icon } from './icon.ts'
 
 interface MirrorStatus {
   readonly status: null | {
@@ -191,9 +192,9 @@ const ensurePanel = (): { wrap: HTMLDivElement; ifr: HTMLIFrameElement } => {
   headerBtns.style.cssText = 'display:flex;align-items:center;gap:4px'
   const captureBtn = document.createElement('button')
   captureBtn.type = 'button'
-  captureBtn.textContent = '📷'
+  captureBtn.appendChild(icon('camera', { size: 14 }))
   captureBtn.title = 'Screenshot this panel and attach to composer (does not send)'
-  captureBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:14px;cursor:pointer;padding:2px 6px;line-height:1;border-radius:3px'
+  captureBtn.style.cssText = 'background:none;border:none;color:#fff;cursor:pointer;padding:2px 6px;line-height:0;border-radius:3px;display:inline-flex;align-items:center'
   captureBtn.addEventListener('mouseenter', () => { captureBtn.style.background = 'rgba(255,255,255,0.1)' })
   captureBtn.addEventListener('mouseleave', () => { captureBtn.style.background = 'none' })
   captureBtn.addEventListener('click', (e) => { e.stopPropagation(); void captureIframeScreenshot(captureBtn) })
@@ -310,9 +311,8 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
     return
   }
 
-  const wasLabel = btn.textContent
   btn.disabled = true
-  btn.textContent = '…'
+  btn.replaceChildren(document.createTextNode('…'))
 
   // Refs we may need to clean up regardless of where in the flow we exit.
   let stream: MediaStream | undefined
@@ -437,7 +437,7 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
   } finally {
     cleanup()
     btn.disabled = false
-    btn.textContent = wasLabel ?? '📷'
+    btn.replaceChildren(icon('camera', { size: 14 }))
   }
 }
 
