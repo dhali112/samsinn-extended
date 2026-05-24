@@ -275,6 +275,7 @@ export const handleWSMessage = async (
   raw: string,
   system: System,
   wsManager: WSManager,
+  leitbildMirror?: import('../integrations/leitbild/mirror-service.ts').MirrorService,
 ): Promise<void> => {
   let msg: WSInbound
   try {
@@ -290,7 +291,7 @@ export const handleWSMessage = async (
     return
   }
 
-  const ctx = { ws, session, system, broadcast: wsManager.broadcast, wsManager }
+  const ctx = { ws, session, system, broadcast: wsManager.broadcast, wsManager, leitbildMirror }
 
   try {
     for (const handler of commandHandlers) {

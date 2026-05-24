@@ -89,6 +89,12 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
         const ai = agent ? asAIAgent(agent) : undefined
         ai?.clearHistory?.(room.profile.id)
       }
+      // Clear-room is treated as 'stop all the noise': detach any Leitbild
+      // mirror subscription and wipe the persisted leitbildMirror config so
+      // a hard-reload doesn't immediately rebind. Re-binding is explicit
+      // (PUT /leitbild-mirror or the demo flow). Mirror is undefined in
+      // some test harnesses; ?. handles that.
+      ctx.leitbildMirror?.detach(room)
       broadcastToSessionInstance({ type: 'messages_cleared', roomName: room.profile.name })
       return true
     }

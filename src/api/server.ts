@@ -376,7 +376,7 @@ export const createServer = (config: ServerConfig) => {
         // closes the WS — but races are possible and getOrLoad returns the
         // reloaded system safely.
         const targetSystem = await registry.getOrLoad(ws.data.instanceId)
-        await handleWSMessage(ws, session, typeof raw === 'string' ? raw : raw.toString(), targetSystem, wsManager)
+        await handleWSMessage(ws, session, typeof raw === 'string' ? raw : raw.toString(), targetSystem, wsManager, config.leitbildMirror)
       },
 
       close(ws) {

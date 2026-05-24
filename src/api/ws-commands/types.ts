@@ -11,6 +11,10 @@ export interface CommandContext {
   readonly system: System
   readonly broadcast: (msg: WSOutbound) => void
   readonly wsManager: WSManager
+  // Process-level Leitbild mirror. Optional so test helpers that build
+  // CommandContext literals don't have to inject it. Production wiring
+  // in handleWSMessage threads it through.
+  readonly leitbildMirror?: import('../../integrations/leitbild/mirror-service.ts').MirrorService
 }
 
 // Helpers below take the full WSConnection so safeSend can be applied. The
