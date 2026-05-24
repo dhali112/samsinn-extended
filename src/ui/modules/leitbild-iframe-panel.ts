@@ -300,6 +300,15 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
     showCaptureToast('Your browser does not support screen capture (getDisplayMedia).')
     return
   }
+  // Firefox (incl. Zen, LibreWolf, other Gecko forks) blocks drawImage on
+  // displayMedia streams that contain cross-origin iframes (the Leitbild
+  // dashboard). This is an irrecoverable browser-side security policy.
+  // Short-circuit with a clear message rather than letting getDisplayMedia
+  // prompt the user for permission they can't actually use.
+  if (/firefox|zen|gecko\/2/i.test(navigator.userAgent)) {
+    showCaptureToast('Screenshots not available in your browser. Try Chrome or Safari.')
+    return
+  }
 
   const wasLabel = btn.textContent
   btn.disabled = true
