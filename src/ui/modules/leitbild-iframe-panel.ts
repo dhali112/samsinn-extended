@@ -325,62 +325,73 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
     const track = stream.getVideoTracks()[0]
     if (!track) throw new Error('No video track in capture stream')
 
-    // Firefox: drawImage from a video that isn't in the DOM throws
-    // "The object can not be found here." Attach hidden + wait for a
-    // painted frame before drawing.
-    video = document.createElement('video')
-    video.srcObject = stream
-    video.muted = true
-    video.playsInline = true
-    video.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0'
-    document.body.appendChild(video)
-
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('Capture stream timed out (loadedmetadata)')), 5000)
-      video!.addEventListener('loadedmetadata', () => { clearTimeout(t); resolve() }, { once: true })
-      video!.addEventListener('error', () => { clearTimeout(t); reject(new Error('Capture stream errored')) }, { once: true })
-    })
-
     // Validate the user picked a browser tab.
     const settings = track.getSettings() as { displaySurface?: string }
     if (settings.displaySurface && settings.displaySurface !== 'browser') {
       throw new Error('Please pick "This tab" (or the Samsinn browser tab) in the share dialog')
     }
 
-    // Force a painted frame.
-    await video.play()
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('Capture stream timed out (playing)')), 5000)
-      if (!video!.paused && video!.readyState >= 2) { clearTimeout(t); resolve(); return }
-      video!.addEventListener('playing', () => { clearTimeout(t); resolve() }, { once: true })
-    })
-    await new Promise(r => requestAnimationFrame(r))
-    await new Promise(r => requestAnimationFrame(r))
+    // Two paths to a drawable ImageBitmap:
+    //   A. ImageCapture.grabFrame() — modern, designed for exactly this
+    //      use case, supported in Firefox + Chrome. Returns ImageBitmap
+    //      which canvas.drawImage definitely accepts.
+    //   B. Video element + drawImage(video) — fallback for browsers that
+    //      lack ImageCapture (Safari). Requires the video to be in the
+    //      DOM and to have painted a frame.
+    let frame: ImageBitmap | HTMLVideoElement
+    let frameW: number
+    let frameH: number
 
-    const vw = video.videoWidth
-    const vh = video.videoHeight
-    if (vw === 0 || vh === 0) throw new Error('Capture stream has zero dimensions')
+    const ImageCaptureCtor = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { grabFrame: () => Promise<ImageBitmap> } }).ImageCapture
+    if (ImageCaptureCtor) {
+      const ic = new ImageCaptureCtor(track)
+      const bitmap = await ic.grabFrame()
+      frame = bitmap
+      frameW = bitmap.width
+      frameH = bitmap.height
+    } else {
+      // Safari fallback — video element path.
+      video = document.createElement('video')
+      video.srcObject = stream
+      video.muted = true
+      video.playsInline = true
+      video.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0'
+      document.body.appendChild(video)
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('Capture stream timed out (loadedmetadata)')), 5000)
+        video!.addEventListener('loadedmetadata', () => { clearTimeout(t); resolve() }, { once: true })
+        video!.addEventListener('error', () => { clearTimeout(t); reject(new Error('Capture stream errored')) }, { once: true })
+      })
+      await video.play()
+      await new Promise(r => requestAnimationFrame(r))
+      await new Promise(r => requestAnimationFrame(r))
+      frame = video
+      frameW = video.videoWidth
+      frameH = video.videoHeight
+    }
 
-    // Map iframe rect from CSS pixels to video pixels using the actual
-    // captured stream's dimensions (browsers often downscale the capture).
-    const ratioX = vw / window.innerWidth
-    const ratioY = vh / window.innerHeight
+    if (frameW === 0 || frameH === 0) throw new Error('Capture frame has zero dimensions')
+
+    // Map iframe rect from CSS pixels to frame pixels using the actual
+    // capture dimensions (browsers often downscale).
+    const ratioX = frameW / window.innerWidth
+    const ratioY = frameH / window.innerHeight
     const sxRaw = Math.round(rect.left * ratioX)
     const syRaw = Math.round(rect.top * ratioY)
     const swRaw = Math.round(rect.width * ratioX)
     const shRaw = Math.round(rect.height * ratioY)
     // Clamp inside bounds — drawImage throws on out-of-bounds source rect.
-    const sx = Math.max(0, Math.min(sxRaw, Math.max(0, vw - 1)))
-    const sy = Math.max(0, Math.min(syRaw, Math.max(0, vh - 1)))
-    const sw = Math.max(1, Math.min(swRaw, vw - sx))
-    const sh = Math.max(1, Math.min(shRaw, vh - sy))
+    const sx = Math.max(0, Math.min(sxRaw, Math.max(0, frameW - 1)))
+    const sy = Math.max(0, Math.min(syRaw, Math.max(0, frameH - 1)))
+    const sw = Math.max(1, Math.min(swRaw, frameW - sx))
+    const sh = Math.max(1, Math.min(shRaw, frameH - sy))
 
     const canvas = document.createElement('canvas')
     canvas.width = sw
     canvas.height = sh
     const cx = canvas.getContext('2d')
     if (!cx) throw new Error('Could not get 2D canvas context')
-    cx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh)
+    cx.drawImage(frame, sx, sy, sw, sh, 0, 0, sw, sh)
     const dataUrl = canvas.toDataURL('image/png')
 
     const attachment: MessageAttachment = {
