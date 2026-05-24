@@ -304,48 +304,76 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
   const wasLabel = btn.textContent
   btn.disabled = true
   btn.textContent = '…'
-  try {
-    // Get iframe's viewport rect BEFORE the OS picker steals focus.
-    const rect = iframe.getBoundingClientRect()
-    const dpr = window.devicePixelRatio || 1
 
-    const stream = await navigator.mediaDevices.getDisplayMedia({
+  // Refs we may need to clean up regardless of where in the flow we exit.
+  let stream: MediaStream | undefined
+  let video: HTMLVideoElement | undefined
+  const cleanup = (): void => {
+    try { stream?.getTracks().forEach(t => t.stop()) } catch { /* */ }
+    try { if (video) video.srcObject = null } catch { /* */ }
+    try { video?.remove() } catch { /* */ }
+  }
+
+  try {
+    // Snapshot iframe rect BEFORE the OS picker steals focus.
+    const rect = iframe.getBoundingClientRect()
+
+    stream = await navigator.mediaDevices.getDisplayMedia({
       video: { displaySurface: 'browser' } as MediaTrackConstraints,
       audio: false,
     })
     const track = stream.getVideoTracks()[0]
     if (!track) throw new Error('No video track in capture stream')
 
-    // Drive a hidden video element to grab one frame.
-    const video = document.createElement('video')
+    // Firefox: drawImage from a video that isn't in the DOM throws
+    // "The object can not be found here." Attach hidden + wait for a
+    // painted frame before drawing.
+    video = document.createElement('video')
     video.srcObject = stream
     video.muted = true
     video.playsInline = true
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('Capture stream timed out')), 5000)
-      video.addEventListener('loadedmetadata', () => { clearTimeout(t); resolve() }, { once: true })
-      video.addEventListener('error', () => { clearTimeout(t); reject(new Error('Capture stream errored')) }, { once: true })
-    })
-    await video.play()
-    // Allow one frame to actually paint.
-    await new Promise(r => requestAnimationFrame(r))
+    video.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0'
+    document.body.appendChild(video)
 
-    // Validate the user picked a browser tab (not full screen / app window).
-    // If displaySurface is unknown, we proceed with rect-crop and rely on
-    // the implicit-failure path (img will be the wrong content).
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('Capture stream timed out (loadedmetadata)')), 5000)
+      video!.addEventListener('loadedmetadata', () => { clearTimeout(t); resolve() }, { once: true })
+      video!.addEventListener('error', () => { clearTimeout(t); reject(new Error('Capture stream errored')) }, { once: true })
+    })
+
+    // Validate the user picked a browser tab.
     const settings = track.getSettings() as { displaySurface?: string }
     if (settings.displaySurface && settings.displaySurface !== 'browser') {
-      track.stop()
       throw new Error('Please pick "This tab" (or the Samsinn browser tab) in the share dialog')
     }
 
-    // Crop the captured frame to the iframe's rect. Captured frame is at
-    // device pixels; iframe rect is at CSS pixels. Scale by dpr.
-    const sx = Math.round(rect.left * dpr)
-    const sy = Math.round(rect.top * dpr)
-    const sw = Math.round(rect.width * dpr)
-    const sh = Math.round(rect.height * dpr)
-    if (sw <= 0 || sh <= 0) throw new Error('Iframe has zero size; cannot capture')
+    // Force a painted frame.
+    await video.play()
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('Capture stream timed out (playing)')), 5000)
+      if (!video!.paused && video!.readyState >= 2) { clearTimeout(t); resolve(); return }
+      video!.addEventListener('playing', () => { clearTimeout(t); resolve() }, { once: true })
+    })
+    await new Promise(r => requestAnimationFrame(r))
+    await new Promise(r => requestAnimationFrame(r))
+
+    const vw = video.videoWidth
+    const vh = video.videoHeight
+    if (vw === 0 || vh === 0) throw new Error('Capture stream has zero dimensions')
+
+    // Map iframe rect from CSS pixels to video pixels using the actual
+    // captured stream's dimensions (browsers often downscale the capture).
+    const ratioX = vw / window.innerWidth
+    const ratioY = vh / window.innerHeight
+    const sxRaw = Math.round(rect.left * ratioX)
+    const syRaw = Math.round(rect.top * ratioY)
+    const swRaw = Math.round(rect.width * ratioX)
+    const shRaw = Math.round(rect.height * ratioY)
+    // Clamp inside bounds — drawImage throws on out-of-bounds source rect.
+    const sx = Math.max(0, Math.min(sxRaw, Math.max(0, vw - 1)))
+    const sy = Math.max(0, Math.min(syRaw, Math.max(0, vh - 1)))
+    const sw = Math.max(1, Math.min(swRaw, vw - sx))
+    const sh = Math.max(1, Math.min(shRaw, vh - sy))
 
     const canvas = document.createElement('canvas')
     canvas.width = sw
@@ -353,12 +381,6 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
     const cx = canvas.getContext('2d')
     if (!cx) throw new Error('Could not get 2D canvas context')
     cx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh)
-
-    // Release the screen-share immediately (browser shows persistent UI
-    // indicator otherwise).
-    track.stop()
-    video.srcObject = null
-
     const dataUrl = canvas.toDataURL('image/png')
 
     const attachment: MessageAttachment = {
@@ -375,6 +397,7 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
     const msg = (err as Error).message || 'capture failed'
     showCaptureToast(`Screenshot failed: ${msg}`)
   } finally {
+    cleanup()
     btn.disabled = false
     btn.textContent = wasLabel ?? '📷'
   }
