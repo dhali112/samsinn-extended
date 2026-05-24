@@ -232,7 +232,7 @@ export const openDemoModal = async (demoId: string): Promise<void> => {
     // when the room was selected (before the mirror existed), so the toggle
     // button is currently hidden. Re-evaluate so it appears.
     const roomName = $rooms.get()[roomId]?.name
-    if (roomName) void updateLeitbildPanelForRoom(roomName)
+    if (roomName) void updateLeitbildPanelForRoom(roomName, roomId)
   }
   const activated = await ensureRoomPacks(roomId, demo.requiredPacks)
   if (!activated) {

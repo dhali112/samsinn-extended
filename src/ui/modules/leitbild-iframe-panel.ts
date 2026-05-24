@@ -278,9 +278,28 @@ const togglePanel = (): void => {
 
 let currentRoomId: string | undefined  // set by updateLeitbildPanelForRoom — we need it for attach target
 
+const showCaptureToast = (msg: string, kind: 'error' | 'info' = 'error'): void => {
+  const bg = kind === 'error' ? '#dc2626' : '#1f2937'
+  const toast = document.createElement('div')
+  toast.style.cssText = `position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:10000;background:${bg};color:#fff;padding:10px 16px;border-radius:6px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:80vw;`
+  toast.textContent = msg
+  document.body.appendChild(toast)
+  setTimeout(() => toast.remove(), 6000)
+}
+
 const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> => {
-  if (!iframe || !panel) return
-  if (!currentRoomId) return
+  if (!iframe || !panel) {
+    showCaptureToast('Internal: panel not initialized')
+    return
+  }
+  if (!currentRoomId) {
+    showCaptureToast('Internal: no room context. Switch rooms once and try again.')
+    return
+  }
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    showCaptureToast('Your browser does not support screen capture (getDisplayMedia).')
+    return
+  }
 
   const wasLabel = btn.textContent
   btn.disabled = true
@@ -354,13 +373,7 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
     addAttachment(currentRoomId, attachment)
   } catch (err) {
     const msg = (err as Error).message || 'capture failed'
-    // Best-effort toast — non-blocking. We don't depend on the toast module
-    // here to keep the panel self-contained.
-    const toast = document.createElement('div')
-    toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:10000;background:#dc2626;color:#fff;padding:10px 16px;border-radius:6px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:80vw;'
-    toast.textContent = `Screenshot failed: ${msg}`
-    document.body.appendChild(toast)
-    setTimeout(() => toast.remove(), 5000)
+    showCaptureToast(`Screenshot failed: ${msg}`)
   } finally {
     btn.disabled = false
     btn.textContent = wasLabel ?? '📷'
