@@ -71,8 +71,9 @@ export interface OpenAICompatConfig {
 // this shape when talking to Anthropic; other providers continue to get a
 // plain string in `content`.
 interface OAIContentPart {
-  type: 'text'
-  text: string
+  type: 'text' | 'image_url'
+  text?: string
+  image_url?: { url: string; detail?: 'low' | 'high' | 'auto' }
   cache_control?: { type: 'ephemeral' }
 }
 
@@ -256,6 +257,27 @@ const markLastCacheable = <T>(arr: ReadonlyArray<T>): T[] => {
 const safeAssistantContent = (m: { role: string; content: string }): string =>
   m.role === 'assistant' && (!m.content || m.content.length === 0) ? ' ' : m.content
 
+// When a message carries images (V1 multimodal), build content parts.
+// Returns null if the message has no images, signaling the caller to use
+// the plain-string path. Only fires for user messages — assistant + system
+// stay text-only (assistant images aren't part of the OAI flow we use;
+// system prompts don't carry images).
+const messageContentWithImages = (
+  m: ChatRequest['messages'][number],
+): ReadonlyArray<OAIContentPart> | null => {
+  if (!m.images || m.images.length === 0) return null
+  if (m.role !== 'user') return null
+  const parts: OAIContentPart[] = []
+  // Text part first (even if empty — providers tolerate empty text).
+  if (m.content && m.content.length > 0) {
+    parts.push({ type: 'text', text: m.content })
+  }
+  for (const img of m.images) {
+    parts.push({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'auto' } })
+  }
+  return parts
+}
+
 const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[] => {
   // Anthropic path: if systemBlocks are provided, emit the system message as
   // an array of content parts with `cache_control: ephemeral` on the last
@@ -279,15 +301,21 @@ const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[]
     if (systemParts.length > 0) {
       out.push({ role: 'system', content: systemParts })
     }
-    // Remaining non-system messages pass through as strings.
+    // Remaining non-system messages pass through; images attach as content parts.
     for (const m of request.messages) {
       if (m.role === 'system') continue // superseded by systemParts above
-      out.push({ role: m.role, content: safeAssistantContent(m) })
+      const withImages = messageContentWithImages(m)
+      if (withImages) out.push({ role: m.role, content: withImages })
+      else out.push({ role: m.role, content: safeAssistantContent(m) })
     }
     return out
   }
-  // Default path — plain strings.
-  return request.messages.map(m => ({ role: m.role, content: safeAssistantContent(m) }))
+  // Default path — plain strings, except for user messages with images.
+  return request.messages.map(m => {
+    const withImages = messageContentWithImages(m)
+    if (withImages) return { role: m.role, content: withImages }
+    return { role: m.role, content: safeAssistantContent(m) }
+  })
 }
 
 // OpenAI's gpt-5 family AND the o-series reasoning models (o1, o3, o4)

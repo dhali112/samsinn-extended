@@ -81,6 +81,24 @@ export interface Message {
   //     its own context. Primary consumer: the experiment runner's export_room
   //     tool — enables analyses like "which variants used web_search? how often?".
   readonly toolTrace?: ReadonlyArray<ToolTraceEntry>
+
+  // --- Image attachments (v0.15+). User-posted images, e.g. screenshots
+  //     of the Leitbild dashboard. PNG only in V1. Inline data URLs (no
+  //     external blob storage). For multimodal-capable agents the
+  //     attachments are forwarded as native image content; for non-
+  //     multimodal models a text placeholder substitutes (see
+  //     context-builder + modelSupportsImages). No max-count cap.
+  readonly attachments?: ReadonlyArray<MessageAttachment>
+}
+
+export interface MessageAttachment {
+  readonly kind: 'image'
+  readonly dataUrl: string          // data:image/png;base64,...
+  readonly mimeType: 'image/png'    // PNG only in V1; widen union later
+  readonly width: number            // pixels
+  readonly height: number
+  readonly source?: 'leitbild' | 'user-upload'
+  readonly capturedAt: number       // ms epoch
 }
 
 export interface ToolTraceEntry {

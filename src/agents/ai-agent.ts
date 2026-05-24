@@ -23,6 +23,7 @@ import type { AgentHistory, Message } from '../core/types/messaging.ts'
 import type { EvalEvent, EvalEventCore } from '../core/types/agent-eval.ts'
 import { generateTraceId } from '../core/types/agent-eval.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
+import { modelSupportsImages } from '../llm/multimodal.ts'
 import type { Room } from '../core/types/room.ts'
 import type { ToolDefinition, ToolExecutor } from '../core/types/tool.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types/constants.ts'
@@ -231,6 +232,7 @@ export const createAIAgent = (
     getCompressedIds: (roomId: string) => getCompressedIds?.(roomId) ?? new Set<string>(),
     getRoomMembers,
     suppressLeitbildMirror: !!currentLeitbildBinding,
+    supportsImages: modelSupportsImages(currentModel),
   })
   // buildContext walks five sources to assemble the LLM context. Order in
   // src/agents/context-builder.ts top header. Quick map of sources here so

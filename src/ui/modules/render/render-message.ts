@@ -322,6 +322,36 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
 
     div.appendChild(content)
 
+    // Image attachments — render thumbnails below the text content.
+    // Click → full-size modal. Matches the composer-attachments preview
+    // pattern. Always inline; no virtualization (V1).
+    if (msg.attachments && msg.attachments.length > 0) {
+      const attHost = document.createElement('div')
+      attHost.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px'
+      for (const att of msg.attachments) {
+        if (att.kind !== 'image') continue
+        const wrap = document.createElement('div')
+        wrap.style.cssText = 'border:1px solid var(--border, #374151);border-radius:4px;overflow:hidden;cursor:zoom-in;max-width:200px'
+        wrap.title = `${att.width}×${att.height}${att.source ? ' · ' + att.source : ''} — click to enlarge`
+        const img = document.createElement('img')
+        img.src = att.dataUrl
+        img.style.cssText = 'display:block;max-width:200px;max-height:140px;object-fit:contain'
+        wrap.appendChild(img)
+        wrap.addEventListener('click', () => {
+          const overlay = document.createElement('div')
+          overlay.style.cssText = 'position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;cursor:zoom-out'
+          overlay.addEventListener('click', () => overlay.remove())
+          const big = document.createElement('img')
+          big.src = att.dataUrl
+          big.style.cssText = 'max-width:95vw;max-height:95vh;box-shadow:0 8px 32px rgba(0,0,0,0.5)'
+          overlay.appendChild(big)
+          document.body.appendChild(overlay)
+        })
+        attHost.appendChild(wrap)
+      }
+      div.appendChild(attHost)
+    }
+
     // If a script is active in this room, append the whisper attached to
     // THIS specific message (looked up by messageId in stepLogs). No-op
     // when no script is active or no whisper has been classified yet.

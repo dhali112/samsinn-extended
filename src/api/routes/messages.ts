@@ -20,6 +20,9 @@ export const messageRoutes: RouteEntry[] = [
         senderName: (body.senderName as string | undefined) ?? senderAgent?.name,
         content: body.content as string,
         type: (body.messageType as 'chat') ?? 'chat',
+        ...(Array.isArray(body.attachments) && body.attachments.length > 0
+          ? { attachments: body.attachments as ReadonlyArray<import('../../core/types/messaging.ts').MessageAttachment> }
+          : {}),
       })
       return json(messages, 201)
     },

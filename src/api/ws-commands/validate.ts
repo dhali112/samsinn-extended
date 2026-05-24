@@ -1,5 +1,5 @@
 import type { IncludeContext, IncludePrompts } from '../../core/types/agent.ts'
-import type { MessageTarget } from '../../core/types/messaging.ts'
+import type { MessageAttachment, MessageTarget } from '../../core/types/messaging.ts'
 import { validateSummaryConfig } from '../../core/types/summary.ts'
 import type { BiometricSignalWire, WSInbound } from '../../core/types/ws-protocol.ts'
 
@@ -41,6 +41,34 @@ const validateTarget = (value: unknown): ValidationResult<MessageTarget> => {
   if (!isObject(value)) return { ok: false, error: 'target must be an object' }
   if (!isStringArray(value.rooms)) return { ok: false, error: 'target.rooms must be an array of strings' }
   return { ok: true, value: { rooms: value.rooms } }
+}
+
+const validateAttachments = (value: unknown): ValidationResult<ReadonlyArray<MessageAttachment>> => {
+  if (value === undefined || value === null) return { ok: true, value: [] }
+  if (!Array.isArray(value)) return { ok: false, error: 'attachments must be an array' }
+  const out: MessageAttachment[] = []
+  for (const [i, raw] of value.entries()) {
+    if (!isObject(raw)) return { ok: false, error: `attachments[${i}] must be an object` }
+    if (raw.kind !== 'image') return { ok: false, error: `attachments[${i}].kind must be "image" (V1)` }
+    if (raw.mimeType !== 'image/png') return { ok: false, error: `attachments[${i}].mimeType must be "image/png" (V1)` }
+    if (typeof raw.dataUrl !== 'string' || !raw.dataUrl.startsWith('data:image/png;base64,')) {
+      return { ok: false, error: `attachments[${i}].dataUrl must start with "data:image/png;base64,"` }
+    }
+    if (typeof raw.width !== 'number' || typeof raw.height !== 'number') {
+      return { ok: false, error: `attachments[${i}].width and .height must be numbers` }
+    }
+    if (typeof raw.capturedAt !== 'number') return { ok: false, error: `attachments[${i}].capturedAt must be a number` }
+    out.push({
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl: raw.dataUrl,
+      width: raw.width,
+      height: raw.height,
+      capturedAt: raw.capturedAt,
+      ...(typeof raw.source === 'string' && (raw.source === 'leitbild' || raw.source === 'user-upload') ? { source: raw.source } : {}),
+    })
+  }
+  return { ok: true, value: out }
 }
 
 const validateBooleanMap = <T extends IncludePrompts | IncludeContext>(value: unknown, key: string): ValidationResult<T | undefined> => {
@@ -128,7 +156,18 @@ export const validateWSInbound = (raw: unknown): ValidationResult<WSInbound> => 
       if (!content.ok) return content
       const senderId = optionalString(raw, 'senderId')
       if (!senderId.ok) return senderId
-      return { ok: true, value: { type: 'post_message', target: target.value, content: content.value, ...(senderId.value ? { senderId: senderId.value } : {}) } }
+      const attachments = validateAttachments(raw.attachments)
+      if (!attachments.ok) return attachments
+      return {
+        ok: true,
+        value: {
+          type: 'post_message',
+          target: target.value,
+          content: content.value,
+          ...(senderId.value ? { senderId: senderId.value } : {}),
+          ...(attachments.value.length > 0 ? { attachments: attachments.value } : {}),
+        },
+      }
     }
     case 'create_room': {
       const name = requiredString(raw, 'name')

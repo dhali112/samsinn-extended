@@ -593,6 +593,10 @@
           <div id="room-members" class="flex flex-wrap gap-1 items-center flex-1 min-w-0"></div>
           <button id="btn-mode-toggle" class="mode-btn icon-btn shrink-0" title="Broadcast — click to switch to Manual" aria-label="Broadcast — click to switch to Manual" aria-pressed="false"><span data-icon="megaphone"></span></button>
         </div>
+        <!-- Pending image attachments — chip strip above the composer.
+             Populated by the Leitbild screenshot button (and any future
+             image-source) via composer-attachments.ts. Hidden when empty. -->
+        <div id="composer-attachments" style="display:none"></div>
         <form id="chat-form" class="px-3 py-1 bg-surface flex gap-2 items-center">
           <!-- Input wrapper holds the inline send icon, positioned absolutely
                on the right inside the input's padding. -->

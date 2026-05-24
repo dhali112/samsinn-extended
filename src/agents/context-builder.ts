@@ -23,6 +23,7 @@ import type { AgentHistory, AgentProfile, Message } from '../core/types/messagin
 import type { ChatRequest } from '../core/types/llm.ts'
 import type { IncludeContext, IncludePrompts } from '../core/types/agent.ts'
 import { SYSTEM_SENDER_ID } from '../core/types/constants.ts'
+import { imagePlaceholder } from '../llm/multimodal.ts'
 // Text tool protocol removed — all tools use native tool calling
 
 // === Flush info — describes which incoming messages were consumed ===
@@ -45,21 +46,44 @@ export interface ContextResult {
 
 // === Format a single message for LLM context ===
 
+export interface FormattedMessage {
+  readonly role: 'user' | 'assistant'
+  readonly content: string
+  // Carried through to ChatRequest.messages[].images when the receiving
+  // model is multimodal. For non-multimodal models the caller swaps these
+  // for placeholder text in `content` and omits this field.
+  readonly images?: ReadonlyArray<{ readonly dataUrl: string; readonly mimeType: 'image/png' }>
+}
+
 export const formatMessage = (
   msg: Message,
   prefix: string,
   agentId: string,
   resolveName: (senderId: string) => string,
   compressedIds?: ReadonlySet<string>,
-): { role: 'user' | 'assistant'; content: string } | null => {
+  supportsImages?: boolean,
+): FormattedMessage | null => {
   if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.type === 'pass' || msg.type === 'mute' || msg.type === 'error') return null
+  // Attachment handling: when the model is multimodal AND the message
+  // carries image attachments, attach them to the formatted message.
+  // Otherwise inline a placeholder describing the image so the model
+  // still knows something visual was shared.
+  const attachments = msg.attachments?.filter(a => a.kind === 'image') ?? []
+  const hasImages = attachments.length > 0
+  const imageInfo = hasImages && supportsImages
+    ? { images: attachments.map(a => ({ dataUrl: a.dataUrl, mimeType: a.mimeType })) }
+    : undefined
+  const imagePlaceholderText = hasImages && !supportsImages
+    ? '\n' + attachments.map(a => imagePlaceholder(a)).join('\n')
+    : ''
+
   if (msg.senderId === agentId) {
     const staleRef = compressedIds && msg.inReplyTo?.some(id => compressedIds.has(id))
     const suffix = staleRef ? '\n[↩ context compressed]' : ''
-    return { role: 'assistant' as const, content: `${msg.content}${suffix}` }
+    return { role: 'assistant' as const, content: `${msg.content}${suffix}${imagePlaceholderText}`, ...(imageInfo ?? {}) }
   }
   const name = msg.type === 'room_summary' ? 'Room Summary' : resolveName(msg.senderId)
-  return { role: 'user' as const, content: `${prefix}[${name}]: ${msg.content}` }
+  return { role: 'user' as const, content: `${prefix}[${name}]: ${msg.content}${imagePlaceholderText}`, ...(imageInfo ?? {}) }
 }
 
 // === Flush incoming buffer after evaluation ===
@@ -160,6 +184,11 @@ export interface BuildContextDeps {
   // reset boundaries still pass through so the agent knows its mental model
   // was invalidated.
   readonly suppressLeitbildMirror?: boolean
+  // V0.15: when true, messages with image attachments forward the images
+  // to the LLM as multimodal content parts. When false, images are replaced
+  // with a text placeholder explaining what's attached so the model can ask
+  // the user to describe. Set by ai-agent.ts based on modelSupportsImages().
+  readonly supportsImages?: boolean
 }
 
 const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePrompts> => ({
@@ -528,13 +557,13 @@ const createNormalStrategy = (
 
     const formattedOld: ChatRequest['messages'][number][] = []
     for (const msg of old) {
-      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds)
+      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages)
       if (formatted) formattedOld.push(formatted)
     }
 
     const formattedFresh: Array<{ formatted: ChatRequest['messages'][number]; id: string }> = []
     for (const msg of fresh) {
-      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds)
+      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages)
       if (formatted) formattedFresh.push({ formatted, id: msg.id })
     }
 

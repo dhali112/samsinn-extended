@@ -166,6 +166,7 @@ const handleDeleteMessage = (msgId: string): void => {
 // Prompt-context modal + per-message view-context handler live in context-modal.ts.
 import { showContextModal, handleViewContext } from './modals/context-modal.ts'
 import { updateLeitbildPanelForRoom } from './leitbild-iframe-panel.ts'
+import { clearAttachments, getAttachments, mountAttachmentChips } from './composer-attachments.ts'
 
 // === Data fetching (triggered by subscriptions) ===
 // Lives in room-fetchers.ts — imported above.
@@ -341,6 +342,12 @@ document.getElementById('btn-report-bug')!.onclick = () => {
 }
 
 // --- Room selection: visibility, fetch data, render messages ---
+// Composer attachments chip strip: mount once into the host element below
+// the messages area. Returns a refresh function we call on every room
+// change so the strip re-targets to the new active room.
+const composerAttachmentsHost = document.getElementById('composer-attachments') as HTMLDivElement
+const refreshComposerChips = mountAttachmentChips(composerAttachmentsHost, () => $selectedRoomId.get() ?? undefined)
+
 $selectedRoomId.listen((roomId, prevRoomId) => {
   // Clear unread
   if (roomId) $unreadCounts.setKey(roomId, 0)
@@ -392,7 +399,9 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
     // leitbildMirror binding; hides when it doesn't. Fetches the binding's
     // baseUrl + instanceId from /api/rooms/:name/leitbild-mirror to build the
     // SPA URL. See docs/leitbild-walkthrough.md.
-    void updateLeitbildPanelForRoom(room.name)
+    void updateLeitbildPanelForRoom(room.name, roomId)
+    // Composer attachments chip strip re-targets to the new active room.
+    refreshComposerChips()
 
     // Empty-state demo nudge — shows when the room has no chat content
     // (only the welcome system banner). Hides as soon as anyone posts.
@@ -582,7 +591,15 @@ chatForm.onsubmit = (e) => {
     }
   }
 
-  send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId })
+  const pendingAtts = getAttachments(roomId)
+  send({
+    type: 'post_message',
+    target: { rooms: [roomName] },
+    content,
+    senderId,
+    ...(pendingAtts.length > 0 ? { attachments: pendingAtts } : {}),
+  })
+  if (pendingAtts.length > 0) clearAttachments(roomId)
   chatInput.value = ''; resetChatInputHeight()
   resetChatInputHeight()
 }

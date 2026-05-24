@@ -64,6 +64,13 @@ export interface ChatRequest {
   readonly messages: ReadonlyArray<{
     readonly role: 'system' | 'user' | 'assistant'
     readonly content: string
+    // V1 multimodal: optional inline images attached to this message.
+    // Providers that support multimodal (modelSupportsImages true) emit
+    // the appropriate wire-format content parts; providers that don't
+    // ignore this field and use `content` as-is — the context-builder is
+    // responsible for substituting a text placeholder in `content` for
+    // non-multimodal models.
+    readonly images?: ReadonlyArray<{ readonly dataUrl: string; readonly mimeType: 'image/png' }>
   }>
   readonly temperature?: number
   // Deterministic seed; best-effort per provider (see AIAgentConfig.seed).

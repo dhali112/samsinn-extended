@@ -29,6 +29,7 @@ export const handleMessageCommand = (msg: WSInbound, ctx: CommandContext): boole
         senderName: sender.name,
         content: msg.content,
         type: 'chat',
+        ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
       })
       for (const m of delivered) {
         wsManager.safeSend(ws, JSON.stringify({ type: 'message', message: m } satisfies WSOutbound))

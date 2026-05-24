@@ -16,6 +16,9 @@
 // Leitbild's native SPA — the user interacts via Leitbild's own controls.
 // ============================================================================
 
+import type { MessageAttachment } from '../../core/types/messaging.ts'
+import { addAttachment } from './composer-attachments.ts'
+
 interface MirrorStatus {
   readonly status: null | {
     readonly baseUrl: string
@@ -178,12 +181,30 @@ const ensurePanel = (): { wrap: HTMLDivElement; ifr: HTMLIFrameElement } => {
   const title = document.createElement('span')
   title.textContent = 'Leitbild dashboard (bound to this room)'
   header.appendChild(title)
+  // Screenshot button — capture the iframe area via getDisplayMedia,
+  // auto-crop to the iframe's bounding rect (so the user gets the dashboard,
+  // not the chat around it), insert into the composer as a pending
+  // attachment. User picks the Samsinn tab in the OS picker; if they pick
+  // a different surface the rect-crop will be outside captured bounds and
+  // we fail loud with a toast hint.
+  const headerBtns = document.createElement('div')
+  headerBtns.style.cssText = 'display:flex;align-items:center;gap:4px'
+  const captureBtn = document.createElement('button')
+  captureBtn.type = 'button'
+  captureBtn.textContent = '📷'
+  captureBtn.title = 'Screenshot this panel and attach to composer (does not send)'
+  captureBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:14px;cursor:pointer;padding:2px 6px;line-height:1;border-radius:3px'
+  captureBtn.addEventListener('mouseenter', () => { captureBtn.style.background = 'rgba(255,255,255,0.1)' })
+  captureBtn.addEventListener('mouseleave', () => { captureBtn.style.background = 'none' })
+  captureBtn.addEventListener('click', (e) => { e.stopPropagation(); void captureIframeScreenshot(captureBtn) })
+  headerBtns.appendChild(captureBtn)
   const closeBtn = document.createElement('button')
   closeBtn.type = 'button'
   closeBtn.textContent = '×'
   closeBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:0 4px;line-height:1'
   closeBtn.addEventListener('click', (e) => { e.stopPropagation(); panel!.style.display = 'none' })
-  header.appendChild(closeBtn)
+  headerBtns.appendChild(closeBtn)
+  header.appendChild(headerBtns)
   panel.appendChild(header)
 
   // Drag-by-header behavior.
@@ -244,10 +265,113 @@ const togglePanel = (): void => {
   panel.style.display = panel.style.display === 'none' ? 'flex' : 'none'
 }
 
+// === Screenshot capture ===
+//
+// Uses navigator.mediaDevices.getDisplayMedia → user picks browser tab →
+// we grab one video frame → crop to the iframe's bounding rect (scaled by
+// devicePixelRatio of the captured surface) → PNG data URL → add as a
+// pending attachment to the current room's composer.
+//
+// User experience: one click → OS picker → pick the Samsinn tab → chip
+// appears in composer. They can type accompanying text + take more
+// screenshots before sending.
+
+let currentRoomId: string | undefined  // set by updateLeitbildPanelForRoom — we need it for attach target
+
+const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> => {
+  if (!iframe || !panel) return
+  if (!currentRoomId) return
+
+  const wasLabel = btn.textContent
+  btn.disabled = true
+  btn.textContent = '…'
+  try {
+    // Get iframe's viewport rect BEFORE the OS picker steals focus.
+    const rect = iframe.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: 'browser' } as MediaTrackConstraints,
+      audio: false,
+    })
+    const track = stream.getVideoTracks()[0]
+    if (!track) throw new Error('No video track in capture stream')
+
+    // Drive a hidden video element to grab one frame.
+    const video = document.createElement('video')
+    video.srcObject = stream
+    video.muted = true
+    video.playsInline = true
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('Capture stream timed out')), 5000)
+      video.addEventListener('loadedmetadata', () => { clearTimeout(t); resolve() }, { once: true })
+      video.addEventListener('error', () => { clearTimeout(t); reject(new Error('Capture stream errored')) }, { once: true })
+    })
+    await video.play()
+    // Allow one frame to actually paint.
+    await new Promise(r => requestAnimationFrame(r))
+
+    // Validate the user picked a browser tab (not full screen / app window).
+    // If displaySurface is unknown, we proceed with rect-crop and rely on
+    // the implicit-failure path (img will be the wrong content).
+    const settings = track.getSettings() as { displaySurface?: string }
+    if (settings.displaySurface && settings.displaySurface !== 'browser') {
+      track.stop()
+      throw new Error('Please pick "This tab" (or the Samsinn browser tab) in the share dialog')
+    }
+
+    // Crop the captured frame to the iframe's rect. Captured frame is at
+    // device pixels; iframe rect is at CSS pixels. Scale by dpr.
+    const sx = Math.round(rect.left * dpr)
+    const sy = Math.round(rect.top * dpr)
+    const sw = Math.round(rect.width * dpr)
+    const sh = Math.round(rect.height * dpr)
+    if (sw <= 0 || sh <= 0) throw new Error('Iframe has zero size; cannot capture')
+
+    const canvas = document.createElement('canvas')
+    canvas.width = sw
+    canvas.height = sh
+    const cx = canvas.getContext('2d')
+    if (!cx) throw new Error('Could not get 2D canvas context')
+    cx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh)
+
+    // Release the screen-share immediately (browser shows persistent UI
+    // indicator otherwise).
+    track.stop()
+    video.srcObject = null
+
+    const dataUrl = canvas.toDataURL('image/png')
+
+    const attachment: MessageAttachment = {
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl,
+      width: sw,
+      height: sh,
+      source: 'leitbild',
+      capturedAt: Date.now(),
+    }
+    addAttachment(currentRoomId, attachment)
+  } catch (err) {
+    const msg = (err as Error).message || 'capture failed'
+    // Best-effort toast — non-blocking. We don't depend on the toast module
+    // here to keep the panel self-contained.
+    const toast = document.createElement('div')
+    toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:10000;background:#dc2626;color:#fff;padding:10px 16px;border-radius:6px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:80vw;'
+    toast.textContent = `Screenshot failed: ${msg}`
+    document.body.appendChild(toast)
+    setTimeout(() => toast.remove(), 5000)
+  } finally {
+    btn.disabled = false
+    btn.textContent = wasLabel ?? '📷'
+  }
+}
+
 // === Public API — call from app.ts when the active room changes ===
 
-export const updateLeitbildPanelForRoom = async (roomName: string | undefined): Promise<void> => {
+export const updateLeitbildPanelForRoom = async (roomName: string | undefined, roomId?: string): Promise<void> => {
   currentRoomName = roomName
+  currentRoomId = roomId
   pollAbort?.abort()
   pollAbort = new AbortController()
 
