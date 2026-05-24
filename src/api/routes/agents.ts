@@ -103,6 +103,8 @@ export const agentRoutes: RouteEntry[] = [
         detail.promptsEnabled = aiAgent.getPromptsEnabled()
         detail.contextEnabled = aiAgent.getContextEnabled()
         detail.maxToolIterations = aiAgent.getMaxToolIterations()
+        const binding = aiAgent.getLeitbildBinding?.()
+        if (binding) detail.leitbildBinding = binding
         // Registered tools + token cost estimates — enables per-tool UI panel
         const registered = system.toolRegistry.list().map(t => t.name)
         detail.registeredTools = registered
@@ -144,6 +146,12 @@ export const agentRoutes: RouteEntry[] = [
           persona: body.persona as string,
           temperature: body.temperature as number | undefined,
           historyLimit: body.historyLimit as number | undefined,
+          ...(body.tools && Array.isArray(body.tools)
+            ? { tools: (body.tools as unknown[]).filter((t): t is string => typeof t === 'string') }
+            : {}),
+          ...(body.leitbildBinding && typeof body.leitbildBinding === 'object'
+            ? { leitbildBinding: body.leitbildBinding as import('../../core/types/agent.ts').LeitbildAgentBinding }
+            : {}),
         })
         const aiA = asAIAgent(agent)
         const evt = { type: 'agent_joined' as const, agent: { id: agent.id, name: agent.name, kind: agent.kind, ...(aiA ? { model: aiA.getModel() } : {}) } }
@@ -246,6 +254,12 @@ export const agentRoutes: RouteEntry[] = [
           const resolved = requested.filter(n => known.has(n))
           aiAgent.updateTools?.(resolved)
           await system.refreshAllAgentTools()
+        }
+        // Leitbild binding — accept full replacement or explicit null to clear.
+        if (body.leitbildBinding === null) {
+          aiAgent.updateLeitbildBinding?.(undefined)
+        } else if (body.leitbildBinding && typeof body.leitbildBinding === 'object') {
+          aiAgent.updateLeitbildBinding?.(body.leitbildBinding as import('../../core/types/agent.ts').LeitbildAgentBinding)
         }
       }
       if (typeof body.description === 'string' && agent.updateDescription) {

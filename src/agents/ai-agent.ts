@@ -599,6 +599,8 @@ export const createAIAgent = (
     updateThinking: (enabled: boolean) => { currentThinking = enabled },
     getTools: () => currentTools,
     updateTools: (tools: ReadonlyArray<string>) => { currentTools = tools },
+    getLeitbildBinding: () => currentLeitbildBinding,
+    updateLeitbildBinding: (binding: AIAgentConfig['leitbildBinding']) => { currentLeitbildBinding = binding },
     getIncludePrompts: () => ({ ...includePromptsState }),
     updateIncludePrompts: (partial: IncludePrompts) => {
       for (const key of Object.keys(partial) as PromptSection[]) {

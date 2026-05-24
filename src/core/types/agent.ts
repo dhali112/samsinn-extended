@@ -93,6 +93,8 @@ export interface AIAgent extends Agent {
   readonly updateThinking?: (enabled: boolean) => void
   readonly getTools: () => ReadonlyArray<string> | undefined
   readonly updateTools?: (tools: ReadonlyArray<string>) => void
+  readonly getLeitbildBinding?: () => LeitbildAgentBinding | undefined
+  readonly updateLeitbildBinding?: (binding: LeitbildAgentBinding | undefined) => void
   readonly refreshTools?: (support: {
     toolExecutor?: ToolExecutor
     toolDefinitions?: ReadonlyArray<ToolDefinition>
