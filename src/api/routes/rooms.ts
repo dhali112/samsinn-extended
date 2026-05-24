@@ -68,7 +68,7 @@ export const roomRoutes: RouteEntry[] = [
   {
     method: 'DELETE',
     pattern: /^\/api\/rooms\/([^/]+)\/messages$/,
-    handler: (_req, match, { system }) => {
+    handler: (_req, match, { system, leitbildMirror }) => {
       const name = decodeURIComponent(match[1]!)
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
@@ -81,16 +81,22 @@ export const roomRoutes: RouteEntry[] = [
         const ai = agent ? asAIAgent(agent) : undefined
         ai?.clearHistory?.(room.profile.id)
       }
+      // Clear-room is treated as a "stop all the noise" action: also
+      // detach any Leitbild mirror subscription and wipe the persisted
+      // leitbildMirror config so a hard-reload doesn't immediately rebind.
+      // Re-binding is explicit (PUT /leitbild-mirror or the demo flow).
+      leitbildMirror?.detach(room)
       return json({ cleared: true, count })
     },
   },
   {
     method: 'DELETE',
     pattern: /^\/api\/rooms\/([^/]+)$/,
-    handler: (_req, match, { system }) => {
+    handler: (_req, match, { system, leitbildMirror }) => {
       const name = decodeURIComponent(match[1]!)
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
+      leitbildMirror?.detach(room)
       system.removeRoom(room.profile.id)
       return json({ removed: true })
     },

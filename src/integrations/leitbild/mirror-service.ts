@@ -34,6 +34,32 @@ interface ActiveMirror {
   readonly client: LeitbildClient
   handle?: SubscriptionHandle
   lastSeq: number
+  // Per-object hash of "meaningful" fields (lifecycle, operational, domain,
+  // alerts) — excludes spatial/timestamps. Used to suppress object.upserted
+  // events that only carry position telemetry. Real state transitions still
+  // post. Cleared on detach. Bounded by the active object population.
+  readonly objectSignatures: Map<string, string>
+}
+
+// Build a stable signature of the parts of an object.upserted event that
+// represent meaningful state change (not high-frequency position telemetry).
+// Returns null for non-object.upserted events — caller posts those normally.
+const meaningfulSignature = (event: LeitbildEvent): { objectId: string; sig: string } | null => {
+  if (event.type !== 'object.upserted') return null
+  const obj = (event as { object?: { id?: string; lifecycle?: unknown; operational?: unknown; domainData?: unknown; alerts?: unknown } }).object
+  if (!obj?.id) return null
+  // Stringify the interesting subset; deterministic key order via explicit
+  // object literal. Position lives under obj.spatial which we deliberately
+  // omit. Timestamps are also excluded (they tick on every update).
+  return {
+    objectId: obj.id,
+    sig: JSON.stringify({
+      lifecycle: obj.lifecycle ?? null,
+      operational: obj.operational ?? null,
+      domain: obj.domainData ?? null,
+      alerts: obj.alerts ?? null,
+    }),
+  }
 }
 
 export interface MirrorStatus {
@@ -109,6 +135,20 @@ export const createMirrorService = (): MirrorService => {
     // Forward-only delivery for non-reset events.
     if (typeof event.seq === 'number' && event.seq <= mirror.lastSeq) return
     if (typeof event.seq === 'number') mirror.lastSeq = event.seq
+
+    // Suppress position-only object.upserted events: only post when the
+    // meaningful signature (lifecycle, operational status, domain payload,
+    // alerts) changes. Filters the firehose of ambulance position updates
+    // while preserving real state transitions (new incidents, status
+    // changes, capacity changes). Other event types (command.issued,
+    // command.result, scenario.* events, etc.) always post.
+    const meaningful = meaningfulSignature(event)
+    if (meaningful) {
+      const prev = mirror.objectSignatures.get(meaningful.objectId)
+      if (prev === meaningful.sig) return  // same meaningful state — skip
+      mirror.objectSignatures.set(meaningful.objectId, meaningful.sig)
+    }
+
     post(mirror.room, formatEvent(event, mirror.config.format), mirror, event)
   }
 
@@ -117,7 +157,7 @@ export const createMirrorService = (): MirrorService => {
     detachRoom(room.profile.id)
 
     const client = createLeitbildClient(config.baseUrl)
-    const mirror: ActiveMirror = { room, config, client, lastSeq: 0 }
+    const mirror: ActiveMirror = { room, config, client, lastSeq: 0, objectSignatures: new Map() }
 
     try {
       const manifest = await client.getManifest()
