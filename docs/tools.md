@@ -506,6 +506,44 @@ Search academic papers via Semantic Scholar with citation counts and AI summarie
 
 ---
 
+## Integration Tools — Leitbild (`src/integrations/leitbild/`)
+
+Available to any AI agent whose config carries a `leitbildBinding: { baseUrl, instanceId, role }`. Without a binding, every `lb_*` tool returns an explanatory error. Tools walk the deployment's discovery manifest — never hardcode paths.
+
+### `lb_state`
+
+**Parameters:** none.
+**Description:** Returns the current Leitbild Control Instance snapshot summary: scenarioId, clock state, object count by domain, current seq. Per-(agent, instance) snapshot is cached for ~5 seconds so multiple tool calls in one turn don't all roundtrip.
+**Returns:** `{ scenarioId, clock, objectCount, objectsByDomain, seq }`.
+
+### `lb_object`
+
+**Parameters:** `id` (string — the operational object id).
+**Description:** Read one operational object from the bound Control Instance by id. Use after `lb_state` to drill into a specific object.
+**Returns:** the full operational object record, or `{ error }` if not found in the current snapshot.
+
+### `lb_query`
+
+**Parameters:** `packId` (e.g. `"ambulance"`), `kind` (e.g. `"ambulance.dispatchState"`), `payload` (pack-specific object, pass `{}` if none).
+**Description:** Call a Leitbild pack-defined read query. Discover valid `packId` / `kind` combinations via `GET /api/control-instances/{id}/capabilities` on the bound deployment.
+**Returns:** the pack-defined result shape.
+
+### `lb_scenario`
+
+**Parameters:** none.
+**Description:** Active scenario metadata (title, description). Use once at start of reasoning to ground in the scenario.
+**Returns:** `{ id, title, description, ... }`.
+
+### `lb_command` *(operator role only)*
+
+**Parameters:** `kind` (string — must match one of `acceptedCommandKinds` from the CI capabilities), `targets` (array of object ids; pass `[]` if none), `payload` (command-kind-specific object).
+**Description:** Issue a control command. The tool POSTs with stable `actorId: "actor:samsinn:<agent-slug>"` and `clientId: "client:samsinn:<agent-slug>"` for full provenance in Leitbild's journal. Returns the immediate accept/reject result; live downstream events are visible to other room participants via the room mirror. The issuing agent does NOT see its own command echo (V2.A mirror suppression handles that).
+**Returns:** `{ ok: true, commandId, acceptedAt }` on accept; `{ ok: false, commandId, rejectedAt, reason }` on reject.
+
+**Note:** `lb_reset` and `lb_clock_set` are intentionally NOT exposed as agent tools — reset invalidates reasoning context and clock control alters experiment timing. Both stay human-only.
+
+---
+
 ## Adding External Tools
 
 Drop a `.ts` file in `./tools/` (project-local) or `~/.samsinn/tools/` (user-global). The file should export a `Tool` or `Tool[]` as its default export:
