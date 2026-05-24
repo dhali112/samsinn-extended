@@ -106,6 +106,73 @@ const ensureRoomPacks = async (roomId: string, packs: ReadonlyArray<string>): Pr
   }
 }
 
+// Leitbild demo setup: create a fresh oslo-ambulance CI on
+// leitbild.samsinn.app, bind the current room's mirror to it, and
+// patch any AI agents in the room to add a matching leitbildBinding
+// + the lb_* read tools. If no AI is in the room, the mirror still
+// works and the iframe shows; the user just won't get agent answers
+// to the demo prompts until they add an AI member.
+const setupLeitbildDemo = async (roomId: string): Promise<{ ok: true; instanceId: string } | { ok: false; reason: string }> => {
+  const roomName = $rooms.get()[roomId]?.name
+  if (!roomName) return { ok: false, reason: 'Room not found' }
+  const LEITBILD_BASE = 'https://leitbild.samsinn.app'
+
+  // 1. Create a fresh CI on Leitbild
+  let instanceId: string
+  try {
+    const res = await fetch(`${LEITBILD_BASE}/api/control-instances`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenarioId: 'oslo-ambulance' }),
+    })
+    if (!res.ok) return { ok: false, reason: `Failed to create CI on Leitbild: HTTP ${res.status}` }
+    const body = await res.json() as { id?: string }
+    if (!body.id) return { ok: false, reason: 'Leitbild returned no instance id' }
+    instanceId = body.id
+  } catch (err) {
+    return { ok: false, reason: `Could not reach Leitbild: ${(err as Error).message}` }
+  }
+
+  // 2. Bind the room mirror
+  try {
+    const res = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/leitbild-mirror`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ baseUrl: LEITBILD_BASE, instanceId, format: 'summary' }),
+    })
+    if (!res.ok) return { ok: false, reason: `Failed to bind room mirror: HTTP ${res.status}` }
+  } catch (err) {
+    return { ok: false, reason: `Bind error: ${(err as Error).message}` }
+  }
+
+  // 3. PATCH any AI members of the room with leitbildBinding + lb_* tools.
+  const members = $roomMembers.get()[roomId] ?? []
+  const agents = $agents.get()
+  const ais = members.map(id => agents[id]).filter((a): a is NonNullable<typeof a> => !!a && a.kind === 'ai')
+  for (const ai of ais) {
+    try {
+      // Fetch current tools so we don't overwrite the agent's allowlist.
+      const detailRes = await fetch(`/api/agents/${encodeURIComponent(ai.name)}`, { credentials: 'same-origin' })
+      const detail = detailRes.ok ? await detailRes.json() as { tools?: ReadonlyArray<string> } : { tools: [] as string[] }
+      const existingTools = new Set(detail.tools ?? [])
+      const lbTools = ['lb_state', 'lb_object', 'lb_query', 'lb_scenario', 'lb_dispatch_context']
+      for (const t of lbTools) existingTools.add(t)
+      await fetch(`/api/agents/${encodeURIComponent(ai.name)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          tools: [...existingTools],
+          leitbildBinding: { baseUrl: LEITBILD_BASE, instanceId, role: 'observer' },
+        }),
+      })
+    } catch { /* non-fatal — toast in caller will note no-AI case */ }
+  }
+
+  return { ok: true, instanceId }
+}
+
 // Best-effort: install an external pack if it isn't already present.
 // Biometrics demo uses this for `samsinn-packs/biometrics`. Awaited so
 // the room-pack-activation step (which only succeeds if the pack is
@@ -143,6 +210,21 @@ export const openDemoModal = async (demoId: string): Promise<void> => {
   // installed before activation can succeed.
   if (demo.id === 'biometrics') {
     await ensurePackInstalled('biometrics', 'samsinn-packs/biometrics')
+  }
+  if (demo.id === 'leitbild') {
+    const setup = await setupLeitbildDemo(roomId)
+    if (setup.ok === false) {
+      showToast(document.body, `Leitbild demo setup failed: ${setup.reason}`, { type: 'error', position: 'fixed', durationMs: 10000 })
+      return
+    }
+    // Inform the user — and warn if no AI to consume the agent tools.
+    const aiCount = ($roomMembers.get()[roomId] ?? [])
+      .map(id => $agents.get()[id])
+      .filter(a => !!a && a.kind === 'ai').length
+    const aiHint = aiCount > 0
+      ? `${aiCount} AI agent${aiCount > 1 ? 's' : ''} configured with lb_* tools.`
+      : 'Add an AI agent to this room (from room members panel) so it can use the lb_* tools — then try the prompts.'
+    showToast(document.body, `Leitbild bound: ${setup.instanceId.slice(0, 36)}… · ${aiHint}`, { type: 'success', position: 'fixed', durationMs: 10000 })
   }
   const activated = await ensureRoomPacks(roomId, demo.requiredPacks)
   if (!activated) {

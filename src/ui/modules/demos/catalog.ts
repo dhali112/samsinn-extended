@@ -16,7 +16,7 @@ export interface DemoPrompt {
   readonly prompt: string
 }
 
-export type DemoId = 'procedures' | 'biometrics' | 'aviation'
+export type DemoId = 'procedures' | 'biometrics' | 'aviation' | 'leitbild'
 
 export interface Demo {
   readonly id: DemoId
@@ -131,6 +131,40 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
     ],
   },
 ]
+
+// Append Leitbild demo. Keeps the array shape; setup work lives in
+// demo-modal.ts's openDemoModal special case (same pattern as biometrics
+// pack install).
+;(DEMO_CATALOG as Demo[]).push({
+  id: 'leitbild',
+  title: 'Leitbild Integration',
+  blurb:
+    'Connect this room to a live Leitbild ambulance-dispatch scenario. A fresh Control Instance is created at leitbild.samsinn.app, mirrored events flow into this chat, and a Leitbild dashboard becomes available bottom-right. If an AI agent is in the room it gets a leitbildBinding plus lb_* tools automatically. Re-open this list any time from the 🪄 icon in the room header.',
+  requiredPacks: [],
+  requiredTools: ['lb_state', 'lb_scenario', 'lb_query', 'lb_object', 'lb_dispatch_context'],
+  prompts: [
+    {
+      label: 'Summarize the scenario',
+      description: 'Use lb_dispatch_context to pull state + scenario + all pack queries in one call, then summarize.',
+      prompt: 'Use lb_dispatch_context (one tool call gives you the full picture: state, scenario, capabilities, all pack queries). Then in 3-4 sentences tell me: what scenario are we in, what packs are active, how many objects by domain, and any notable incidents or ambulance dispatch state.',
+    },
+    {
+      label: 'Where are the ambulances?',
+      description: 'Use lb_query to read ambulance dispatch state.',
+      prompt: 'Use lb_query with packId="ambulance" kind="ambulance.dispatchState" to read the current ambulance fleet. Then list each ambulance with its label, status (idle / dispatched / en-route / etc), and current location. Be concise — one line per ambulance.',
+    },
+    {
+      label: 'Active incidents — what needs attention?',
+      description: 'Identify incidents and prioritize.',
+      prompt: 'Use lb_query("ambulance", "ambulance.objects", {}) and filter for incident-type objects. For each unresolved incident, give its label, severity, and location. Then suggest which one a dispatcher should respond to first and why.',
+    },
+    {
+      label: 'Weather conditions',
+      description: 'Query the weather pack.',
+      prompt: 'Use lb_query with packId="weather" kind="weather.fieldStats" to read current weather field stats. Summarize what the agent sees and whether it would affect ambulance response time.',
+    },
+  ],
+})
 
 export const getDemo = (id: string): Demo | undefined =>
   DEMO_CATALOG.find(d => d.id === id)
