@@ -9,6 +9,7 @@ import { createModal } from '../modals/detail-modal.ts'
 import { showToast } from '../toast.ts'
 import { send } from '../ws-send.ts'
 import { $selectedRoomId, $rooms, $agents, $roomMembers, $selectedHumanByRoom } from '../stores.ts'
+import { updateLeitbildPanelForRoom } from '../leitbild-iframe-panel.ts'
 import { icon } from '../icon.ts'
 import { getDemo, type Demo, type DemoPrompt } from './catalog.ts'
 import { $activeDemoByRoom } from './active-demo-store.ts'
@@ -227,6 +228,11 @@ export const openDemoModal = async (demoId: string): Promise<void> => {
       ? `${aiCount} AI agent${aiCount > 1 ? 's' : ''} configured with lb_* tools.`
       : 'Add an AI agent to this room (from room members panel) so it can use the lb_* tools — then try the prompts.'
     showToast(document.body, `Leitbild bound: ${setup.instanceId.slice(0, 36)}… · ${aiHint}`, { type: 'success', position: 'fixed', durationMs: 10000 })
+    // Refresh the iframe panel for the current room — it was last evaluated
+    // when the room was selected (before the mirror existed), so the toggle
+    // button is currently hidden. Re-evaluate so it appears.
+    const roomName = $rooms.get()[roomId]?.name
+    if (roomName) void updateLeitbildPanelForRoom(roomName)
   }
   const activated = await ensureRoomPacks(roomId, demo.requiredPacks)
   if (!activated) {
