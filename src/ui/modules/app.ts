@@ -165,6 +165,7 @@ const handleDeleteMessage = (msgId: string): void => {
 
 // Prompt-context modal + per-message view-context handler live in context-modal.ts.
 import { showContextModal, handleViewContext } from './modals/context-modal.ts'
+import { updateLeitbildPanelForRoom } from './leitbild-iframe-panel.ts'
 
 // === Data fetching (triggered by subscriptions) ===
 // Lives in room-fetchers.ts — imported above.
@@ -386,6 +387,12 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
 
     // Apply room-specific state
     refreshRoomControls()
+
+    // Leitbild dashboard iframe — shows floating toggle when this room has a
+    // leitbildMirror binding; hides when it doesn't. Fetches the binding's
+    // baseUrl + instanceId from /api/rooms/:name/leitbild-mirror to build the
+    // SPA URL. See docs/leitbild-walkthrough.md.
+    void updateLeitbildPanelForRoom(room.name)
 
     // Empty-state demo nudge — shows when the room has no chat content
     // (only the welcome system banner). Hides as soon as anyone posts.

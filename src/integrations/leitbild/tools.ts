@@ -199,6 +199,118 @@ const createLbScenario = (deps: LeitbildToolDeps): Tool => ({
   },
 })
 
+// === lb_dispatch_context (V2.A composite) ===
+//
+// One-shot read tool that bundles everything an agent typically needs to
+// reason about a dispatch decision: scenario meta, current snapshot, and
+// every pack-query advertised in the per-CI capabilities manifest, called
+// in parallel with empty payloads. Queries that require a non-empty payload
+// surface as { ok: false, reason } in their slot — agents see the gap and
+// can follow up with a targeted lb_query call.
+
+interface CapabilitiesResponse {
+  readonly scenarioId?: string
+  readonly activePackIds?: ReadonlyArray<string>
+  readonly queryKinds?: Readonly<Record<string, ReadonlyArray<string>>>
+  readonly wikiRefs?: ReadonlyArray<{ readonly name: string; readonly url: string }>
+}
+
+const createLbDispatchContext = (deps: LeitbildToolDeps): Tool => ({
+  name: 'lb_dispatch_context',
+  description: 'Single composite read that bundles current snapshot summary, scenario metadata, capabilities (active packs + accepted command kinds + wikiRefs), and every pack-query advertised by the per-CI capabilities manifest (called in parallel with empty payload). Use this as the first call when you need a broad picture before reasoning. Queries that require payloads will show as failed slots — call lb_query directly with the right payload to fill them.',
+  returns: 'JSON: { state, scenario, capabilities, queries: { <packId>: { <kind>: { ok, result|reason } } } }',
+  parameters: { type: 'object', properties: {}, additionalProperties: false },
+  execute: async (_params, ctx) => {
+    const binding = requireBinding(deps, ctx)
+    if ('error' in binding) return fail(binding.error)
+    try {
+      const client = createLeitbildClient(binding.baseUrl)
+      // Fetch state, scenario, and capabilities in parallel.
+      const manifest = await client.getManifest()
+      const capsLinkTemplate = manifest.links['controlInstanceCapabilities']?.hrefTemplate
+      if (!capsLinkTemplate) return fail('Manifest missing controlInstanceCapabilities link rel (older Leitbild deployment?).')
+      const queriesLinkTemplate = manifest.links['controlInstancePackQueries']?.hrefTemplate
+      if (!queriesLinkTemplate) return fail('Manifest missing controlInstancePackQueries link rel.')
+
+      const capsUrl = capsLinkTemplate.replace('{id}', encodeURIComponent(binding.instanceId))
+      const [snapshot, scenarioFetched, capsRes] = await Promise.all([
+        getCachedSnapshot(ctx.callerId, binding),
+        (async () => {
+          const snap = await getCachedSnapshot(ctx.callerId, binding)
+          if (!snap.scenarioId) return undefined
+          return client.getScenario(snap.scenarioId)
+        })(),
+        fetch(capsUrl, { headers: { Accept: 'application/json', 'Leitbild-Client': 'samsinn; version="0.1.0"' } }),
+      ])
+      if (!capsRes.ok) return fail(`Capabilities fetch failed: HTTP ${capsRes.status}`)
+      const capabilities = await capsRes.json() as CapabilitiesResponse
+
+      // Walk queryKinds, call each in parallel with empty payload.
+      const queriesUrl = queriesLinkTemplate.replace('{id}', encodeURIComponent(binding.instanceId))
+      const queryKindsMap = capabilities.queryKinds ?? {}
+      const allKinds: Array<{ packId: string; kind: string }> = []
+      for (const [packId, kinds] of Object.entries(queryKindsMap)) {
+        for (const kind of kinds) allKinds.push({ packId, kind })
+      }
+      // Soft cap to keep tool output bounded even if a deployment publishes many kinds.
+      const CAP = 50
+      const truncated = allKinds.length > CAP
+      const kindsToCall = truncated ? allKinds.slice(0, CAP) : allKinds
+
+      const queryResults = await Promise.all(
+        kindsToCall.map(async ({ packId, kind }) => {
+          try {
+            const res = await fetch(queriesUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Leitbild-Client': 'samsinn; version="0.1.0"' },
+              body: JSON.stringify({ packId, kind, payload: {} }),
+            })
+            if (!res.ok) return { packId, kind, ok: false as const, reason: `HTTP ${res.status}` }
+            const body = await res.json() as { response?: { ok?: boolean; result?: unknown; error?: { message?: string } } }
+            if (body.response?.ok === false) return { packId, kind, ok: false as const, reason: body.response.error?.message ?? 'pack rejected' }
+            return { packId, kind, ok: true as const, result: body.response?.result ?? body }
+          } catch (err) {
+            return { packId, kind, ok: false as const, reason: (err as Error).message }
+          }
+        }),
+      )
+
+      // Group by packId for readability.
+      const queriesByPack: Record<string, Record<string, unknown>> = {}
+      for (const r of queryResults) {
+        queriesByPack[r.packId] = queriesByPack[r.packId] ?? {}
+        queriesByPack[r.packId]![r.kind] = r.ok ? { ok: true, result: r.result } : { ok: false, reason: r.reason }
+      }
+
+      const objects = (snapshot.objects as ReadonlyArray<{ domain?: string }> | undefined) ?? []
+      const objectsByDomain: Record<string, number> = {}
+      for (const o of objects) {
+        const d = o?.domain ?? 'unknown'
+        objectsByDomain[d] = (objectsByDomain[d] ?? 0) + 1
+      }
+
+      return ok({
+        state: {
+          scenarioId: snapshot.scenarioId,
+          clock: snapshot.clock,
+          objectCount: objects.length,
+          objectsByDomain,
+          seq: snapshot.seq,
+        },
+        scenario: scenarioFetched ?? null,
+        capabilities: {
+          activePackIds: capabilities.activePackIds ?? [],
+          wikiRefs: capabilities.wikiRefs ?? [],
+        },
+        queries: queriesByPack,
+        ...(truncated ? { truncated: true, capacity: CAP, totalAdvertised: allKinds.length } : {}),
+      })
+    } catch (err) {
+      return fail(`lb_dispatch_context failed: ${(err as Error).message}`)
+    }
+  },
+})
+
 // === Factory ===
 
 export const createLeitbildTools = (deps: LeitbildToolDeps): ReadonlyArray<Tool> => [
@@ -206,4 +318,5 @@ export const createLeitbildTools = (deps: LeitbildToolDeps): ReadonlyArray<Tool>
   createLbObject(deps),
   createLbQuery(deps),
   createLbScenario(deps),
+  createLbDispatchContext(deps),
 ]

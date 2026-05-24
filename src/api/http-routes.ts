@@ -123,6 +123,7 @@ export const handleAPI = async (
     pathname.startsWith('/api/') &&
     pathname !== '/api/auth' &&
     pathname !== '/api/system/info' &&
+    pathname !== '/api/system/diagnostics' &&  // system-wide, not per-instance — used by deploy smoke probe
     getInstanceId(req) === null
   ) {
     return new Response('No session', { status: 401 })

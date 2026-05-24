@@ -3,9 +3,9 @@ import { createLeitbildTools, __clearLeitbildToolCache } from './tools.ts'
 import type { LeitbildAgentBinding } from '../../core/types/agent.ts'
 
 describe('leitbild tools', () => {
-  test('returns four read tools with stable names', () => {
+  test('returns five read tools with stable names', () => {
     const tools = createLeitbildTools({ getBinding: () => undefined })
-    expect(tools.map(t => t.name)).toEqual(['lb_state', 'lb_object', 'lb_query', 'lb_scenario'])
+    expect(tools.map(t => t.name)).toEqual(['lb_state', 'lb_object', 'lb_query', 'lb_scenario', 'lb_dispatch_context'])
   })
 
   test('each tool fails with a helpful error when no binding is configured', async () => {

@@ -352,6 +352,13 @@ export const bootstrap = async (): Promise<void> => {
   // runs synchronously before any registry consumer code.
   let wsManager!: ReturnType<typeof createWSManager>
 
+  // Leitbild mirror service — created eagerly so the onSystemCreated hook
+  // can call restoreAll(system.house) for any room with persisted
+  // leitbildMirror config. Without this, restored mirrors stay dormant
+  // until a human hits the mirror endpoint (lazy reattach).
+  const { createMirrorService } = await import('./integrations/leitbild/mirror-service.ts')
+  const leitbildMirror = createMirrorService()
+
   // === SystemRegistry ===
   const registry = createSystemRegistry({
     shared,
@@ -392,6 +399,12 @@ export const bootstrap = async (): Promise<void> => {
       // above). autoSaver is passed in directly because the registry map
       // entry isn't set until buildSystem returns.
       wireSystemEvents(system, wsManager, autoSaver, id)
+      // Reattach any Leitbild mirrors whose room config was restored from
+      // snapshot. Without this, mirrors stay dormant until the lazy
+      // reattach-on-GET fires (which requires a human or agent hitting
+      // the endpoint). Fire-and-forget; mirror.attach handles its own
+      // errors by posting a [mirror error] system message.
+      void leitbildMirror.restoreAll(system.house)
     },
     onSystemEvicted: (system, id) => {
       // Close WS sessions for this instance — they hold dangling references.
@@ -864,13 +877,6 @@ export const bootstrap = async (): Promise<void> => {
     const uiPath = `${import.meta.dir}/ui`
     await ensureCssBuilt({ uiPath })
   }
-  // Leitbild integration — process-level mirror service. Created here so
-  // it survives across per-instance reloads. Per-instance restoreAll runs
-  // after each system loads; for headless/ephemeral boot it's fine for
-  // the service to exist with no rooms attached.
-  const { createMirrorService } = await import('./integrations/leitbild/mirror-service.ts')
-  const leitbildMirror = createMirrorService()
-
   const { createServer } = await import('./api/server.ts')
   createServer({
     registry,
