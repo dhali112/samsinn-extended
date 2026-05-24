@@ -68,19 +68,24 @@ export const createMirrorService = (): MirrorService => {
     })
   }
 
-  const isResetEvent = (event: LeitbildEvent): boolean => {
-    // Leitbild's reset emits a runtime-initiated state change. We match
-    // any event whose type contains "reset" — defensive against exact
-    // event-type-name changes upstream.
-    return typeof event.type === 'string' && /reset/i.test(event.type)
+  // Detect Leitbild Control Instance reset. Two signals:
+  //   1. Explicit `controlInstance.reset` event from Leitbild (preferred,
+  //      requires Leitbild V1.1+ — see leitbild docs/discovery.md).
+  //   2. Seq regression (event.seq < mirror.lastSeq) — defensive fallback
+  //      for older Leitbild deployments where reset wipes the journal and
+  //      restarts seq from 0 without emitting an explicit marker.
+  // Both trigger the same re-anchor flow: refetch snapshot, post boundary
+  // message, reset mirror.lastSeq to the new snapshot's seq.
+  const isResetSignal = (event: LeitbildEvent, mirror: ActiveMirror): boolean => {
+    if (event.type === 'controlInstance.reset') return true
+    if (typeof event.seq === 'number' && event.seq < mirror.lastSeq && mirror.lastSeq > 0) return true
+    return false
   }
 
   const handleEvent = (mirror: ActiveMirror) => async (event: LeitbildEvent): Promise<void> => {
-    if (event.seq <= mirror.lastSeq) return
-    mirror.lastSeq = event.seq
-
-    if (isResetEvent(event)) {
+    if (isResetSignal(event, mirror)) {
       // Re-anchor: refetch snapshot, post boundary message with NEW seq.
+      // Note: the post-reset seq may be lower than mirror.lastSeq.
       try {
         const snapshot = await mirror.client.getSnapshot(mirror.config.instanceId)
         mirror.lastSeq = snapshot.seq
@@ -101,6 +106,9 @@ export const createMirrorService = (): MirrorService => {
       }
     }
 
+    // Forward-only delivery for non-reset events.
+    if (typeof event.seq === 'number' && event.seq <= mirror.lastSeq) return
+    if (typeof event.seq === 'number') mirror.lastSeq = event.seq
     post(mirror.room, formatEvent(event, mirror.config.format), mirror, event)
   }
 

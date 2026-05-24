@@ -195,7 +195,16 @@ export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
         }
         if (msg.type === 'events' && Array.isArray(msg.events)) {
           for (const event of msg.events as LeitbildEvent[]) {
-            if (typeof event.seq !== 'number' || event.seq <= sub.lastSeq) continue
+            if (typeof event.seq !== 'number') continue
+            // Detect epoch boundary (Leitbild's reset wipes the journal
+            // and restarts seq from 0; the new epoch isn't a duplicate
+            // of the old one). Reset internal dedup state so the new
+            // events pass through; subscribers handle re-anchoring.
+            if (event.seq < sub.lastSeq && sub.lastSeq > 0) {
+              sub.lastSeq = 0
+              for (const r of sub.subscribers) r.lastSeq = 0
+            }
+            if (event.seq <= sub.lastSeq) continue
             sub.lastSeq = event.seq
             for (const record of sub.subscribers) {
               if (event.seq > record.lastSeq) {
