@@ -72,6 +72,9 @@ export interface RouteContext {
   readonly instances?: InstanceAdmin
   // Read-only health/wiring snapshot. Wired in bootstrap.
   readonly diagnostics?: DiagnosticsCapability
+  // Leitbild mirror service (process-level singleton). Wired in bootstrap.
+  // Absent if the integration was not initialized (e.g. in tests).
+  readonly leitbildMirror?: import('../../integrations/leitbild/mirror-service.ts').MirrorService
 }
 
 export interface RouteEntry {

@@ -34,7 +34,7 @@ export type MessageErrorCode =
 // IMPORTANT: this is metadata, not LLM context. The agent's context-builder
 // strips `cause` so it doesn't bleed into the prompt as noise.
 
-export type MessageCauseKind = 'script' | 'trigger' | 'biometric'
+export type MessageCauseKind = 'script' | 'trigger' | 'biometric' | 'external-mirror'
 
 export interface MessageCause {
   readonly kind: MessageCauseKind

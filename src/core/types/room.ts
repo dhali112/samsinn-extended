@@ -57,6 +57,23 @@ export interface RoomState {
   // (demos, pwr-ops). No implicit augmentation at read time. Empty list is
   // valid ("user has deactivated everything") and distinguishable from absent.
   readonly activePacks: ReadonlyArray<string>
+  // Optional binding to a Leitbild Control Instance — when set, a mirror
+  // service streams the control instance's events into this room as
+  // system messages. See src/integrations/leitbild/. Absent on rooms with
+  // no Leitbild binding; persisted in snapshot from v25 onward.
+  readonly leitbildMirror?: LeitbildMirrorConfig
+}
+
+// === Leitbild mirror binding (V1: room-scoped, read-only) ===
+//
+// Lives in core because Room state owns it; the mirror service
+// (src/integrations/leitbild/mirror-service.ts) reads/writes via the
+// Room interface. Structural; integration code may extend.
+
+export interface LeitbildMirrorConfig {
+  readonly baseUrl: string         // e.g. "https://leitbild.samsinn.app"
+  readonly instanceId: string      // Leitbild Control Instance id
+  readonly format: 'summary' | 'full'
 }
 
 // === Room — self-contained component: stores messages and delivers to members ===
@@ -119,6 +136,12 @@ export interface Room {
   readonly getActivePacks: () => ReadonlyArray<string>
   readonly setActivePacks: (namespaces: ReadonlyArray<string>) => void
 
+  // Leitbild mirror binding (V1: room-scoped, read-only). Set/cleared via
+  // PUT/DELETE /api/rooms/:name/leitbild-mirror; the mirror service reacts
+  // to changes by attaching/detaching its subscription.
+  readonly getLeitbildMirror: () => LeitbildMirrorConfig | undefined
+  readonly setLeitbildMirror: (config: LeitbildMirrorConfig | undefined) => void
+
   // Snapshot restore — bypass delivery, populate state directly
   readonly injectMessages: (msgs: ReadonlyArray<Message>) => void
   readonly restoreState: (state: RoomRestoreParams) => void
@@ -133,6 +156,7 @@ export interface RoomRestoreParams {
   readonly summaryConfig?: SummaryConfig
   readonly latestSummary?: string
   readonly activePacks?: ReadonlyArray<string>
+  readonly leitbildMirror?: LeitbildMirrorConfig
 }
 
 // === CreateResult — returned when name uniqueness is enforced ===

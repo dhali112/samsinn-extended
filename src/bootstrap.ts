@@ -827,6 +827,13 @@ export const bootstrap = async (): Promise<void> => {
     const uiPath = `${import.meta.dir}/ui`
     await ensureCssBuilt({ uiPath })
   }
+  // Leitbild integration — process-level mirror service. Created here so
+  // it survives across per-instance reloads. Per-instance restoreAll runs
+  // after each system loads; for headless/ephemeral boot it's fine for
+  // the service to exist with no rooms attached.
+  const { createMirrorService } = await import('./integrations/leitbild/mirror-service.ts')
+  const leitbildMirror = createMirrorService()
+
   const { createServer } = await import('./api/server.ts')
   createServer({
     registry,
@@ -836,6 +843,7 @@ export const bootstrap = async (): Promise<void> => {
     evictInstance,
     instances: instancesAdmin,
     diagnostics,
+    leitbildMirror,
   })
 
   // === Graceful shutdown ===

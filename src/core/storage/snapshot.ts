@@ -73,7 +73,7 @@
 
 import type { Agent, AIAgentConfig } from '../types/agent.ts'
 import type { DeliveryMode, Message, RoomProfile } from '../types/messaging.ts'
-import type { Bookmark, Room } from '../types/room.ts'
+import type { Bookmark, LeitbildMirrorConfig, Room } from '../types/room.ts'
 import type { SummaryConfig } from '../types/summary.ts'
 import type { Trigger } from '../triggers/types.ts'
 import { asAIAgent } from '../../agents/shared.ts'
@@ -85,7 +85,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 24
+export const SNAPSHOT_VERSION = 25
 
 // --- Snapshot schema ---
 
@@ -105,6 +105,10 @@ export interface RoomSnapshot {
   // ("user has deactivated every pack including system-suggested ones",
   // though the activation route guards against removing system packs).
   readonly activePacks: ReadonlyArray<string>
+  // Leitbild mirror binding (v25+). Optional; persisted only when a room
+  // is bound to a Leitbild Control Instance. Restored at boot — see
+  // src/integrations/leitbild/mirror-service.ts for reconnect lifecycle.
+  readonly leitbildMirror?: LeitbildMirrorConfig
 }
 
 export interface AgentSnapshot {
@@ -157,7 +161,7 @@ export interface DocumentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '24'
+  readonly version: '25'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -224,6 +228,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       summaryConfig: room.summaryConfig,
       ...(state.latestSummary ? { latestSummary: state.latestSummary } : {}),
       activePacks: [...room.getActivePacks()],
+      ...(room.getLeitbildMirror() ? { leitbildMirror: room.getLeitbildMirror() } : {}),
     })
   }
 
@@ -254,7 +259,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const responseFormat = system.house.getResponseFormat()
 
   return {
-    version: '24',
+    version: '25',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -448,6 +453,7 @@ export const restoreFromSnapshot = async (
       ...(roomSnap.summaryConfig ? { summaryConfig: roomSnap.summaryConfig } : {}),
       ...(roomSnap.latestSummary ? { latestSummary: roomSnap.latestSummary } : {}),
       activePacks: filteredActive,
+      ...(roomSnap.leitbildMirror ? { leitbildMirror: roomSnap.leitbildMirror } : {}),
     })
     roomMap.set(room.profile.id, room)
   }

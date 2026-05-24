@@ -26,6 +26,7 @@ import type {
   ResolveAgentName, ResolveTagFn, RoomProfile,
 } from '../types/messaging.ts'
 import type {
+  LeitbildMirrorConfig,
   OnDeliveryModeChanged, OnMessagePosted, OnSummaryConfigChanged,
   OnSummaryUpdated, OnTurnChanged, Room, RoomRestoreParams, RoomState,
 } from '../types/room.ts'
@@ -83,6 +84,10 @@ export const createRoom = (
   // today). Restore paths overwrite via restoreState({ activePacks: ... }).
   // Snapshot.serialize captures the full list — no implicit augmentation.
   let activePacks: ReadonlyArray<string> = defaultActiveNamespaces()
+  // Optional Leitbild mirror binding (V1: room-scoped, read-only).
+  // Set via setLeitbildMirror; the mirror service in
+  // src/integrations/leitbild/ reacts and attaches/detaches subscriptions.
+  let leitbildMirror: LeitbildMirrorConfig | undefined = undefined
 
   // --- Eligible set: members minus user-muted ---
 
@@ -288,6 +293,7 @@ export const createRoom = (
       // Always include — under v24 semantics activePacks is the full truth,
       // including the empty case ("user deactivated everything").
       activePacks: [...activePacks],
+      ...(leitbildMirror ? { leitbildMirror } : {}),
     }),
 
     getActivePacks: (): ReadonlyArray<string> => activePacks,
@@ -296,6 +302,11 @@ export const createRoom = (
       const out: string[] = []
       for (const n of ns) { if (!seen.has(n)) { seen.add(n); out.push(n) } }
       activePacks = out
+    },
+
+    getLeitbildMirror: (): LeitbildMirrorConfig | undefined => leitbildMirror,
+    setLeitbildMirror: (cfg: LeitbildMirrorConfig | undefined): void => {
+      leitbildMirror = cfg
     },
 
     setMuted,
@@ -361,6 +372,7 @@ export const createRoom = (
       // (the full truth, including empty). The createRoom default-active
       // seed is purely for fresh in-memory rooms; restore overwrites.
       activePacks = state.activePacks ? [...state.activePacks] : []
+      leitbildMirror = state.leitbildMirror
     },
   }
 }

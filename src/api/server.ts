@@ -36,6 +36,9 @@ interface ServerConfig {
   readonly instances: import('./routes/types.ts').InstanceAdmin
   // Read-only diagnostics snapshot (per-instance broadcast wiring health).
   readonly diagnostics: import('./routes/types.ts').DiagnosticsCapability
+  // Leitbild mirror service (process-level). Wired by bootstrap when the
+  // integration is initialized. Optional so tests can omit it.
+  readonly leitbildMirror?: import('../integrations/leitbild/mirror-service.ts').MirrorService
 }
 
 // === Static file serving (path traversal protected) ===
@@ -327,6 +330,7 @@ export const createServer = (config: ServerConfig) => {
         broadcastToInstance: wsManager.broadcastToInstance,
         instances: config.instances,
         diagnostics: config.diagnostics,
+        leitbildMirror: config.leitbildMirror,
       })
       if (apiResponse) {
         // Only append the cookieless-fallback Set-Cookie if the route didn't

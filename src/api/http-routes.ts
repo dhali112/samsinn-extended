@@ -34,6 +34,7 @@ import { scriptRoutes } from './routes/scripts.ts'
 import { geodataRoutes } from './routes/geodata.ts'
 import { documentRoutes } from './routes/documents.ts'
 import { diagnosticRoutes } from './routes/diagnostics.ts'
+import { leitbildMirrorRoutes } from './routes/leitbild-mirror.ts'
 import type { RouteContext } from './routes/types.ts'
 
 // Route helpers live in ./routes/helpers.ts to keep http-routes.ts cycle-free.
@@ -65,6 +66,9 @@ const allRoutes = [
   ...geodataRoutes,
   // RAG documents — per-instance corpus.
   ...documentRoutes,
+  // Leitbild mirror — must come BEFORE roomRoutes so
+  // /rooms/:name/leitbild-mirror matches before the generic /rooms/:name.
+  ...leitbildMirrorRoutes,
   ...roomRoutes,
   // Agent-memory routes BEFORE agentRoutes so /api/agents/:name/memory
   // matches before /api/agents/:name (which would shadow it).
@@ -92,6 +96,7 @@ export interface RouteDeps {
   readonly broadcastToInstance?: RouteContext['broadcastToInstance']
   readonly instances?: RouteContext['instances']
   readonly diagnostics?: RouteContext['diagnostics']
+  readonly leitbildMirror?: RouteContext['leitbildMirror']
 }
 
 export const handleAPI = async (
