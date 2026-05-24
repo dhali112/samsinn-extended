@@ -98,9 +98,11 @@ const ensureDOM = (): { toggle: HTMLButtonElement; wrap: HTMLDivElement; iframe:
 
   iframe = document.createElement('iframe')
   iframe.style.cssText = 'flex:1;border:none;width:100%'
-  // Sandbox: allow scripts (Leitbild needs JS), forms, same-origin (so MapLibre
-  // tile loading works), popups. Don't allow top-navigation or fullscreen.
-  iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin allow-popups')
+  // No sandbox attribute — Leitbild is a first-party deployment (same owner
+  // as Samsinn). Sandbox flags broke the SPA's mount (white iframe). For
+  // cross-publisher embeds, add sandbox back with at minimum
+  // allow-scripts allow-same-origin allow-forms.
+  iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade')
   iframeWrap.appendChild(iframe)
 
   toggleBtn.addEventListener('click', () => {
