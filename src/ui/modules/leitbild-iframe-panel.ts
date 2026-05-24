@@ -315,13 +315,9 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
   }
 
   try {
-    // V1 reliable path: capture the full browser tab (no rect cropping).
-    // The earlier auto-crop approach was the source of most failures
-    // (out-of-bounds source rects, downscaling mismatches, browser-specific
-    // drawable issues). Full-tab capture is dramatically more robust and
-    // arguably more useful — agents see the whole Samsinn UI including the
-    // chat context surrounding the iframe.
-    //
+    // Snapshot iframe rect BEFORE the OS picker steals focus.
+    const rect = iframe.getBoundingClientRect()
+
     // preferCurrentTab + selfBrowserSurface make Chrome show (and pre-select)
     // the current tab in the picker; Firefox ignores these and shows its
     // own picker which already includes the current tab.
@@ -386,28 +382,49 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
 
     if (frameW === 0 || frameH === 0) throw new Error('Capture frame has zero dimensions')
 
-    // Full-tab capture: draw entire frame, no source-rect math.
+    // Crop to the iframe's bounding rect. Map CSS-pixel viewport coords to
+    // frame-pixel coords using the actual capture dimensions (browsers
+    // often downscale the captured stream).
+    const ratioX = frameW / window.innerWidth
+    const ratioY = frameH / window.innerHeight
+    const sxRaw = Math.round(rect.left * ratioX)
+    const syRaw = Math.round(rect.top * ratioY)
+    const swRaw = Math.round(rect.width * ratioX)
+    const shRaw = Math.round(rect.height * ratioY)
+    const sx = Math.max(0, Math.min(sxRaw, Math.max(0, frameW - 1)))
+    const sy = Math.max(0, Math.min(syRaw, Math.max(0, frameH - 1)))
+    const sw = Math.max(1, Math.min(swRaw, frameW - sx))
+    const sh = Math.max(1, Math.min(shRaw, frameH - sy))
+
     const canvas = document.createElement('canvas')
-    canvas.width = frameW
-    canvas.height = frameH
+    canvas.width = sw
+    canvas.height = sh
     const cx = canvas.getContext('2d')
     if (!cx) throw new Error('Could not get 2D canvas context')
-    cx.drawImage(frame, 0, 0)
+    cx.drawImage(frame, sx, sy, sw, sh, 0, 0, sw, sh)
     const dataUrl = canvas.toDataURL('image/png')
 
     const attachment: MessageAttachment = {
       kind: 'image',
       mimeType: 'image/png',
       dataUrl,
-      width: frameW,
-      height: frameH,
+      width: sw,
+      height: sh,
       source: 'leitbild',
       capturedAt: Date.now(),
     }
     addAttachment(currentRoomId, attachment)
   } catch (err) {
-    const msg = (err as Error).message || 'capture failed'
-    showCaptureToast(`Screenshot failed: ${msg}`)
+    const rawMsg = (err as Error).message || 'capture failed'
+    // Firefox: 'The object can not be found here' is the misleading error
+    // Firefox throws when drawImage is called on a video that contains
+    // cross-origin embedded content (our Leitbild iframe). The cross-origin
+    // taint is irrecoverable client-side. Detect + surface a clear message.
+    const isFirefoxTaint = /object\s+can\s*not\s+be\s+found/i.test(rawMsg)
+    const friendly = isFirefoxTaint
+      ? 'Firefox / Zen cannot screenshot the dashboard because it embeds cross-origin content (security restriction). This works in Chrome. A server-side capture path that works in any browser is on the roadmap (Phase B).'
+      : `Screenshot failed: ${rawMsg}`
+    showCaptureToast(friendly)
   } finally {
     cleanup()
     btn.disabled = false
