@@ -315,42 +315,51 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
   }
 
   try {
-    // Snapshot iframe rect BEFORE the OS picker steals focus.
-    const rect = iframe.getBoundingClientRect()
-
+    // V1 reliable path: capture the full browser tab (no rect cropping).
+    // The earlier auto-crop approach was the source of most failures
+    // (out-of-bounds source rects, downscaling mismatches, browser-specific
+    // drawable issues). Full-tab capture is dramatically more robust and
+    // arguably more useful — agents see the whole Samsinn UI including the
+    // chat context surrounding the iframe.
+    //
+    // preferCurrentTab + selfBrowserSurface make Chrome show (and pre-select)
+    // the current tab in the picker; Firefox ignores these and shows its
+    // own picker which already includes the current tab.
     stream = await navigator.mediaDevices.getDisplayMedia({
       video: { displaySurface: 'browser' } as MediaTrackConstraints,
       audio: false,
-    })
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+    } as DisplayMediaStreamOptions & { preferCurrentTab?: boolean; selfBrowserSurface?: string })
     const track = stream.getVideoTracks()[0]
     if (!track) throw new Error('No video track in capture stream')
 
-    // Validate the user picked a browser tab.
-    const settings = track.getSettings() as { displaySurface?: string }
-    if (settings.displaySurface && settings.displaySurface !== 'browser') {
-      throw new Error('Please pick "This tab" (or the Samsinn browser tab) in the share dialog')
-    }
-
-    // Two paths to a drawable ImageBitmap:
-    //   A. ImageCapture.grabFrame() — modern, designed for exactly this
-    //      use case, supported in Firefox + Chrome. Returns ImageBitmap
-    //      which canvas.drawImage definitely accepts.
-    //   B. Video element + drawImage(video) — fallback for browsers that
-    //      lack ImageCapture (Safari). Requires the video to be in the
-    //      DOM and to have painted a frame.
+    // Get frame dimensions + a drawable source. Two paths:
+    //   A. ImageCapture.grabFrame() — works for Chrome's displayMedia tracks.
+    //      Firefox supports ImageCapture but NOT for displayMedia tracks
+    //      (camera-only per MDN); we catch the throw and fall through to B.
+    //   B. Video element — append hidden, await first frame, drawImage.
+    //      Works in Firefox + Safari.
     let frame: ImageBitmap | HTMLVideoElement
     let frameW: number
     let frameH: number
 
     const ImageCaptureCtor = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { grabFrame: () => Promise<ImageBitmap> } }).ImageCapture
+    let bitmap: ImageBitmap | undefined
     if (ImageCaptureCtor) {
-      const ic = new ImageCaptureCtor(track)
-      const bitmap = await ic.grabFrame()
+      try {
+        const ic = new ImageCaptureCtor(track)
+        bitmap = await ic.grabFrame()
+      } catch {
+        bitmap = undefined  // fall through to video path
+      }
+    }
+
+    if (bitmap) {
       frame = bitmap
       frameW = bitmap.width
       frameH = bitmap.height
     } else {
-      // Safari fallback — video element path.
       video = document.createElement('video')
       video.srcObject = stream
       video.muted = true
@@ -363,6 +372,11 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
         video!.addEventListener('error', () => { clearTimeout(t); reject(new Error('Capture stream errored')) }, { once: true })
       })
       await video.play()
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('Capture stream timed out (playing)')), 5000)
+        if (!video!.paused && video!.readyState >= 2) { clearTimeout(t); resolve(); return }
+        video!.addEventListener('playing', () => { clearTimeout(t); resolve() }, { once: true })
+      })
       await new Promise(r => requestAnimationFrame(r))
       await new Promise(r => requestAnimationFrame(r))
       frame = video
@@ -372,34 +386,21 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
 
     if (frameW === 0 || frameH === 0) throw new Error('Capture frame has zero dimensions')
 
-    // Map iframe rect from CSS pixels to frame pixels using the actual
-    // capture dimensions (browsers often downscale).
-    const ratioX = frameW / window.innerWidth
-    const ratioY = frameH / window.innerHeight
-    const sxRaw = Math.round(rect.left * ratioX)
-    const syRaw = Math.round(rect.top * ratioY)
-    const swRaw = Math.round(rect.width * ratioX)
-    const shRaw = Math.round(rect.height * ratioY)
-    // Clamp inside bounds — drawImage throws on out-of-bounds source rect.
-    const sx = Math.max(0, Math.min(sxRaw, Math.max(0, frameW - 1)))
-    const sy = Math.max(0, Math.min(syRaw, Math.max(0, frameH - 1)))
-    const sw = Math.max(1, Math.min(swRaw, frameW - sx))
-    const sh = Math.max(1, Math.min(shRaw, frameH - sy))
-
+    // Full-tab capture: draw entire frame, no source-rect math.
     const canvas = document.createElement('canvas')
-    canvas.width = sw
-    canvas.height = sh
+    canvas.width = frameW
+    canvas.height = frameH
     const cx = canvas.getContext('2d')
     if (!cx) throw new Error('Could not get 2D canvas context')
-    cx.drawImage(frame, sx, sy, sw, sh, 0, 0, sw, sh)
+    cx.drawImage(frame, 0, 0)
     const dataUrl = canvas.toDataURL('image/png')
 
     const attachment: MessageAttachment = {
       kind: 'image',
       mimeType: 'image/png',
       dataUrl,
-      width: sw,
-      height: sh,
+      width: frameW,
+      height: frameH,
       source: 'leitbild',
       capturedAt: Date.now(),
     }
