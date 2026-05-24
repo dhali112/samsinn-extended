@@ -144,10 +144,17 @@ export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
     const url = await resolveLink('controlInstanceSnapshot', { id: instanceId })
     const res = await fetch(url, { headers: defaultHeaders() })
     if (!res.ok) throw new Error(`Leitbild snapshot fetch failed for ${instanceId}: ${res.status}`)
-    const body = (await res.json()) as ControlInstanceSnapshot
-    // Snapshot may carry { snapshotSeq, seq } depending on server. Normalize.
-    const seq = (body as { seq?: number; snapshotSeq?: number }).seq ?? (body as { snapshotSeq?: number }).snapshotSeq ?? 0
-    return { ...body, seq }
+    const raw = (await res.json()) as Record<string, unknown>
+    // Leitbild wraps the snapshot under a `snapshot` key alongside `id`.
+    // Tolerant of both shapes: nested under .snapshot, or top-level.
+    const body = (raw.snapshot && typeof raw.snapshot === 'object'
+      ? raw.snapshot
+      : raw) as ControlInstanceSnapshot & { scenario?: { scenarioId?: string } }
+    const seq = (body as { seq?: number; snapshotSeq?: number }).seq
+      ?? (body as { snapshotSeq?: number }).snapshotSeq ?? 0
+    // Surface scenarioId either at top level or nested under .scenario.
+    const scenarioId = body.scenarioId ?? body.scenario?.scenarioId
+    return { ...body, seq, ...(scenarioId ? { scenarioId } : {}) }
   }
 
   const getScenario = async (scenarioId: string): Promise<ScenarioSummary | undefined> => {
