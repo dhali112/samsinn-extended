@@ -135,6 +135,7 @@ export const createAIAgent = (
   let currentTools: ReadonlyArray<string> | undefined = config.tools
   let currentTags: ReadonlyArray<string> = config.tags ?? []
   let currentTriggers: ReadonlyArray<import('../core/triggers/types.ts').Trigger> = config.triggers ?? []
+  let currentLeitbildBinding = config.leitbildBinding
   // Context & Prompts toggles — resolve defaults to preserve current behavior
   const includePromptsState: Required<IncludePrompts> = {
     persona: config.includePrompts?.persona ?? true,
@@ -229,6 +230,7 @@ export const createAIAgent = (
     contextTokenBudget: resolveContextTokenBudget(),
     getCompressedIds: (roomId: string) => getCompressedIds?.(roomId) ?? new Set<string>(),
     getRoomMembers,
+    suppressLeitbildMirror: !!currentLeitbildBinding,
   })
   // buildContext walks five sources to assemble the LLM context. Order in
   // src/agents/context-builder.ts top header. Quick map of sources here so
@@ -660,6 +662,7 @@ export const createAIAgent = (
       contextEnabled,
       maxToolIterations: maxToolIterationsCfg,
       ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
+      ...(currentLeitbildBinding ? { leitbildBinding: currentLeitbildBinding } : {}),
     }),
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },
     continueTools: (roomId: string, additionalIterations: number): boolean => {

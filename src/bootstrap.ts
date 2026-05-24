@@ -276,6 +276,27 @@ export const bootstrap = async (): Promise<void> => {
   shared.sharedToolRegistry.register(createGeoRemoveTool())
   shared.sharedToolRegistry.register(createGeoListCategoriesTool())
   shared.sharedToolRegistry.register(createGeoListFeaturesTool())
+  // Leitbild agent tools (V2.A) — visible to all rooms, but each requires
+  // the caller's agent to have a leitbildBinding in its config (otherwise
+  // returns an explanatory error). Tool execution looks up the binding via
+  // the closure below at call time; team is finalized by then.
+  {
+    const { createLeitbildTools } = await import('./integrations/leitbild/tools.ts')
+    const getLeitbildBinding = (agentId: string) => {
+      for (const meta of registry.list()) {
+        const sys = registry.tryGetLive(meta.id)
+        if (!sys) continue
+        const agent = sys.team.getAgent(agentId)
+        if (!agent || agent.kind !== 'ai') continue
+        const cfg = (agent as { getConfig?: () => { leitbildBinding?: import('./core/types/agent.ts').LeitbildAgentBinding } }).getConfig?.()
+        if (cfg?.leitbildBinding) return cfg.leitbildBinding
+      }
+      return undefined
+    }
+    for (const tool of createLeitbildTools({ getBinding: getLeitbildBinding })) {
+      shared.sharedToolRegistry.register(tool)
+    }
+  }
   // Wikis used to be a fetched-content subsystem. As of commit N, packs
   // declare wiki URLs as metadata only (pack.json `wikis: [{ name, url }]`)
   // and samsinn never fetches them — they're external links surfaced in

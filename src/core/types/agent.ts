@@ -231,6 +231,19 @@ export interface AIAgentConfig {
   readonly promptsEnabled?: boolean             // master for all per-section prompt toggles (default: true)
   readonly contextEnabled?: boolean             // master for all context sub-section toggles (default: true)
   readonly triggers?: ReadonlyArray<Trigger>    // scheduled prompts; see src/core/triggers/types.ts
+  // Per-agent Leitbild binding (V2.A). When set, the agent gains the
+  // lb_state / lb_object / lb_query / lb_scenario tools (provided they
+  // appear in `tools[]`) and its context-builder filters room-mirror
+  // messages out (the agent has direct access; doesn't need narration).
+  // role: 'observer' is read-only; 'operator' will also see lb_command
+  // (V2.B). See src/integrations/leitbild/.
+  readonly leitbildBinding?: LeitbildAgentBinding
+}
+
+export interface LeitbildAgentBinding {
+  readonly baseUrl: string         // e.g. "https://leitbild.samsinn.app"
+  readonly instanceId: string      // Leitbild Control Instance id
+  readonly role: 'observer' | 'operator'
 }
 
 // === Agent Response (parsed from LLM plain text output) ===
