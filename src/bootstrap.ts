@@ -296,6 +296,22 @@ export const bootstrap = async (): Promise<void> => {
     for (const tool of createLeitbildTools({ getBinding: getLeitbildBinding })) {
       shared.sharedToolRegistry.register(tool)
     }
+    // V2.B: command tool (operator role only — enforced at execution time
+    // inside the tool, not at registration time). Same lookup for binding,
+    // plus a name resolver so the actor/client slug is human-readable.
+    const { createLeitbildCommandTools } = await import('./integrations/leitbild/command-tools.ts')
+    const getAgentName = (agentId: string): string | undefined => {
+      for (const meta of registry.list()) {
+        const sys = registry.tryGetLive(meta.id)
+        if (!sys) continue
+        const agent = sys.team.getAgent(agentId)
+        if (agent) return agent.name
+      }
+      return undefined
+    }
+    for (const tool of createLeitbildCommandTools({ getBinding: getLeitbildBinding, getAgentName })) {
+      shared.sharedToolRegistry.register(tool)
+    }
   }
   // Wikis used to be a fetched-content subsystem. As of commit N, packs
   // declare wiki URLs as metadata only (pack.json `wikis: [{ name, url }]`)
