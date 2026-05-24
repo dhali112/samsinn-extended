@@ -736,7 +736,7 @@ Samsinn can bridge to [Leitbild](https://leitbild.samsinn.app) — a map-based c
 
 **Discovery is the contract.** Samsinn never hardcodes Leitbild paths — every endpoint comes from the manifest's `links` block. A new Leitbild deployment with different paths works without Samsinn changes. Per-Control-Instance capabilities (`GET /api/control-instances/{id}/capabilities`) tell an agent which pack queries and command kinds are valid for *this specific* instance.
 
-For the Leitbild-side contract see [`docs/discovery.md`](https://github.com/michaelhil/leitbild/blob/main/docs/discovery.md).
+For the Leitbild-side contract see [`docs/discovery.md`](https://github.com/michaelhil/leitbild/blob/main/docs/discovery.md). For a concrete end-to-end session (create a room → bind an agent → watch it call tools against the live deployment), see [`docs/leitbild-walkthrough.md`](docs/leitbild-walkthrough.md).
 
 ---
 
