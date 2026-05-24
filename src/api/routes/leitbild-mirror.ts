@@ -21,7 +21,36 @@ const parseMirrorConfig = (body: Record<string, unknown>): LeitbildMirrorConfig 
   return { baseUrl: body.baseUrl, instanceId: body.instanceId, format }
 }
 
+// Server-side proxy for creating Leitbild Control Instances from the
+// Samsinn UI without hitting CORS. The Leitbild deployment doesn't
+// publish CORS headers (manifest declares browserDirectAccess: false),
+// so browser-origin fetches against leitbild.samsinn.app fail. The demo
+// modal needs to spin up a fresh CI on demand; this route does it
+// server-to-server (no CORS) and returns the new instance id.
+const proxyCreateControlInstance: RouteEntry = {
+  method: 'POST',
+  pattern: /^\/api\/leitbild-proxy\/control-instances$/,
+  handler: async (req) => {
+    const body = await parseBody(req)
+    if (typeof body.baseUrl !== 'string') return errorResponse('baseUrl is required', 400)
+    if (typeof body.scenarioId !== 'string') return errorResponse('scenarioId is required', 400)
+    try {
+      const res = await fetch(`${body.baseUrl}/api/control-instances`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Leitbild-Client': 'samsinn-ui; version="0.1.0"' },
+        body: JSON.stringify({ scenarioId: body.scenarioId }),
+      })
+      if (!res.ok) return errorResponse(`Leitbild returned HTTP ${res.status}`, 502)
+      const data = await res.json() as { id?: string }
+      return json({ id: data.id })
+    } catch (err) {
+      return errorResponse(`Could not reach Leitbild: ${(err as Error).message}`, 502)
+    }
+  },
+}
+
 export const leitbildMirrorRoutes: RouteEntry[] = [
+  proxyCreateControlInstance,
   {
     method: 'GET',
     pattern: /^\/api\/rooms\/([^/]+)\/leitbild-mirror$/,

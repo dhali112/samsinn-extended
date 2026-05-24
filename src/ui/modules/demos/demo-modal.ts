@@ -117,13 +117,15 @@ const setupLeitbildDemo = async (roomId: string): Promise<{ ok: true; instanceId
   if (!roomName) return { ok: false, reason: 'Room not found' }
   const LEITBILD_BASE = 'https://leitbild.samsinn.app'
 
-  // 1. Create a fresh CI on Leitbild
+  // 1. Create a fresh CI on Leitbild via Samsinn-side proxy (avoids CORS;
+  //    leitbild.samsinn.app doesn't publish CORS headers).
   let instanceId: string
   try {
-    const res = await fetch(`${LEITBILD_BASE}/api/control-instances`, {
+    const res = await fetch('/api/leitbild-proxy/control-instances', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scenarioId: 'oslo-ambulance' }),
+      credentials: 'same-origin',
+      body: JSON.stringify({ baseUrl: LEITBILD_BASE, scenarioId: 'oslo-ambulance' }),
     })
     if (!res.ok) return { ok: false, reason: `Failed to create CI on Leitbild: HTTP ${res.status}` }
     const body = await res.json() as { id?: string }
