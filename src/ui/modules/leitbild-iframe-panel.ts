@@ -1,18 +1,19 @@
 // ============================================================================
-// Leitbild iframe panel — floating widget that lets humans view the bound
-// Leitbild dashboard alongside Samsinn chat.
+// Leitbild iframe panel — lets humans view the bound Leitbild dashboard
+// alongside Samsinn chat.
 //
-// When the active room has a `leitbildMirror` config set, a small button
-// appears at the bottom-right corner. Click expands a 800×600 iframe of
-// the Leitbild SPA URL for the bound Control Instance. Click again to
-// collapse. Drag the toggle to reposition.
+// Two pieces:
+//  1. A toggle button injected into the room header's icon cluster, just
+//     before the trash button. Visible only when the active room has a
+//     leitbildMirror binding; click toggles the panel.
+//  2. A floating, draggable, resizable panel containing an iframe to the
+//     Leitbild SPA for the bound Control Instance.
 //
-// Self-contained: no styling dependency, no DOM coupling beyond `document.body`.
-// All state lives in module-local variables.
+// Position + size persist in localStorage so the user's chosen layout
+// survives reloads.
 //
-// V1 scope: read-only embed. No agent-driven view sync (scrapped with
-// screenshot capability). No view controls beyond what Leitbild's SPA
-// natively exposes (the iframe is just a window onto the deployment).
+// Per repo policy: no agent-driven view sync. The iframe is a window onto
+// Leitbild's native SPA — the user interacts via Leitbild's own controls.
 // ============================================================================
 
 interface MirrorStatus {
@@ -23,41 +24,43 @@ interface MirrorStatus {
   }
 }
 
-let toggleBtn: HTMLButtonElement | null = null
-let iframeWrap: HTMLDivElement | null = null
+// === Module-local state ===
+
+let headerBtn: HTMLButtonElement | null = null
+let panel: HTMLDivElement | null = null
 let iframe: HTMLIFrameElement | null = null
 let currentRoomName: string | undefined
 let pollAbort: AbortController | null = null
 
-const styleToggle = (btn: HTMLButtonElement, visible: boolean): void => {
-  btn.style.cssText = [
-    'position:fixed', 'bottom:20px', 'right:20px', 'z-index:1000',
-    'padding:8px 14px', 'border-radius:20px',
-    'background:#1f2937', 'color:#fff', 'border:1px solid #374151',
-    'cursor:pointer', 'font-size:13px', 'font-family:system-ui,sans-serif',
-    'box-shadow:0 2px 8px rgba(0,0,0,0.2)',
-    visible ? 'display:flex' : 'display:none',
-    'align-items:center', 'gap:6px',
-  ].join(';')
+const STORAGE_KEY = 'samsinn:leitbild-panel-layout'
+
+// === Persistence ===
+
+interface PanelLayout { readonly left: number; readonly top: number; readonly width: number; readonly height: number }
+
+const DEFAULT_LAYOUT: PanelLayout = { left: -1, top: -1, width: 800, height: 600 }
+
+const loadLayout = (): PanelLayout => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return DEFAULT_LAYOUT
+    const p = JSON.parse(raw) as PanelLayout
+    if (typeof p.left === 'number' && typeof p.top === 'number' && typeof p.width === 'number' && typeof p.height === 'number') return p
+  } catch { /* fall through */ }
+  return DEFAULT_LAYOUT
 }
 
-const styleIframeWrap = (wrap: HTMLDivElement, visible: boolean): void => {
-  wrap.style.cssText = [
-    'position:fixed', 'bottom:70px', 'right:20px', 'z-index:999',
-    'width:800px', 'height:600px',
-    'background:#fff', 'border:1px solid #374151', 'border-radius:8px',
-    'box-shadow:0 8px 32px rgba(0,0,0,0.3)',
-    'overflow:hidden',
-    visible ? 'display:flex' : 'display:none',
-    'flex-direction:column',
-  ].join(';')
+const saveLayout = (p: PanelLayout): void => {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(p)) } catch { /* quota / private mode */ }
 }
+
+// === URL helpers ===
 
 const spaUrl = (baseUrl: string, instanceId: string): string => {
-  // Per Codex (Leitbild thread): SPA route is /i/{scenarioId}/{runId}
+  // Leitbild SPA route is /i/{scenarioId}/{runId}
   // where instanceId = `${scenarioId}:${runId}`.
   const colonIdx = instanceId.indexOf(':')
-  if (colonIdx < 0) return baseUrl  // unexpected; fall through to deployment root
+  if (colonIdx < 0) return baseUrl
   const scenarioId = instanceId.slice(0, colonIdx)
   const runId = instanceId.slice(colonIdx + 1)
   return `${baseUrl}/i/${encodeURIComponent(scenarioId)}/${encodeURIComponent(runId)}`
@@ -73,60 +76,187 @@ const fetchMirrorStatus = async (roomName: string, signal: AbortSignal): Promise
   }
 }
 
-const ensureDOM = (): { toggle: HTMLButtonElement; wrap: HTMLDivElement; iframe: HTMLIFrameElement } => {
-  if (toggleBtn && iframeWrap && iframe) return { toggle: toggleBtn, wrap: iframeWrap, iframe }
+// === Header button creation ===
 
-  toggleBtn = document.createElement('button')
-  toggleBtn.type = 'button'
-  toggleBtn.title = 'Toggle Leitbild dashboard view'
-  toggleBtn.innerHTML = '<span style="font-size:16px">⛶</span><span>Leitbild</span>'
-  styleToggle(toggleBtn, false)
+const buildHeaderButton = (): HTMLButtonElement => {
+  const btn = document.createElement('button')
+  btn.id = 'btn-leitbild-toggle'
+  btn.type = 'button'
+  // Reuse existing room-header icon-button styling for visual parity with
+  // trash/bookmarks/etc. data-room-icon-id puts it in the visibility
+  // registry alongside other header icons.
+  btn.className = 'mode-btn icon-btn hidden'
+  btn.setAttribute('data-room-icon-id', 'leitbild-toggle')
+  btn.setAttribute('data-room-icon-label', 'Leitbild dashboard')
+  btn.setAttribute('title', 'Toggle Leitbild dashboard for this room')
+  btn.setAttribute('aria-label', 'Toggle Leitbild dashboard')
+  // Use compact text — same vertical footprint as the icon buttons.
+  btn.textContent = 'Leitbild'
+  btn.style.fontSize = '11px'
+  btn.style.padding = '2px 8px'
+  btn.addEventListener('click', () => togglePanel())
+  return btn
+}
 
-  iframeWrap = document.createElement('div')
-  styleIframeWrap(iframeWrap, false)
+const ensureHeaderButton = (): HTMLButtonElement => {
+  if (headerBtn && document.body.contains(headerBtn)) return headerBtn
+  // Insert before #btn-clear-messages in the room-header toolbar group.
+  const trashBtn = document.getElementById('btn-clear-messages')
+  if (!trashBtn || !trashBtn.parentElement) {
+    // Header not in DOM yet — return a detached button; ensureHeaderButton
+    // will be re-called on the next room switch.
+    headerBtn = buildHeaderButton()
+    return headerBtn
+  }
+  headerBtn = buildHeaderButton()
+  trashBtn.parentElement.insertBefore(headerBtn, trashBtn)
+  return headerBtn
+}
 
+// === Panel creation (draggable + resizable) ===
+
+const clampToViewport = (p: PanelLayout): PanelLayout => {
+  const maxLeft = Math.max(0, window.innerWidth - 200)   // keep at least 200px on screen
+  const maxTop = Math.max(0, window.innerHeight - 100)
+  return {
+    left: Math.min(Math.max(0, p.left), maxLeft),
+    top: Math.min(Math.max(0, p.top), maxTop),
+    width: Math.max(320, Math.min(p.width, window.innerWidth)),
+    height: Math.max(240, Math.min(p.height, window.innerHeight)),
+  }
+}
+
+const applyLayout = (wrap: HTMLDivElement, p: PanelLayout): void => {
+  wrap.style.left = `${p.left}px`
+  wrap.style.top = `${p.top}px`
+  wrap.style.width = `${p.width}px`
+  wrap.style.height = `${p.height}px`
+}
+
+const ensurePanel = (): { wrap: HTMLDivElement; ifr: HTMLIFrameElement } => {
+  if (panel && iframe && document.body.contains(panel)) return { wrap: panel, ifr: iframe }
+
+  panel = document.createElement('div')
+  panel.style.cssText = [
+    'position:fixed',
+    'z-index:999',
+    'background:#fff',
+    'border:1px solid #374151',
+    'border-radius:8px',
+    'box-shadow:0 8px 32px rgba(0,0,0,0.3)',
+    'overflow:hidden',
+    'display:none',
+    'flex-direction:column',
+    'resize:both',         // CSS-native resize handle at bottom-right
+    'min-width:320px',
+    'min-height:240px',
+  ].join(';')
+
+  // Initialize position. If no saved layout, place at bottom-right (the
+  // historical default). Otherwise restore saved layout.
+  const layout = loadLayout()
+  const initial = layout.left < 0
+    ? { left: Math.max(0, window.innerWidth - layout.width - 20), top: Math.max(0, window.innerHeight - layout.height - 20), width: layout.width, height: layout.height }
+    : layout
+  applyLayout(panel, clampToViewport(initial))
+
+  // Header bar — drag handle + title + close.
   const header = document.createElement('div')
-  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:#1f2937;color:#fff;font-size:12px;font-family:system-ui,sans-serif'
-  header.innerHTML = '<span>Leitbild dashboard (bound to this room)</span>'
+  header.style.cssText = [
+    'display:flex',
+    'align-items:center',
+    'justify-content:space-between',
+    'padding:6px 12px',
+    'background:#1f2937',
+    'color:#fff',
+    'font-size:12px',
+    'font-family:system-ui,sans-serif',
+    'cursor:move',         // signal draggable
+    'user-select:none',
+    'flex:0 0 auto',
+  ].join(';')
+  const title = document.createElement('span')
+  title.textContent = 'Leitbild dashboard (bound to this room)'
+  header.appendChild(title)
   const closeBtn = document.createElement('button')
   closeBtn.type = 'button'
   closeBtn.textContent = '×'
   closeBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:0 4px;line-height:1'
-  closeBtn.addEventListener('click', () => styleIframeWrap(iframeWrap!, false))
+  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); panel!.style.display = 'none' })
   header.appendChild(closeBtn)
-  iframeWrap.appendChild(header)
+  panel.appendChild(header)
 
-  iframe = document.createElement('iframe')
-  iframe.style.cssText = 'flex:1;border:none;width:100%'
-  // No sandbox attribute — Leitbild is a first-party deployment (same owner
-  // as Samsinn). Sandbox flags broke the SPA's mount (white iframe). For
-  // cross-publisher embeds, add sandbox back with at minimum
-  // allow-scripts allow-same-origin allow-forms.
-  iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade')
-  iframeWrap.appendChild(iframe)
-
-  toggleBtn.addEventListener('click', () => {
-    const isVisible = iframeWrap!.style.display !== 'none'
-    styleIframeWrap(iframeWrap!, !isVisible)
+  // Drag-by-header behavior.
+  let dragState: { startX: number; startY: number; origLeft: number; origTop: number } | null = null
+  const onMouseMove = (e: MouseEvent): void => {
+    if (!dragState || !panel) return
+    const newLeft = dragState.origLeft + (e.clientX - dragState.startX)
+    const newTop = dragState.origTop + (e.clientY - dragState.startY)
+    const clamped = clampToViewport({
+      left: newLeft, top: newTop,
+      width: panel.offsetWidth, height: panel.offsetHeight,
+    })
+    panel.style.left = `${clamped.left}px`
+    panel.style.top = `${clamped.top}px`
+  }
+  const onMouseUp = (): void => {
+    if (!dragState || !panel) return
+    dragState = null
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    saveLayout({ left: panel.offsetLeft, top: panel.offsetTop, width: panel.offsetWidth, height: panel.offsetHeight })
+  }
+  header.addEventListener('mousedown', (e) => {
+    if ((e.target as HTMLElement).tagName === 'BUTTON') return  // close-button click
+    if (!panel) return
+    dragState = { startX: e.clientX, startY: e.clientY, origLeft: panel.offsetLeft, origTop: panel.offsetTop }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
   })
 
-  document.body.appendChild(toggleBtn)
-  document.body.appendChild(iframeWrap)
+  // Iframe body — fills remaining space below header. Pointer-events
+  // would normally let the iframe steal the resize handle on Windows, but
+  // the parent's resize:both handle sits on the panel border outside the
+  // iframe rect — it works.
+  iframe = document.createElement('iframe')
+  iframe.style.cssText = 'flex:1;border:none;width:100%;display:block'
+  iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade')
+  panel.appendChild(iframe)
 
-  return { toggle: toggleBtn, wrap: iframeWrap, iframe }
+  // Save layout when CSS resize completes. ResizeObserver fires on every
+  // pixel; debounce to the trailing edge.
+  let resizeTimer: ReturnType<typeof setTimeout> | undefined
+  new ResizeObserver(() => {
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      if (!panel) return
+      saveLayout({ left: panel.offsetLeft, top: panel.offsetTop, width: panel.offsetWidth, height: panel.offsetHeight })
+    }, 200)
+  }).observe(panel)
+
+  document.body.appendChild(panel)
+  return { wrap: panel, ifr: iframe }
 }
 
-// Public API — call from app.ts when the active room changes.
+const togglePanel = (): void => {
+  if (!panel) ensurePanel()
+  if (!panel) return
+  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none'
+}
+
+// === Public API — call from app.ts when the active room changes ===
+
 export const updateLeitbildPanelForRoom = async (roomName: string | undefined): Promise<void> => {
   currentRoomName = roomName
   pollAbort?.abort()
   pollAbort = new AbortController()
 
-  const { toggle, wrap, iframe: ifr } = ensureDOM()
+  const btn = ensureHeaderButton()
+  const { ifr } = ensurePanel()
 
   if (!roomName) {
-    styleToggle(toggle, false)
-    styleIframeWrap(wrap, false)
+    btn.classList.add('hidden')
+    panel!.style.display = 'none'
     return
   }
 
@@ -135,13 +265,13 @@ export const updateLeitbildPanelForRoom = async (roomName: string | undefined): 
   if (currentRoomName !== roomName) return
 
   if (!status?.status) {
-    styleToggle(toggle, false)
-    styleIframeWrap(wrap, false)
+    btn.classList.add('hidden')
+    panel!.style.display = 'none'
     ifr.src = 'about:blank'
     return
   }
 
   const url = spaUrl(status.status.baseUrl, status.status.instanceId)
   if (ifr.src !== url) ifr.src = url
-  styleToggle(toggle, true)
+  btn.classList.remove('hidden')
 }
