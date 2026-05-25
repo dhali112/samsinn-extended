@@ -318,9 +318,14 @@ const captureIframeScreenshot = async (btn: HTMLButtonElement): Promise<void> =>
   let stream: MediaStream | undefined
   let video: HTMLVideoElement | undefined
   const cleanup = (): void => {
-    try { stream?.getTracks().forEach(t => t.stop()) } catch { /* */ }
-    try { if (video) video.srcObject = null } catch { /* */ }
-    try { video?.remove() } catch { /* */ }
+    // Each step independently best-effort. A failure in stopping tracks
+    // must NOT prevent srcObject teardown or DOM removal — capture flow
+    // may have partial state (stream acquired but ImageCapture rejected;
+    // video appended but never played). One failure shouldn't leak the
+    // others.
+    try { stream?.getTracks().forEach(t => t.stop()) } catch { /* MediaStream may already be ended; nothing to recover */ }
+    try { if (video) video.srcObject = null } catch { /* video element may be detached; assignment harmless either way */ }
+    try { video?.remove() } catch { /* already removed via earlier teardown path; idempotent */ }
   }
 
   try {

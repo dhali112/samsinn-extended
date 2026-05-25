@@ -286,7 +286,13 @@ export const handleWSMessage = async (
       return
     }
     msg = valid.value
-  } catch {
+  } catch (err) {
+    // Surface to operator so a misbehaving client (browser bug, dev-tools
+    // injection, plugin) is distinguishable from a server bug. Session token
+    // is redacted to its first 8 chars to keep the log line useful without
+    // leaking the full identifier.
+    console.warn(`[ws] invalid JSON from session ${session.sessionToken.slice(0, 8)}…:`,
+      err instanceof Error ? err.message : String(err))
     sendError(wsManager, ws, 'Invalid JSON')
     return
   }

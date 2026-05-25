@@ -213,7 +213,7 @@ export const createMirrorService = (): MirrorService => {
   const detachRoom = (roomId: string): void => {
     const mirror = active.get(roomId)
     if (!mirror) return
-    try { mirror.handle?.close() } catch { /* */ }
+    try { mirror.handle?.close() } catch { /* subscription handle.close() may throw if WS already terminal; we're detaching anyway */ }
     active.delete(roomId)
   }
 

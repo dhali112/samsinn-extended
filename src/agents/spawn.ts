@@ -95,6 +95,10 @@ const createToolExecutor = (
         const result = await Promise.race([tool.execute(call.arguments, callContext), timeout])
         results.push(result)
       } catch (err) {
+        // Log to operator so a tool throwing a fresh error class doesn't lose
+        // its stack to the LLM-only structured result. The LLM still sees the
+        // sanitized message; the operator sees the full error.
+        console.error(`[tool] "${call.tool}" execution failed:`, err)
         results.push({ success: false, error: err instanceof Error ? err.message : 'Tool execution failed' })
       }
     }

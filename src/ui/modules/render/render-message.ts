@@ -44,6 +44,9 @@ const writeClipboard = async (text: string): Promise<boolean> => {
     ta.remove()
     return ok
   } catch {
+    // Legacy execCommand fallback failed (Safari Lockdown Mode, or browser
+    // without execCommand support). Caller already tried navigator.clipboard
+    // first; both paths failing returns false so the UI shows a hint instead.
     return false
   }
 }

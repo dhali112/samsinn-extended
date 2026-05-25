@@ -15,7 +15,13 @@ export const createMessageRouter = ({ house }: RouterDeps): RouteMessage => {
 
     for (const roomId of target.rooms) {
       const room = house.getRoom(roomId)
-      if (!room) continue
+      if (!room) {
+        // Visible to operator so a typo'd / deleted room target is loud
+        // instead of silently dropped. The caller's `delivered` array still
+        // returns short, but most callers don't compare against target.rooms.
+        console.warn(`[router] skipping non-existent room: ${roomId}`)
+        continue
+      }
       const message = room.post({ ...params, correlationId })
       delivered.push(message)
     }

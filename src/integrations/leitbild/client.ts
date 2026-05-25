@@ -209,16 +209,16 @@ export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
             for (const record of sub.subscribers) {
               if (event.seq > record.lastSeq) {
                 record.lastSeq = event.seq
-                try { record.handler(event) } catch { /* subscriber error: don't kill the feed */ }
+                try { record.handler(event) } catch { /* subscriber threw: isolate so one mirror's bug doesn't kill the WS for all subscribers */ }
               }
             }
           }
         }
-      } catch { /* malformed message: drop silently */ }
+      } catch { /* malformed WS frame (non-JSON or wrong shape): drop & wait for next; server-side bug not client-side concern */ }
     })
 
     ws.addEventListener('close', () => { scheduleReconnect(instanceId, sub) })
-    ws.addEventListener('error', () => { try { ws.close() } catch { /* */ } })
+    ws.addEventListener('error', () => { try { ws.close() } catch { /* close may throw if WS already terminal; reconnect will be scheduled by close handler */ } })
   }
 
   const scheduleReconnect = (instanceId: string, sub: InstanceSubscription): void => {
@@ -235,14 +235,18 @@ export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
           for (const record of sub.subscribers) {
             if (event.seq > record.lastSeq) {
               record.lastSeq = event.seq
-              try { record.handler(event) } catch { /* */ }
+              try { record.handler(event) } catch { /* subscriber threw on replay event: same isolation rule as live-stream path above */ }
             }
           }
         }
         await openWs(instanceId, sub)
         sub.reconnectDelayMs = 1_000 // reset on success
       } catch {
-        scheduleReconnect(instanceId, sub) // retry chain
+        // Reconnect attempt failed (events fetch 5xx, WS open rejected, etc.)
+        // Schedule another retry with the already-doubled backoff. Errors
+        // here are surfaced via the next attempt's behavior; no operator log
+        // because the backoff loop itself is the signal.
+        scheduleReconnect(instanceId, sub)
       }
     }, delay)
   }
@@ -271,7 +275,7 @@ export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
         if (s.subscribers.size === 0) {
           s.closed = true
           if (s.reconnectTimer) clearTimeout(s.reconnectTimer)
-          try { s.ws?.close() } catch { /* */ }
+          try { s.ws?.close() } catch { /* close may throw if WS already terminal; we're tearing down anyway */ }
           instanceSubs.delete(instanceId)
         }
       },

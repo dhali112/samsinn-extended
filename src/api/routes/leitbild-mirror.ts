@@ -64,7 +64,15 @@ export const leitbildMirrorRoutes: RouteEntry[] = [
       const persisted = room.getLeitbildMirror()
       const status = leitbildMirror?.statusFor(room)
       if (persisted && leitbildMirror && (!status || !status.connected)) {
-        try { await leitbildMirror.attach(room, persisted) } catch { /* surfaced via mirror-error message */ }
+        try { await leitbildMirror.attach(room, persisted) } catch {
+          // attach() catches its own error and posts a formatMirrorError chat
+          // message into the room — the user sees the failure inline. We
+          // don't re-throw because this is a lazy self-heal; the GET still
+          // returns the current status with connected:false. If attach()
+          // ever throws BEFORE its own room.post (e.g. snapshot fetch throws
+          // synchronously), the user gets no signal — flagged in audit
+          // Finding 2.2.4 for a follow-up that surfaces lastAttachError.
+        }
       }
       return json({ status: leitbildMirror?.statusFor(room) ?? null })
     },
