@@ -17,6 +17,7 @@ import type { NativeToolCall } from '../core/types/tool.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
 import { createCloudProviderError } from './errors.ts'
 import { mapHttpError } from './openai-compatible-errors.ts'
+import { type OAIMessage, buildOAIBody } from './openai-compatible-wire.ts'
 import { fetchWithTimeout } from '../core/fetch-utils.ts'
 import { normalizeModelId, expandAnthropicAliases } from './models/normalize.ts'
 
@@ -71,29 +72,6 @@ export interface OpenAICompatConfig {
 // message, where each part can carry a `cache_control` marker. We only emit
 // this shape when talking to Anthropic; other providers continue to get a
 // plain string in `content`.
-interface OAIContentPart {
-  type: 'text' | 'image_url'
-  text?: string
-  image_url?: { url: string; detail?: 'low' | 'high' | 'auto' }
-  cache_control?: { type: 'ephemeral' }
-}
-
-interface OAIMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | ReadonlyArray<OAIContentPart> | null
-  // Reasoning channel on non-streamed responses (Kimi/Moonshot, DeepSeek-R1
-  // and others). Read on inbound; NEVER written on outbound — keeping
-  // reasoning out of round-tripped history is structurally enforced by
-  // ChatRequest.messages[].content being `string`, so toOAIMessages can't
-  // surface it. See note in toOAIMessages.
-  reasoning_content?: string
-  reasoning?: string
-  tool_calls?: ReadonlyArray<{
-    id: string
-    type: 'function'
-    function: { name: string; arguments: string }
-  }>
-}
 
 interface OAIChatResponse {
   id?: string
@@ -171,168 +149,6 @@ interface OAIModelsResponse {
 // here: an in-place mutation would leak the marker into a subsequent
 // failover call to a non-Anthropic provider whose OpenAI-compat shim may
 // reject the unknown field.
-const markLastCacheable = <T>(arr: ReadonlyArray<T>): T[] => {
-  if (arr.length === 0) return []
-  const out = [...arr]
-  const tail = { ...out[out.length - 1] } as Record<string, unknown>
-  tail.cache_control = { type: 'ephemeral' }
-  out[out.length - 1] = tail as unknown as T
-  return out
-}
-
-// === Request conversion ===
-
-// Note on reasoning_content: never round-tripped to outbound history.
-// ChatRequest.messages[].content is a plain string, so there's no path
-// for reasoning fragments to leak into the next request — even if a
-// future caller mistakenly tried, the type system blocks it. See the
-// stream/non-stream handlers above for the inbound capture.
-
-// Moonshot/Kimi rejects assistant messages with empty `content` (400
-// "must not be empty"), while OpenAI/Anthropic/Gemini accept them
-// (legitimate for tool-call-only turns or thinking-model responses that
-// hit max_tokens during reasoning). Substitute a single space at the
-// wire layer so the history round-trips without changing internal state.
-// Applied to all providers — every OAI-compat target accepts " ".
-const safeAssistantContent = (m: { role: string; content: string }): string =>
-  m.role === 'assistant' && (!m.content || m.content.length === 0) ? ' ' : m.content
-
-// When a message carries images (V1 multimodal), build content parts.
-// Returns null if the message has no images, signaling the caller to use
-// the plain-string path. Only fires for user messages — assistant + system
-// stay text-only (assistant images aren't part of the OAI flow we use;
-// system prompts don't carry images).
-const messageContentWithImages = (
-  m: ChatRequest['messages'][number],
-): ReadonlyArray<OAIContentPart> | null => {
-  if (!m.images || m.images.length === 0) return null
-  if (m.role !== 'user') return null
-  const parts: OAIContentPart[] = []
-  // Text part first (even if empty — providers tolerate empty text).
-  if (m.content && m.content.length > 0) {
-    parts.push({ type: 'text', text: m.content })
-  }
-  for (const img of m.images) {
-    parts.push({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'auto' } })
-  }
-  return parts
-}
-
-const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[] => {
-  // Anthropic path: if systemBlocks are provided, emit the system message as
-  // an array of content parts with `cache_control: ephemeral` on the last
-  // cacheable block. Anthropic's caching is triggered by the marker and caches
-  // every token from message start up to (and including) that marker.
-  if (providerName === 'anthropic' && request.systemBlocks && request.systemBlocks.length > 0) {
-    const out: OAIMessage[] = []
-    const systemParts: OAIContentPart[] = []
-    // Find last cacheable block so we know where to put the single marker.
-    let lastCacheableIdx = -1
-    for (let i = 0; i < request.systemBlocks.length; i++) {
-      if (request.systemBlocks[i]!.cacheable) lastCacheableIdx = i
-    }
-    for (let i = 0; i < request.systemBlocks.length; i++) {
-      const block = request.systemBlocks[i]!
-      if (!block.text) continue
-      const part: OAIContentPart = { type: 'text', text: block.text }
-      if (i === lastCacheableIdx) part.cache_control = { type: 'ephemeral' }
-      systemParts.push(part)
-    }
-    if (systemParts.length > 0) {
-      out.push({ role: 'system', content: systemParts })
-    }
-    // Remaining non-system messages pass through; images attach as content parts.
-    for (const m of request.messages) {
-      if (m.role === 'system') continue // superseded by systemParts above
-      const withImages = messageContentWithImages(m)
-      if (withImages) out.push({ role: m.role, content: withImages })
-      else out.push({ role: m.role, content: safeAssistantContent(m) })
-    }
-    return out
-  }
-  // Default path — plain strings, except for user messages with images.
-  return request.messages.map(m => {
-    const withImages = messageContentWithImages(m)
-    if (withImages) return { role: m.role, content: withImages }
-    return { role: m.role, content: safeAssistantContent(m) }
-  })
-}
-
-// OpenAI's gpt-5 family AND the o-series reasoning models (o1, o3, o4)
-// require `max_completion_tokens` instead of the legacy `max_tokens`,
-// AND reject any `temperature` other than the default (1.0). We detect
-// by model prefix so the rule applies on OpenAI, OpenRouter (which
-// proxies these), and any future provider that re-exposes the same
-// models.
-//
-// Match by NORMALISED model id (no provider prefix). Callers pass
-// `request.model` which may include a `<prov>:` prefix — strip it before
-// matching.
-//
-// Failure modes prevented:
-//   - HTTP 400 "Unsupported parameter: 'max_tokens' ... Use
-//     'max_completion_tokens' instead." (gpt-5*, o[1-9]*)
-//   - HTTP 400 "Unsupported value: 'temperature' does not support 0
-//     with this model. Only the default (1) value is supported."
-//     (gpt-5*, o[1-9]*)
-const stripProviderPrefix = (model: string): string => {
-  const idx = model.indexOf(':')
-  return idx >= 0 ? model.slice(idx + 1) : model
-}
-const isNewOpenAIFamily = (model: string): boolean => {
-  const id = stripProviderPrefix(model).toLowerCase()
-  return id.startsWith('gpt-5') || /^o[1-9]/.test(id)
-}
-const usesMaxCompletionTokens = isNewOpenAIFamily
-const rejectsTemperature = isNewOpenAIFamily
-
-const buildOAIBody = (request: ChatRequest, stream: boolean, providerName: string): Record<string, unknown> => {
-  const body: Record<string, unknown> = {
-    model: request.model,
-    messages: toOAIMessages(request, providerName),
-    stream,
-  }
-  // Ask providers to include a final usage frame (supported by OpenAI, Groq,
-  // Cerebras, OpenRouter). Providers that don't support it ignore the flag.
-  if (stream) body.stream_options = { include_usage: true }
-  if (request.temperature !== undefined && !rejectsTemperature(request.model)) {
-    body.temperature = request.temperature
-  }
-  // Seed is emitted to every OpenAI-shape provider. Providers that support it
-  // (OpenAI, Groq, Cerebras, OpenRouter, Mistral, SambaNova) honor it; those
-  // that don't (Anthropic, Gemini) silently discard unknown fields. Keep the
-  // plumbing uniform; document per-provider coverage in the README.
-  if (request.seed !== undefined) body.seed = request.seed
-  if (request.maxTokens !== undefined) {
-    if (usesMaxCompletionTokens(request.model)) {
-      body.max_completion_tokens = request.maxTokens
-    } else {
-      body.max_tokens = request.maxTokens
-    }
-  }
-  if (request.jsonMode) body.response_format = { type: 'json_object' }
-  if (request.tools && request.tools.length > 0) {
-    // Anthropic-only: attach `cache_control: ephemeral` (top-level on the
-    // last tool entry, NOT nested inside `function`). Anthropic caches
-    // tools and system on separate axes, so this marker is independent of
-    // the system-block marker — both are needed to cache both prefixes.
-    // Every other provider receives the array unchanged. The helper
-    // spread-clones to avoid leaking the marker into a router-failover
-    // call whose next provider is e.g. Gemini, where an unknown
-    // cache_control field on a tool may be rejected.
-    body.tools = providerName === 'anthropic'
-      ? markLastCacheable(request.tools)
-      : request.tools
-  }
-  if (request.toolChoice !== undefined && request.tools && request.tools.length > 0) {
-    if (request.toolChoice === 'auto' || request.toolChoice === 'required') {
-      body.tool_choice = request.toolChoice
-    } else {
-      body.tool_choice = { type: 'function', function: { name: request.toolChoice.name } }
-    }
-  }
-  return body
-}
 
 // Some providers (DeepSeek R1 via OpenRouter) emit chain-of-thought inside
 // <think>...</think> in the content stream, without a dedicated "thinking"
