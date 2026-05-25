@@ -55,10 +55,10 @@ export const formatBanner = (ctx: BannerContext): string => {
 export const formatResetBoundary = (newSeq: number): string =>
   `[Leitbild] ⟲ CONTROL INSTANCE RESET — historical events above no longer reflect current state. Re-anchored at seq=${newSeq}.`
 
-// === Reconnect notice — posted after a WS reconnect + durable replay ===
-
-export const formatReconnectNotice = (newSeq: number): string =>
-  `[Leitbild] reconnected at seq=${newSeq} (durable catch-up applied; any volatile-only events during the outage were not replayed)`
+// Note: formatReconnectNotice was removed in the knip triage pass — it was
+// exported but never called (mirror-service handles reconnect inside
+// client.ts WS scheduleReconnect; there's no chat notification of reconnect
+// in the current flow). Re-add when wiring a reconnect chat notice.
 
 // === Mirror-error notice — posted when attach fails ===
 

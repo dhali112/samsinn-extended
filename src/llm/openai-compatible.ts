@@ -160,10 +160,8 @@ interface OAIModelsResponse {
 // === Error mapping ===
 // HTTP-status → CloudProviderError classification moved to
 // ./openai-compatible-errors.ts (audit Finding 2.3.2 — partial split).
-// Imported at the top of this file; re-exported below for callers who
-// already imported it from here.
-
-export { mapHttpError } from './openai-compatible-errors.ts'
+// Imported at the top of this file. Not re-exported: no caller outside
+// this module needed it (knip-confirmed during item #4 triage).
 
 // === Cache-marker helper ===
 // Spread-clones the array AND its last entry, attaches `cache_control:

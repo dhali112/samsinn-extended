@@ -37,7 +37,7 @@ const MAX_WS_BUFFERED_BYTES = 8 * 1024 * 1024
 // reclaim. After this window the agent is removed from the team and the
 // session entry deleted. 7 days strikes a balance: covers a long weekend or
 // vacation, prevents indefinite accumulation.
-export const SESSION_STALE_MS = 7 * 24 * 60 * 60 * 1000
+const SESSION_STALE_MS = 7 * 24 * 60 * 60 * 1000
 
 // === Types ===
 

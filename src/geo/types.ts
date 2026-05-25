@@ -17,7 +17,9 @@
 // ============================================================================
 
 import type { MarkerIcon } from '../core/render-validators/map-schema.ts'
-export { MARKER_ICONS, isMarkerIcon, type MarkerIcon } from '../core/render-validators/map-schema.ts'
+// Re-export only what external callers actually use. MARKER_ICONS lives in
+// map-schema.ts; consumers (geodata-import-modal) import from there directly.
+export { isMarkerIcon, type MarkerIcon } from '../core/render-validators/map-schema.ts'
 
 export type GeoSource = 'local' | 'overpass' | 'nominatim' | 'pack'
 

@@ -18,13 +18,10 @@ import { listAllFeatures, listCategory } from './store.ts'
 import { extractCategoryMetaFromFeatures } from './projection.ts'
 import type { CategoryMeta } from './types.ts'
 
-export const loadRegistry = async (): Promise<ReadonlyArray<CategoryMeta>> => {
+export const listCategories = async (): Promise<ReadonlyArray<CategoryMeta>> => {
   const features = await listAllFeatures()
   return [...extractCategoryMetaFromFeatures(features).values()]
 }
-
-export const listCategories = async (): Promise<ReadonlyArray<CategoryMeta>> =>
-  loadRegistry()
 
 export const getCategory = async (id: string): Promise<CategoryMeta | null> => {
   const features = await listCategory(id)

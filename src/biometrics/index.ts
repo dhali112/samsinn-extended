@@ -31,7 +31,9 @@ export type {
   CaptureResolution,
 } from './types.ts'
 
-export { DEFAULT_RESOLUTION } from './types.ts'
+// DEFAULT_RESOLUTION is used internally as the createBiometricSession
+// default; consumers don't import it. Removed from the public re-export
+// during knip triage; re-add if an external caller starts needing it.
 
 export const createBiometricSession = (config: CaptureConfig): CaptureSession => {
   const resolution = config.resolution ?? DEFAULT_RESOLUTION
