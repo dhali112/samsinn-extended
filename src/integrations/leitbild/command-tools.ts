@@ -74,10 +74,20 @@ const createLbCommand = (deps: LeitbildCommandToolDeps): Tool => ({
     const actorId = `actor:samsinn:${slug}`
     const clientId = `client:samsinn:${slug}`
 
+    // Client-generated idempotency key. Leitbild MAY use this to dedup
+    // re-submissions of the same logical command (older Leitbild ignores
+    // the field — forward-compat). Audit Finding 2.1.7 scaffolding: today
+    // every lb_command call generates a fresh key, so dedup only activates
+    // when the same client calls the same instance with the same key
+    // (which doesn't happen yet; LLM-eval retries re-derive args and would
+    // get a new key). When the agent loop adds retry-key reuse, this
+    // field becomes the dedup anchor without a coordinated Leitbild release.
+    const idempotencyKey = crypto.randomUUID()
+
     try {
       const client = createLeitbildClient(binding.baseUrl)
       const body = await client.callCommand(binding.instanceId, {
-        actorId, clientId, kind, targetObjectIds: targets, payload,
+        actorId, clientId, kind, targetObjectIds: targets, payload, idempotencyKey,
       }) as { result?: unknown }
       return ok(body.result ?? body)
     } catch (err) {
