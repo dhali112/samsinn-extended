@@ -11,7 +11,7 @@
 // — NOT bare `set({})` (which leaves `changedKey` undefined and the
 // renderer skips DOM removal).
 
-import { describe, expect, test, beforeEach } from 'bun:test'
+import { describe, expect, test, beforeEach, afterEach } from 'bun:test'
 import { stateHandlers } from './state.ts'
 import { $roomMessages, $rooms, $selectedRoomId, $agents } from '../../stores.ts'
 import type { WSOutbound } from '../../../../core/types/ws-protocol.ts'
@@ -36,12 +36,25 @@ const mkMsg = (id: string, roomId: string) => ({
 })
 
 describe('stateHandlers.snapshot — stale cache eviction', () => {
+  // The snapshot handler auto-selects the first room when none is selected
+  // (state.ts:92-95), then eagerly fetches that room's messages. Without a
+  // fetch stub the call goes through to room-fetchers → safeFetch with the
+  // jsdom-default base URL and throws ERR_INVALID_URL — test still passed
+  // because safeFetch returns null, but the uncaught TypeError polluted
+  // test output. Stub globalThis.fetch for the whole describe so any
+  // post-snapshot fetch resolves harmlessly.
+  let origFetch: typeof globalThis.fetch
   beforeEach(() => {
     $roomMessages.set({})
     $rooms.set({})
     $selectedRoomId.set(null)
     $agents.set({})
+    origFetch = globalThis.fetch
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({
+      profile: { id: 'stub', name: 'stub' }, messages: [],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))) as typeof fetch
   })
+  afterEach(() => { globalThis.fetch = origFetch })
 
   test('clears each previously-cached room via setKey (fires the listener)', () => {
     $roomMessages.setKey('r1', [mkMsg('m1', 'r1') as never])

@@ -77,8 +77,25 @@ const createToolExecutor = (
     // and overloaded "skill metadata" with "permission policy."
     // Removed 2026-05-12; see the PR that deletes spawn-allowed-tools.test.ts.
     for (const call of calls) {
-      if (!allowed.has(call.tool) && !allowedByActivation(call.tool, roomId)) {
-        results.push({ success: false, error: `Tool "${call.tool}" is not available` })
+      // Two-gate rejection with WHICH-gate-fired specificity (CLAUDE.md
+      // tripwire: silently-ANDed permission gates). The operator's mental
+      // model is "I see this tool in the inspector → it should work." When
+      // it doesn't, the message must name what to change: the agent's
+      // allowlist OR the room's pack activation.
+      const inAllowlist = allowed.has(call.tool)
+      const inActivation = allowedByActivation(call.tool, roomId)
+      if (!inAllowlist && !inActivation) {
+        const entry = registry.getEntry(call.tool)
+        const pack = entry ? packNameFor(entry) : 'unknown'
+        if (entry && pack !== 'core' && pack !== 'local' && pack !== 'welcome' && pack !== 'demos') {
+          // Tool exists in the registry, owned by a non-implicit pack — most
+          // common case. Tell the operator to activate the pack.
+          results.push({ success: false, error: `Tool "${call.tool}" is not available: pack "${pack}" is not active in this room (activate via room settings)` })
+        } else {
+          // Either tool not in registry at all, OR owned by an implicit pack.
+          // Implicit-pack case ⇒ must be the agent's allowlist.
+          results.push({ success: false, error: `Tool "${call.tool}" is not available: not in this agent's tools allowlist (add it via agent settings)` })
+        }
         continue
       }
 

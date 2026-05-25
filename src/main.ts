@@ -59,6 +59,7 @@ import {
   createQueryDocumentsTool,
 } from './tools/built-in/index.ts'
 import { createBiometricsTools, BIOMETRICS_PACK_NAMESPACE } from './tools/built-in/biometric-tools.ts'
+import { clearLeitbildToolCacheForAgent } from './integrations/leitbild/tools.ts'
 import { createEvalBuffer } from './diagnostics/eval-buffer.ts'
 import { getCaptureRegistry } from './core/biometrics/registry.ts'
 import { createVectorStore, type VectorStore } from './embed/vector-store.ts'
@@ -562,6 +563,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       // Triggers live on the agent — they go with it. The scheduler's
       // anyTriggers cache might be stale; refresh it.
       triggerScheduler.invalidate()
+      // Evict per-agent caches held by integration modules (Leitbild's
+      // snapshot cache keyed by agentId). Without this, removed-agent
+      // entries persist for the life of the process — a slow leak in
+      // long-running prod with agent churn (audit Finding 2.1.2).
+      clearLeitbildToolCacheForAgent(id)
     }
     return removed
   }

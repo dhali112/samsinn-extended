@@ -63,6 +63,17 @@ const getCachedSnapshot = async (
 
 export const __clearLeitbildToolCache = (): void => { snapshotCache.clear() }
 
+// Evict all cached snapshots for one agent. Called when the agent is
+// removed from the system so per-(agent,instance) entries don't leak
+// forever in a long-running process. Cheap O(n) walk; n is bounded by
+// distinct (agent × leitbild-instance) pairs ever queried.
+export const clearLeitbildToolCacheForAgent = (agentId: string): void => {
+  const prefix = `${agentId}:`
+  for (const key of snapshotCache.keys()) {
+    if (key.startsWith(prefix)) snapshotCache.delete(key)
+  }
+}
+
 // === Common helpers ===
 
 const requireBinding = (

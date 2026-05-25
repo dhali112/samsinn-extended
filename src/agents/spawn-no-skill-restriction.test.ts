@@ -109,7 +109,13 @@ describe('executor: skill `allowed-tools` is no longer a runtime gate', () => {
     const inactiveRoom = await executor([{ tool: 'aviation_lookup', arguments: {} }], 'room-inactive')
     expect(inactiveRoom[0]!.success).toBe(false)
     expect(inactiveRoom[0]!.error).toContain('is not available')
+    // Rejection must name WHICH gate fired (CLAUDE.md tripwire on silently-
+    // ANDed permission gates). When a known pack-owned tool is unavailable
+    // because the room hasn't activated the owning pack, the error must say
+    // so — operator's mental model is "I see the tool, it should work."
+    expect(inactiveRoom[0]!.error).toContain('pack "aviation" is not active')
   })
+
 
   test('no "not allowed by active skills" error string is ever emitted', async () => {
     // The deleted error message MUST NOT come back. If it does, the
