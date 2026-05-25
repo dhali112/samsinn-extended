@@ -238,6 +238,7 @@ export const createAIAgent = (
     getRoomMembers,
     suppressLeitbildMirror: !!currentLeitbildBinding,
     supportsImages: modelSupportsImages(currentModel),
+    modelForWarn: currentModel,
   })
   // buildContext walks five sources to assemble the LLM context. Order in
   // src/agents/context-builder.ts top header. Quick map of sources here so

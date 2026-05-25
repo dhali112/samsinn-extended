@@ -23,7 +23,7 @@ import type { AgentHistory, AgentProfile, Message } from '../core/types/messagin
 import type { ChatRequest } from '../core/types/llm.ts'
 import type { IncludeContext, IncludePrompts } from '../core/types/agent.ts'
 import { SYSTEM_SENDER_ID } from '../core/types/constants.ts'
-import { imagePlaceholder } from '../llm/multimodal.ts'
+import { imagePlaceholder, warnImageDroppedOnce } from '../llm/multimodal.ts'
 // Text tool protocol removed — all tools use native tool calling
 
 // === Flush info — describes which incoming messages were consumed ===
@@ -62,6 +62,7 @@ export const formatMessage = (
   resolveName: (senderId: string) => string,
   compressedIds?: ReadonlySet<string>,
   supportsImages?: boolean,
+  modelForWarn?: string,
 ): FormattedMessage | null => {
   if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.type === 'pass' || msg.type === 'mute' || msg.type === 'error') return null
   // Attachment handling: when the model is multimodal AND the message
@@ -73,9 +74,18 @@ export const formatMessage = (
   const imageInfo = hasImages && supportsImages
     ? { images: attachments.map(a => ({ dataUrl: a.dataUrl, mimeType: a.mimeType })) }
     : undefined
-  const imagePlaceholderText = hasImages && !supportsImages
+  const droppingImages = hasImages && !supportsImages
+  const imagePlaceholderText = droppingImages
     ? '\n' + attachments.map(a => imagePlaceholder(a)).join('\n')
     : ''
+  // Warn-once when we're swapping image bytes for a text placeholder. The
+  // warn helps an operator notice when a model not in the catalog allowlist
+  // is silently losing image content (e.g. a freshly-launched flagship the
+  // catalog doesn't know about yet). See src/llm/multimodal.ts.
+  if (droppingImages && modelForWarn) {
+    const desc = attachments.map(a => `${a.mimeType} ${a.width}×${a.height}`).join(', ')
+    warnImageDroppedOnce(modelForWarn, agentId, attachments.length, desc)
+  }
 
   if (msg.senderId === agentId) {
     const staleRef = compressedIds && msg.inReplyTo?.some(id => compressedIds.has(id))
@@ -189,6 +199,12 @@ export interface BuildContextDeps {
   // with a text placeholder explaining what's attached so the model can ask
   // the user to describe. Set by ai-agent.ts based on modelSupportsImages().
   readonly supportsImages?: boolean
+  // The fully-resolved model id for this eval. Passed through so the
+  // multimodal placeholder substitution can emit a warn-once log line when
+  // image content is dropped — operator sees `[multimodal] model=X caller=Y
+  // dropped N image(s)…` in journalctl so silent loss is audible. Optional
+  // for tests; absent ⇒ no warn fires.
+  readonly modelForWarn?: string
 }
 
 const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePrompts> => ({
@@ -557,13 +573,13 @@ const createNormalStrategy = (
 
     const formattedOld: ChatRequest['messages'][number][] = []
     for (const msg of old) {
-      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages)
+      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages, deps.modelForWarn)
       if (formatted) formattedOld.push(formatted)
     }
 
     const formattedFresh: Array<{ formatted: ChatRequest['messages'][number]; id: string }> = []
     for (const msg of fresh) {
-      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages)
+      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages, deps.modelForWarn)
       if (formatted) formattedFresh.push({ formatted, id: msg.id })
     }
 

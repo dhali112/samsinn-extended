@@ -18,6 +18,12 @@ export interface CuratedModel {
   // documented to reject `tools:` in the request for this model — the UI
   // shows a warning in the agent inspector's Tools group when this is false.
   readonly supportsTools?: boolean
+  // Image-input support. `true` for vision-capable models; `false` for
+  // text-only; `undefined` for unverified (falls back to the substring
+  // allowlist in src/llm/multimodal.ts). When an agent attaches an image
+  // and the model has `supportsImages !== true`, context-builder swaps in
+  // a text placeholder and emits a warn-once log line.
+  readonly supportsImages?: boolean
   // Reasoning/thinking class. Thinking models emit a separate reasoning
   // channel (reasoning_content / reasoning) and typically have 5-15s
   // time-to-first-content while reasoning. Default-resolver skips them so
@@ -31,17 +37,17 @@ export interface CuratedModel {
 // when computing the server-side default model if no other hint is available.
 export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
   anthropic: [
-    { id: 'claude-haiku-4-5',  label: 'Haiku 4.5 (cheap, fast)' },
-    { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5 (balanced)'   },
+    { id: 'claude-haiku-4-5',  label: 'Haiku 4.5 (cheap, fast)', supportsImages: true },
+    { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5 (balanced)',   supportsImages: true },
   ],
   openai: [
     // gpt-5.4 first: curated default for the showcase demos. The gpt-5 family
     // detection in openai-compatible.ts (`startsWith('gpt-5')`) already routes
     // it through max_completion_tokens + temperature-rejection branches.
-    { id: 'gpt-5.4',      label: '5.4 (default)' },
-    { id: 'gpt-4o-mini',  label: '4o-mini (cheap, fast)' },
-    { id: 'gpt-4.1-mini', label: '4.1-mini (better tool discipline)' },
-    { id: 'gpt-4o',       label: '4o (premium)' },
+    { id: 'gpt-5.4',      label: '5.4 (default)',                       supportsImages: true },
+    { id: 'gpt-4o-mini',  label: '4o-mini (cheap, fast)',               supportsImages: true },
+    { id: 'gpt-4.1-mini', label: '4.1-mini (better tool discipline)',   supportsImages: true },
+    { id: 'gpt-4o',       label: '4o (premium)',                        supportsImages: true },
   ],
   kimi: [
     // moonshot-v1-* first: non-thinking models. The kimi-k2.x family
@@ -50,9 +56,9 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     // ignored). Samsinn doesn't surface OAI-compat `reasoning_content`
     // yet, so k2.x responses look truncated/empty when reasoning eats
     // the token budget. k2.x stays reachable via "Show all" in the UI.
-    { id: 'moonshot-v1-128k', label: '128k (default)' },
-    { id: 'moonshot-v1-32k',  label: '32k' },
-    { id: 'moonshot-v1-8k',   label: '8k (cheapest)' },
+    { id: 'moonshot-v1-128k', label: '128k (default)', supportsImages: false },
+    { id: 'moonshot-v1-32k',  label: '32k',            supportsImages: false },
+    { id: 'moonshot-v1-8k',   label: '8k (cheapest)',  supportsImages: false },
   ],
   gemini: [
     // Flash first: Pro's capacity has been chronically tight (frequent 503
@@ -60,29 +66,29 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     // Pro stays available — agents that explicitly want Pro pick it via
     // the inspector. Cross-provider rescue requires an explicit
     // `modelFallback` chain on the agent (no implicit equivalence map).
-    { id: 'gemini-2.5-flash',      label: 'Flash (default — fast, ample capacity)' },
-    { id: 'gemini-2.5-pro',        label: 'Pro (best reasoning, capacity-flaky)' },
-    { id: 'gemini-2.5-flash-lite', label: 'Flash-Lite (cheapest, weaker reasoning)' },
+    { id: 'gemini-2.5-flash',      label: 'Flash (default — fast, ample capacity)',  supportsImages: true },
+    { id: 'gemini-2.5-pro',        label: 'Pro (best reasoning, capacity-flaky)',    supportsImages: true },
+    { id: 'gemini-2.5-flash-lite', label: 'Flash-Lite (cheapest, weaker reasoning)', supportsImages: true },
   ],
   groq: [
-    { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (fast)'    },
-    { id: 'llama-3.1-8b-instant',    label: 'Llama 3.1 8B (fastest)' },
+    { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (fast)',    supportsImages: false },
+    { id: 'llama-3.1-8b-instant',    label: 'Llama 3.1 8B (fastest)',  supportsImages: false },
   ],
   cerebras: [
-    { id: 'qwen-3-235b-a22b-instruct-2507', label: 'Qwen 3 235B' },
-    { id: 'llama3.1-8b',                    label: 'Llama 3.1 8B' },
+    { id: 'qwen-3-235b-a22b-instruct-2507', label: 'Qwen 3 235B',   supportsImages: false },
+    { id: 'llama3.1-8b',                    label: 'Llama 3.1 8B',  supportsImages: false },
   ],
   mistral: [
-    { id: 'mistral-small-latest',  label: 'Small (cheap)'   },
-    { id: 'mistral-medium-latest', label: 'Medium'          },
-    { id: 'mistral-large-latest',  label: 'Large (premium)' },
+    { id: 'mistral-small-latest',  label: 'Small (cheap)',   supportsImages: false },
+    { id: 'mistral-medium-latest', label: 'Medium',          supportsImages: false },
+    { id: 'mistral-large-latest',  label: 'Large (premium)', supportsImages: false },
   ],
   openrouter: [
-    { id: 'deepseek/deepseek-chat',             label: 'DeepSeek V3 (cheap)' },
-    { id: 'meta-llama/llama-3.3-70b-instruct',  label: 'Llama 3.3 70B'       },
+    { id: 'deepseek/deepseek-chat',             label: 'DeepSeek V3 (cheap)', supportsImages: false },
+    { id: 'meta-llama/llama-3.3-70b-instruct',  label: 'Llama 3.3 70B',       supportsImages: false },
   ],
   sambanova: [
-    { id: 'Meta-Llama-3.3-70B-Instruct', label: 'Llama 3.3 70B' },
+    { id: 'Meta-Llama-3.3-70B-Instruct', label: 'Llama 3.3 70B', supportsImages: false },
   ],
 }
 
@@ -118,6 +124,28 @@ export const modelSupportsTools = (modelRef: string): boolean | undefined => {
   }
   if (provider) return search(CURATED_MODELS[provider])
   // No prefix — scan all providers, return the first explicit verdict.
+  for (const list of Object.values(CURATED_MODELS)) {
+    const v = search(list)
+    if (v !== undefined) return v
+  }
+  return undefined
+}
+
+// Return image-input capability for a model reference, or `undefined` when
+// uncatalogued. Same lookup shape as modelSupportsTools — accepts prefixed
+// or bare refs, scans the catalog for an explicit verdict. Multimodal
+// detection consults this FIRST and only falls back to the substring
+// allowlist when the catalog has no opinion. See src/llm/multimodal.ts.
+export const modelSupportsImagesFromCatalog = (modelRef: string): boolean | undefined => {
+  const colonIdx = modelRef.indexOf(':')
+  const [provider, modelId] = colonIdx > 0
+    ? [modelRef.slice(0, colonIdx), modelRef.slice(colonIdx + 1)]
+    : [undefined, modelRef]
+  const search = (list: ReadonlyArray<CuratedModel> | undefined): boolean | undefined => {
+    const hit = list?.find(m => m.id === modelId)
+    return hit?.supportsImages
+  }
+  if (provider) return search(CURATED_MODELS[provider])
   for (const list of Object.values(CURATED_MODELS)) {
     const v = search(list)
     if (v !== undefined) return v
