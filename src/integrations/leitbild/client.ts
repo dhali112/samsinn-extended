@@ -366,7 +366,7 @@ const parseMaxAgeMs = (cacheControl: string | null): number | null => {
   return Number(match[1]) * 1_000
 }
 
-// === Test/diagnostic helper ===
+// === Test/diagnostic helpers ===
 
 export const __resetClientPool = (): void => {
   for (const client of clientPool.values()) {
@@ -374,4 +374,17 @@ export const __resetClientPool = (): void => {
     void client
   }
   clientPool.clear()
+}
+
+// Test-only: pre-populate the pool with a fake client for a given baseUrl so
+// callers of createLeitbildClient(baseUrl) get the fake. Production code
+// never calls this. Pair with __resetClientPool in afterEach to keep tests
+// hermetic.
+export const __injectClient = (baseUrl: string, client: LeitbildClient): void => {
+  // Apply the same normalization createLeitbildClient does so the lookup hits.
+  const u = new URL(baseUrl)
+  u.search = ''
+  u.hash = ''
+  const key = `${u.protocol}//${u.host}${u.pathname.replace(/\/$/, '')}`
+  clientPool.set(key, client)
 }

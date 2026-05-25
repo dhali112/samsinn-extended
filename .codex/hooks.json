@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'F=.health/last-run.txt; M=.health/.last-seen-marker; if [ -f \"$F\" ]; then if [ ! -f \"$M\" ] || [ \"$F\" -nt \"$M\" ]; then echo \"--- last health audit ---\"; cat \"$F\"; touch \"$M\"; fi; fi'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'F=.health/last-run.txt; if [ ! -f \"$F\" ] || [ $(( $(date +%s) - $(stat -f %m \"$F\" 2>/dev/null || stat -c %Y \"$F\" 2>/dev/null || echo 0) )) -gt 604800 ]; then nohup bash scripts/health.sh > /dev/null 2>&1 & fi'"
+          }
+        ]
+      }
+    ]
+  }
+}

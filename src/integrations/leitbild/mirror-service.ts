@@ -39,6 +39,13 @@ interface ActiveMirror {
   // events that only carry position telemetry. Real state transitions still
   // post. Cleared on detach. Bounded by the active object population.
   readonly objectSignatures: Map<string, string>
+  // Race-safe attach buffer (audit Finding 2.1.1). While `bufferedEvents`
+  // is non-null, handleEvent appends to it instead of posting. attach()
+  // switches to direct mode (sets to null) only AFTER snapshot is fetched
+  // AND lastSeq anchored AND banner posted. The drain re-runs each event
+  // through handleEvent — events with seq <= snapshot.seq are naturally
+  // dropped by the existing forward-only filter.
+  bufferedEvents: LeitbildEvent[] | null
 }
 
 // Build a stable signature of the parts of an object.upserted event that
@@ -109,6 +116,15 @@ export const createMirrorService = (): MirrorService => {
   }
 
   const handleEvent = (mirror: ActiveMirror) => async (event: LeitbildEvent): Promise<void> => {
+    // Buffer mode (during attach): hold events until snapshot is anchored.
+    // Drain happens at the end of attach() with this same handler, so the
+    // forward-only filter and reset detection apply consistently to both
+    // buffered + live events. See ActiveMirror.bufferedEvents.
+    if (mirror.bufferedEvents !== null) {
+      mirror.bufferedEvents.push(event)
+      return
+    }
+
     if (isResetSignal(event, mirror)) {
       // Re-anchor: refetch snapshot, post boundary message with NEW seq.
       // Note: the post-reset seq may be lower than mirror.lastSeq.
@@ -157,7 +173,23 @@ export const createMirrorService = (): MirrorService => {
     detachRoom(room.profile.id)
 
     const client = createLeitbildClient(config.baseUrl)
-    const mirror: ActiveMirror = { room, config, client, lastSeq: 0, objectSignatures: new Map() }
+    // bufferedEvents starts as [] so events arriving between subscribe and
+    // snapshot-anchor are captured. Switched to null after drain → live mode.
+    const mirror: ActiveMirror = {
+      room, config, client,
+      lastSeq: 0,
+      objectSignatures: new Map(),
+      bufferedEvents: [],
+    }
+
+    // Subscribe IMMEDIATELY so the WS opens in parallel with manifest +
+    // snapshot fetch. Events arriving before snapshot is anchored land in
+    // mirror.bufferedEvents (see handleEvent's buffer-mode guard). Audit
+    // Finding 2.1.1 — closes the documented-but-unimplemented race window.
+    // startSeq=0 is intentional: we don't yet know the real anchor; the
+    // forward-only filter applied during drain will drop events <= snapshot.seq.
+    mirror.handle = client.subscribe(config.instanceId, (event) => { void handleEvent(mirror)(event) }, 0)
+    active.set(room.profile.id, mirror)
 
     try {
       const manifest = await client.getManifest()
@@ -195,9 +227,28 @@ export const createMirrorService = (): MirrorService => {
         },
       })
 
-      mirror.handle = client.subscribe(config.instanceId, (event) => { void handleEvent(mirror)(event) }, snapshot.seq)
-      active.set(room.profile.id, mirror)
+      // Drain the buffer. Switch to live mode FIRST (clear bufferedEvents)
+      // so events arriving DURING the drain go straight to handleEvent's
+      // direct path — otherwise a slow drain could let live events queue
+      // behind already-stale buffered ones. The drain re-runs each via
+      // handleEvent; the seq <= mirror.lastSeq filter drops events the
+      // snapshot already accounts for. Reset events buffered during attach
+      // pass through normally — if a real reset happened mid-attach, the
+      // drain's re-anchor is the correct response.
+      const buffered = mirror.bufferedEvents
+      mirror.bufferedEvents = null
+      if (buffered !== null) {
+        for (const event of buffered) {
+          // void: drain is best-effort; we don't await each one (handleEvent
+          // is async only for the reset-snapshot-refetch path, which is rare).
+          void handleEvent(mirror)(event)
+        }
+      }
     } catch (err) {
+      // Setup failed (manifest/snapshot/etc). Tear down the subscription
+      // and the active entry to avoid a leaked WS + leaked buffer entry.
+      try { mirror.handle?.close() } catch { /* close may throw if WS already terminal; we're tearing down anyway */ }
+      active.delete(room.profile.id)
       // Fail loud, leave the room field set so the user knows what they
       // asked for; mirror just isn't running.
       room.post({
