@@ -56,10 +56,80 @@ export const isCaptureUnsupportedBrowser = (): boolean =>
 export const isGetDisplayMediaAvailable = (): boolean =>
   typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
 
+// Phase B: server-side screenshot via Leitbild postMessage handshake.
+// Samsinn posts { type: 'samsinn.screenshot.request', requestId } to the
+// iframe; Leitbild responds with { type: 'samsinn.screenshot.response',
+// requestId, dataUrl, width, height }. Origin verified against the
+// iframe's src so a malicious other window can't spoof a response.
+//
+// Timeout: 500ms. postMessage between same-browser windows is <10ms in
+// practice; 500ms is a generous ceiling. The cost of being wrong here is
+// per-click latency for users in Chrome/Safari (which would otherwise go
+// straight to getDisplayMedia), so keeping it tight matters.
+//
+// FORWARD-COMPAT: when Leitbild adds the postMessage handler, Firefox
+// starts working AND agent-callable screenshots become possible (via a
+// future lb_screenshot tool that goes through the same path, bypassing
+// the per-user OS picker prompt).
+const POSTMESSAGE_TIMEOUT_MS = 500
+
+const tryPostMessageCapture = async (iframe: HTMLIFrameElement): Promise<CaptureResult | null> => {
+  const win = iframe.contentWindow
+  if (!win) return null
+  let iframeOrigin: string
+  try { iframeOrigin = new URL(iframe.src).origin } catch { return null }
+  const requestId = crypto.randomUUID()
+
+  return new Promise<CaptureResult | null>((resolve) => {
+    const cleanup = (): void => {
+      window.removeEventListener('message', onMessage)
+      clearTimeout(timer)
+    }
+    const onMessage = (e: MessageEvent): void => {
+      if (e.origin !== iframeOrigin) return
+      const data = e.data as Record<string, unknown> | null
+      if (!data || data.type !== 'samsinn.screenshot.response') return
+      if (data.requestId !== requestId) return
+      cleanup()
+      if (typeof data.dataUrl !== 'string' || typeof data.width !== 'number' || typeof data.height !== 'number') {
+        resolve({ ok: false, reason: 'Leitbild postMessage response malformed' })
+        return
+      }
+      resolve({
+        ok: true,
+        dataUrl: data.dataUrl,
+        width: data.width,
+        height: data.height,
+        mimeType: 'image/png',
+      })
+    }
+    const timer = setTimeout(() => {
+      cleanup()
+      // null = no Leitbild responder → caller falls back to getDisplayMedia.
+      resolve(null)
+    }, POSTMESSAGE_TIMEOUT_MS)
+    window.addEventListener('message', onMessage)
+    win.postMessage({ type: 'samsinn.screenshot.request', requestId }, iframeOrigin)
+  })
+}
+
 // Capture a cropped screenshot of the given iframe's bounding rect.
 // Always cleans up the MediaStream + hidden video. Never throws —
 // returns { ok: false } on every failure path.
+//
+// Tries paths in order:
+//   1. Leitbild postMessage (Phase B) — works in every browser if the
+//      iframe has the responder. Falls through on 3s timeout.
+//   2. getDisplayMedia + ImageCapture/video crop — works in Chrome/Safari.
+//      Returns unsupported=true in Firefox (cross-origin taint).
 export const captureIframeRect = async (iframe: HTMLIFrameElement): Promise<CaptureResult> => {
+  // Try Phase B first. If Leitbild has the postMessage handler, this
+  // works in every browser including Firefox and skips the OS picker.
+  const postMessageResult = await tryPostMessageCapture(iframe)
+  if (postMessageResult !== null) return postMessageResult
+
+  // Fall through to getDisplayMedia. Firefox still short-circuits because
+  // drawImage on cross-origin-tainted streams is irrecoverable.
   if (isCaptureUnsupportedBrowser()) {
     return { ok: false, reason: 'browser-not-supported', unsupported: true }
   }
