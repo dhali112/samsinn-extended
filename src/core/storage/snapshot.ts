@@ -7,14 +7,22 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v24: current. Unifies the pack-activation model — room.activePacks is now
-//   the COMPLETE per-room pack list including system packs (core, local) and
+// v26: current. Adds optional `Message.attachments` for image attachments
+//   (the V0.15 multimodal path). Composer attaches PNG screenshots from the
+//   Leitbild iframe panel; multimodal-capable models receive them as
+//   `image_url` content parts via openai-compatible adapter; non-multimodal
+//   models see a text placeholder. Validated at the WS boundary in
+//   src/api/ws-commands/validate.ts. v25 rejected at load (clean break).
+// v25: adds optional `RoomSnapshot.leitbildMirror` (LeitbildMirrorConfig)
+//   so room ↔ Control Instance bindings survive restart. Restored at boot by
+//   leitbildMirror.restoreAll(house). v24 rejected at load.
+// v24: unifies the pack-activation model — room.activePacks is now the
+//   COMPLETE per-room pack list including system packs (core, local) and
 //   bundled default-active packs (demos, pwr-ops). The prior IMPLICIT_ACTIVE
 //   resolver is gone; what the snapshot says is what the room has. Always
-//   serialised (was previously omitted-when-empty). v23 rejected at load
-//   (clean break per repo policy — no migration shim).
-// v23 (predecessor): RAG-foundation state.
-// v22: current. Adds RAG-foundation state at the system level:
+//   serialised (was previously omitted-when-empty). v23 rejected at load.
+// v23: RAG-foundation state predecessor.
+// v22: adds RAG-foundation state at the system level:
 //   - `embedderBinding` — once any per-instance embedding ingestion runs
 //     (memory fold or document upload), the instance commits to a
 //     (provider, model, dim) triplet. Mid-life dimension switches are

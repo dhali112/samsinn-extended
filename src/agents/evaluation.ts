@@ -20,7 +20,11 @@ import { parseMapBody, formatMapErrors } from '../core/render-validators/map-sch
 // fence before giving up and posting the broken response (the UI banner
 // then takes over). Independent of `maxToolIterations` — a tool-heavy
 // agent must not lose fence retries to its tool budget.
-const MAX_FENCE_RETRIES = 2
+// 2 retries observed sufficient in practice: most schema mistakes are fixed
+// on the first retry; the second covers cases where the model corrects one
+// error and reveals another. Beyond 2, models tend to oscillate. Test
+// `evaluation.fence-retry.test.ts` asserts 3 total LLM calls (1 + 2 retries).
+export const MAX_FENCE_RETRIES = 2
 
 // === Decision — what the agent wants to do after evaluation ===
 

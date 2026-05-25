@@ -116,6 +116,21 @@ export interface ProviderMonitor {
   readonly dispose: () => void
 }
 
+// Defaults sized for cloud-provider patterns observed in 2026 Q2:
+//   HEALTHY_MS=90s    — heartbeat cadence when provider is responsive
+//   UNHEALTHY_SEQ     — 30s → 1m → 2m → 5m exponential backoff for repeat
+//                        failures. Cap at 5min so a brief outage doesn't
+//                        sideline the provider for too long after recovery.
+//   THRESHOLD=5       — 5 consecutive failures flips state to 'unhealthy'.
+//                        Threshold of 3 was too aggressive (single-burst
+//                        ratelimits flipped providers unnecessarily); 10
+//                        was too lenient (user waited too long to know).
+//   RATE_LIMIT_MS=60s — when provider returns 429 without retry-after, wait
+//                        a minute. Most providers cycle their windows hourly.
+//   QUOTA_MS=1h       — daily-budget exhaustion; expect human refill.
+//   PROVIDER_DOWN_MS=30s — 5xx/network errors; reasonable for short outages.
+//   FAILURE_LOG_SIZE=50 — circular buffer surfaced in providers admin UI.
+// Override per-provider via createProviderMonitor config.
 const DEFAULT_HEALTHY_MS = 90_000
 const DEFAULT_UNHEALTHY_SEQ = [30_000, 60_000, 120_000, 300_000] as const
 const DEFAULT_RATE_LIMIT_MS = 60_000

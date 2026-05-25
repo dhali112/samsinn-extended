@@ -36,6 +36,10 @@ interface CachedSnapshot {
   readonly fetchedAt: number
 }
 
+// 5s = max time we expect between a sequence of lb_* calls in one agent turn
+// (lb_state → lb_object → lb_query). Cache returns the same snapshot to all
+// of them; next turn re-fetches. Tune up if turns get longer; tune down if
+// scenarios show event-volume issues where snapshot freshness matters.
 const SNAPSHOT_TTL_MS = 5_000
 
 const snapshotCache = new Map<string, CachedSnapshot>() // key: `${agentId}:${baseUrl}:${instanceId}`

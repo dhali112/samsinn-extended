@@ -35,13 +35,18 @@ import { getContextWindowSync } from '../llm/models/context-window.ts'
 import { parsePrefixedModel, isCloudProvider } from '../llm/models/parse-prefix.ts'
 
 // Auto-budget reserves ~30% of a model's context window for tool definitions,
-// generation output, and safety margin. Fits typical tool+output overhead
-// without requiring users to hand-tune per model.
+// generation output, and safety margin. Static fraction sized for an average
+// pack load (~5-10 tools active). Pack-heavy agents (all of geo, web,
+// pwr-ops, pack-mgmt active) can blow past 30%; revisit if telemetry shows
+// systematic context-budget overruns. A dynamic budget = contextMax -
+// estTokens(toolDefs) - expectedOutput - safety would supersede this.
 const AUTO_BUDGET_FRACTION = 0.7
 const AUTO_BUDGET_FLOOR = 2000
 // Used when the model's context window is not in the registry (unknown
-// model). 64K matches modern medium-context defaults without risking
-// memory blowup on unknown small-context backends.
+// model). 64K is conservative: safe for any model claiming "medium context",
+// but most modern flagships (gpt-4o, claude-3.5-sonnet, gemini-1.5-pro,
+// gemini-1.5-flash) actually have 128K-2M and are under-utilised by this
+// fallback. Update src/llm/models/context-window.ts when a new model lands.
 const AUTO_BUDGET_FALLBACK = 64_000
 
 // Resolve a fully-qualified model string for context-window lookup. Cloud-

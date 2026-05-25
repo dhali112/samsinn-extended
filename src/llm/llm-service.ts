@@ -90,7 +90,16 @@ export interface LLMService {
 
 // === Implementation ===
 
+// 1s sweet spot for "primary is in cooldown and won't recover before we'd
+// finish setting up the wire call." Longer than typical network RTT
+// (50-200ms) so we don't race the cooldown expiry; shorter than typical
+// short-cooldown windows (e.g. provider says "retry in 5s") so we don't
+// waste a fallback-chain step when the primary is about to come back.
 const COOLDOWN_SKIP_GUARD_MS = 1_000
+// 250ms quiet retry on bare network errors (DNS hiccup, connection reset).
+// Single retry; classified provider errors (CloudProviderError, etc.) skip
+// this path and go straight to fallback. Avoids a ~5-10% spurious-fallback
+// rate observed in prod on flaky residential connections.
 const NETWORK_RETRY_BACKOFF_MS = 250
 
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/g

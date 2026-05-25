@@ -289,28 +289,29 @@ Every agent can use these tools by listing them in its `tools` config field.
 
 | Tool | What it does |
 |---|---|
+| `pass` | Decline to respond this turn (auto-injected for every AI agent) |
 | `get_time` | Current date/time (ISO 8601) |
+| `get_my_context` | Caller's identity, rooms they're in, current room metadata |
 | `list_rooms` | All rooms in the system |
-| `list_agents` | All agents (AI + human), kind, and model |
-| `get_my_context` | Caller's identity, rooms they're in |
-| `query_agent` | Ask another AI agent a direct question |
-| `delegate` | Assign a task to another agent; auto-creates and tracks a todo |
-| `list_todos` | Current room's todo list |
-| `add_todo` | Create a todo (optionally assign to an agent) |
-| `update_todo` | Set status, record a result, reassign |
-| `create_room` | Create a room (caller auto-joins) |
-| `delete_room` | Permanently delete a room |
-| `add_to_room` | Add an agent (or yourself) to a room |
-| `remove_from_room` | Remove an agent (or yourself) |
-| `set_delivery_mode` | Switch room to broadcast |
+| `list_agents` | All agents (AI + human), kind, model, tags |
+| `create_room` / `delete_room` | Create or permanently delete a room |
+| `add_to_room` / `remove_from_room` | Add or remove an agent (or self) |
+| `set_delivery_mode` | Switch room between broadcast and manual |
+| `set_room_prompt` | Update the room's shared instructions |
 | `pause_room` | Pause or unpause delivery |
 | `mute_agent` | Mute or unmute an agent in a room |
-| `set_room_prompt` | Update the room's shared instructions |
 | `post_to_room` | Post a message to a different room |
-| `get_room_history` | Recent messages from a room |
-| `write_skill` | Create a new skill (SKILL.md + directory) |
-| `write_tool` | Generate an executable tool inside a skill's tools/ dir |
-| `list_skills` | List all loaded skills with scope and bundled tools |
+| `get_room_history` | Recent messages from a specific room |
+| `recall` / `query_documents` | RAG: semantic search over folded memories and uploaded documents (per-instance vector store) |
+| `web_search` / `web_fetch` / `web_extract_json` | Web research (gated by `SAMSINN_ENABLE_WEB`) |
+| `geo_lookup` / `geo_add` / `geo_remove` / `geo_list_categories` / `geo_list_features` | Place lookup + management against the canonical geo store |
+| `list_skills` / `write_skill` | List or generate Skills (markdown behavioral templates with bundled tools) |
+| `write_tool` | Generate an executable tool inside a skill's `tools/` directory |
+| `write_script` | Generate a multi-agent improv script |
+| `list_available_packs` / `list_packs` / `install_pack` / `uninstall_pack` / `update_pack` | Manage extension packs from `samsinn-packs/*` |
+| `test_tool` | Self-test scaffold for tool authors |
+
+Pack-bundled tools become available when their owning pack is activated in the current room (see Packs). Notable bundled families: `pwr-ops` (procedure-modelling: `procedure_lookup`, `vatsim_arrivals`, `norway_platforms`, etc.), `biometrics` (`biometrics_start` / `_stop` / `_read`), `demos`. Per-agent `leitbildBinding` unlocks `lb_state` / `lb_object` / `lb_query` / `lb_scenario` / `lb_dispatch_context` (read) and, with `role: 'operator'`, `lb_command` (write).
 
 Full documentation, parameters, and usage guidance: [`docs/tools.md`](docs/tools.md)
 
