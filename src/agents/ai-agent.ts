@@ -34,20 +34,11 @@ import { createConcurrencyManager } from './concurrency.ts'
 import { getContextWindowSync } from '../llm/models/context-window.ts'
 import { parsePrefixedModel, isCloudProvider } from '../llm/models/parse-prefix.ts'
 
-// Auto-budget reserves ~30% of a model's context window for tool definitions,
-// generation output, and safety margin. Static fraction sized for an average
-// pack load (~5-10 tools active). Pack-heavy agents (all of geo, web,
-// pwr-ops, pack-mgmt active) can blow past 30%; revisit if telemetry shows
-// systematic context-budget overruns. A dynamic budget = contextMax -
-// estTokens(toolDefs) - expectedOutput - safety would supersede this.
-const AUTO_BUDGET_FRACTION = 0.7
-const AUTO_BUDGET_FLOOR = 2000
-// Used when the model's context window is not in the registry (unknown
-// model). 64K is conservative: safe for any model claiming "medium context",
-// but most modern flagships (gpt-4o, claude-3.5-sonnet, gemini-1.5-pro,
-// gemini-1.5-flash) actually have 128K-2M and are under-utilised by this
-// fallback. Update src/llm/models/context-window.ts when a new model lands.
-const AUTO_BUDGET_FALLBACK = 64_000
+// Per-eval context budget computation lives in budget.ts. Two modes:
+//   static (default): max(FLOOR, contextMax * 0.7)   ← byte-identical to pre-Tier-2 behavior
+//   dynamic (opt-in): contextMax - estTokens(toolDefs) - output - safety
+// Toggle via SAMSINN_AUTO_BUDGET_DYNAMIC=1. See budget.ts for rationale.
+import { computeContextBudget } from './budget.ts'
 
 // Resolve a fully-qualified model string for context-window lookup. Cloud-
 // prefixed models (e.g. "groq:llama-3.3") look up via the curated table;
@@ -162,14 +153,24 @@ export const createAIAgent = (
   let maxToolIterationsCfg: number = config.maxToolIterations ?? 5
 
   // Resolve the system+history token budget from the current model's context
-  // window (70% of modelMax, with a fallback constant when the window is unknown).
+  // window. Defers to budget.ts so the static-vs-dynamic policy lives in one
+  // place. Tool definitions are read fresh per call so the dynamic mode
+  // sees the actual per-eval surface (which varies with pack activation).
   const resolveContextTokenBudget = (): number => {
     const { provider, model } = resolveModelForContext(currentModel)
     const info = getContextWindowSync(provider, model)
-    if (info.contextMax > 0) {
-      return Math.max(AUTO_BUDGET_FLOOR, Math.floor(info.contextMax * AUTO_BUDGET_FRACTION))
-    }
-    return AUTO_BUDGET_FALLBACK
+    // ToolDefinition wraps name/description/parameters under `function`;
+    // budget.ts's BudgetableToolDef expects them at top level. Map once.
+    const toolDefs = (options?.toolDefinitions ?? []).map(td => ({
+      name: td.function.name,
+      description: td.function.description,
+      parameters: td.function.parameters,
+    }))
+    const result = computeContextBudget(
+      { contextMax: info.contextMax, toolDefinitions: toolDefs },
+      estimateTokens,
+    )
+    return result.budget
   }
 
   const resolveModelMax = (): number => {
