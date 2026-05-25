@@ -112,7 +112,7 @@ export const leitbildMirrorRoutes: RouteEntry[] = [
   {
     method: 'GET',
     pattern: /^\/api\/rooms\/([^/]+)\/leitbild-mirror$/,
-    handler: async (_req, match, { system, leitbildMirror }) => {
+    handler: async (_req, match, { system, leitbildMirror, instanceId }) => {
       const name = decodeURIComponent(match[1]!)
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
@@ -122,7 +122,7 @@ export const leitbildMirrorRoutes: RouteEntry[] = [
       const persisted = room.getLeitbildMirror()
       const status = leitbildMirror?.statusFor(room)
       if (persisted && leitbildMirror && (!status || !status.connected)) {
-        try { await leitbildMirror.attach(room, persisted) } catch {
+        try { await leitbildMirror.attach(room, persisted, instanceId) } catch {
           // attach() catches its own error and posts a formatMirrorError chat
           // message into the room — the user sees the failure inline. We
           // don't re-throw because this is a lazy self-heal; the GET still
@@ -138,7 +138,7 @@ export const leitbildMirrorRoutes: RouteEntry[] = [
   {
     method: 'PUT',
     pattern: /^\/api\/rooms\/([^/]+)\/leitbild-mirror$/,
-    handler: async (req, match, { system, leitbildMirror }) => {
+    handler: async (req, match, { system, leitbildMirror, instanceId }) => {
       if (!leitbildMirror) return errorResponse('Leitbild integration not initialized', 503)
       const name = decodeURIComponent(match[1]!)
       const room = system.house.getRoom(name)
@@ -147,7 +147,9 @@ export const leitbildMirrorRoutes: RouteEntry[] = [
       const parsed = parseMirrorConfig(body)
       if ('error' in parsed) return errorResponse(parsed.error, 400)
       try {
-        await leitbildMirror.attach(room, parsed)
+        // Pass instanceId as scope so this tenant's LeitbildClient pool
+        // is isolated from other tenants binding to the same baseUrl.
+        await leitbildMirror.attach(room, parsed, instanceId)
         return json({ status: leitbildMirror.statusFor(room) ?? null }, 200)
       } catch (err) {
         return errorResponse(`attach failed: ${(err as Error).message}`, 502)

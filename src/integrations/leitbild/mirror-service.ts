@@ -79,10 +79,15 @@ export interface MirrorStatus {
 }
 
 export interface MirrorService {
-  readonly attach: (room: Room, config: LeitbildMirrorConfig) => Promise<void>
+  // `scope` (typically a per-system instance id) keys the underlying
+  // LeitbildClient pool so two tenants binding to the same Leitbild
+  // deployment get isolated WS connections + manifest caches. Default
+  // scope (omitted) shares a global pool — fine for single-tenant.
+  readonly attach: (room: Room, config: LeitbildMirrorConfig, scope?: string) => Promise<void>
   readonly detach: (room: Room) => void
   readonly statusFor: (room: Room) => MirrorStatus | undefined
-  readonly restoreAll: (house: House) => Promise<void>
+  // restoreAll iterates a house's rooms; scope is the house's owning system.
+  readonly restoreAll: (house: House, scope?: string) => Promise<void>
   readonly shutdown: () => void
 }
 
@@ -176,11 +181,14 @@ export const createMirrorService = (deps: MirrorServiceDeps = {}): MirrorService
     post(mirror.room, formatEvent(event, mirror.config.format), mirror, event)
   }
 
-  const attach = async (room: Room, config: LeitbildMirrorConfig): Promise<void> => {
+  const attach = async (room: Room, config: LeitbildMirrorConfig, scope?: string): Promise<void> => {
     // Detach any prior mirror on this room first — single binding per room.
     detachRoom(room.profile.id)
 
-    const client = createLeitbildClient(config.baseUrl)
+    // scope keys the LeitbildClient pool so cross-tenant lifecycles stay
+    // isolated (audit Finding 2.1.3). Single-tenant / tests pass undefined
+    // and share the global pool.
+    const client = createLeitbildClient(config.baseUrl, scope ? { scope } : {})
     // bufferedEvents starts as [] so events arriving between subscribe and
     // snapshot-anchor are captured. Switched to null after drain → live mode.
     const mirror: ActiveMirror = {
@@ -298,12 +306,12 @@ export const createMirrorService = (deps: MirrorServiceDeps = {}): MirrorService
     }
   }
 
-  const restoreAll = async (house: House): Promise<void> => {
+  const restoreAll = async (house: House, scope?: string): Promise<void> => {
     for (const profile of house.listAllRooms()) {
       const room = house.getRoom(profile.id)
       const cfg = room?.getLeitbildMirror()
       if (room && cfg) {
-        try { await attach(room, cfg) }
+        try { await attach(room, cfg, scope) }
         catch (err) { console.warn(`[leitbild] restoreAll failed for room "${profile.name}": ${(err as Error).message}`) }
       }
     }

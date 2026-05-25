@@ -27,6 +27,10 @@ import { createLeitbildClient } from './client.ts'
 export interface LeitbildCommandToolDeps {
   readonly getBinding: (agentId: string) => LeitbildAgentBinding | undefined
   readonly getAgentName?: (agentId: string) => string | undefined
+  // Per-tenant scope for the LeitbildClient pool, looked up per-call by
+  // agent id (bootstrap resolves to the owning system's instance id).
+  // Audit Finding 2.1.3.
+  readonly getScope?: (agentId: string) => string | undefined
 }
 
 // Convert an agent name (free-form) into a Leitbild-compatible slug.
@@ -85,7 +89,7 @@ const createLbCommand = (deps: LeitbildCommandToolDeps): Tool => ({
     const idempotencyKey = crypto.randomUUID()
 
     try {
-      const client = createLeitbildClient(binding.baseUrl)
+      const client = createLeitbildClient(binding.baseUrl, { scope: deps.getScope?.(ctx.callerId) })
       const body = await client.callCommand(binding.instanceId, {
         actorId, clientId, kind, targetObjectIds: targets, payload, idempotencyKey,
       }) as { result?: unknown }

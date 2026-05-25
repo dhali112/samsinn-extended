@@ -93,8 +93,23 @@ export interface LeitbildClient {
 }
 
 // === Module-level pool ===
+//
+// Audit Finding 2.1.3 — per-tenant scoping. The pool was previously keyed
+// by baseUrl alone, which meant two cookie-bound Samsinn tenants binding
+// to the same Leitbild deployment shared one underlying WS connection +
+// one manifest cache. Per-tenant lifecycles were tangled: tenant A's
+// detach could leave tenant B subscribed via the same record set, and
+// any manifest ETag refresh applied to both.
+//
+// New scoping: the key is `${scope}::${normalizedBaseUrl}`. Default scope
+// `'__global__'` keeps the old behavior for callers that don't pass a
+// scope — useful for tests and for the single-tenant headless path.
+// Multi-tenant callers (bootstrap routes + mirror-service + lb_* tools)
+// pass the per-system instance id as scope, so each tenant gets its own
+// underlying client + WS pool.
 
 const clientPool = new Map<string, LeitbildClient>()
+const DEFAULT_SCOPE = '__global__'
 
 const normalizeBaseUrl = (raw: string): string => {
   const u = new URL(raw)
@@ -103,11 +118,23 @@ const normalizeBaseUrl = (raw: string): string => {
   return `${u.protocol}//${u.host}${u.pathname.replace(/\/$/, '')}`
 }
 
+const poolKey = (scope: string, baseUrl: string): string => `${scope}::${baseUrl}`
+
+export interface CreateLeitbildClientOptions {
+  // Per-tenant scope (typically the cookie-bound instance id). Two
+  // callers with the same baseUrl but different scopes get separate
+  // underlying clients. Default `'__global__'` for callers that don't
+  // care (tests, single-tenant headless).
+  readonly scope?: string
+}
+
 // === Factory ===
 
-export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
+export const createLeitbildClient = (baseUrlRaw: string, options: CreateLeitbildClientOptions = {}): LeitbildClient => {
   const baseUrl = normalizeBaseUrl(baseUrlRaw)
-  const cached = clientPool.get(baseUrl)
+  const scope = options.scope ?? DEFAULT_SCOPE
+  const key = poolKey(scope, baseUrl)
+  const cached = clientPool.get(key)
   if (cached) return cached
 
   let manifestCache: ManifestCacheEntry | null = null
@@ -339,7 +366,7 @@ export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
     subscribe,
     baseUrl,
   }
-  clientPool.set(baseUrl, client)
+  clientPool.set(key, client)
   return client
 }
 
@@ -376,15 +403,15 @@ export const __resetClientPool = (): void => {
   clientPool.clear()
 }
 
-// Test-only: pre-populate the pool with a fake client for a given baseUrl so
-// callers of createLeitbildClient(baseUrl) get the fake. Production code
-// never calls this. Pair with __resetClientPool in afterEach to keep tests
-// hermetic.
-export const __injectClient = (baseUrl: string, client: LeitbildClient): void => {
-  // Apply the same normalization createLeitbildClient does so the lookup hits.
+// Test-only: pre-populate the pool with a fake client for a given baseUrl
+// so callers of createLeitbildClient(baseUrl) get the fake. Production
+// code never calls this. Pair with __resetClientPool in afterEach to keep
+// tests hermetic. Scope defaults to '__global__' to match tests that don't
+// pass a scope.
+export const __injectClient = (baseUrl: string, client: LeitbildClient, scope: string = DEFAULT_SCOPE): void => {
   const u = new URL(baseUrl)
   u.search = ''
   u.hash = ''
-  const key = `${u.protocol}//${u.host}${u.pathname.replace(/\/$/, '')}`
-  clientPool.set(key, client)
+  const normalized = `${u.protocol}//${u.host}${u.pathname.replace(/\/$/, '')}`
+  clientPool.set(poolKey(scope, normalized), client)
 }

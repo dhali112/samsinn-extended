@@ -293,7 +293,14 @@ export const bootstrap = async (): Promise<void> => {
       }
       return undefined
     }
-    for (const tool of createLeitbildTools({ getBinding: getLeitbildBinding })) {
+    // Audit Finding 2.1.3: getScope returns the cookie-bound instance id
+    // that owns the agent, so the underlying LeitbildClient pool is keyed
+    // per-tenant — two tenants binding to the same Leitbild deployment
+    // get isolated WS connections + manifest caches.
+    const getLeitbildScope = (agentId: string): string | undefined => {
+      return registry.instanceForAgent(agentId)
+    }
+    for (const tool of createLeitbildTools({ getBinding: getLeitbildBinding, getScope: getLeitbildScope })) {
       shared.sharedToolRegistry.register(tool)
     }
     // V2.B: command tool (operator role only — enforced at execution time
@@ -309,7 +316,7 @@ export const bootstrap = async (): Promise<void> => {
       }
       return undefined
     }
-    for (const tool of createLeitbildCommandTools({ getBinding: getLeitbildBinding, getAgentName })) {
+    for (const tool of createLeitbildCommandTools({ getBinding: getLeitbildBinding, getAgentName, getScope: getLeitbildScope })) {
       shared.sharedToolRegistry.register(tool)
     }
   }
@@ -410,7 +417,7 @@ export const bootstrap = async (): Promise<void> => {
       // reattach-on-GET fires (which requires a human or agent hitting
       // the endpoint). Fire-and-forget; mirror.attach handles its own
       // errors by posting a [mirror error] system message.
-      void leitbildMirror.restoreAll(system.house)
+      void leitbildMirror.restoreAll(system.house, id)
     },
     onSystemEvicted: (system, id) => {
       // Close WS sessions for this instance — they hold dangling references.

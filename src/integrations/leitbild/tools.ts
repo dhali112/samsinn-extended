@@ -27,6 +27,12 @@ export interface LeitbildToolDeps {
   // Look up an agent's Leitbild binding by callerId. Returns undefined
   // when the caller has no binding (tool returns a helpful error then).
   readonly getBinding: (agentId: string) => LeitbildAgentBinding | undefined
+  // Optional: per-tenant scope for the LeitbildClient pool. Bootstrap
+  // wires this to return the cookie-bound instance id that owns the
+  // agent, so cross-tenant lifecycles stay isolated even though the
+  // tool is registered process-wide. Tests/single-tenant omit and
+  // share the global pool. Audit Finding 2.1.3.
+  readonly getScope?: (agentId: string) => string | undefined
 }
 
 // === Per-agent snapshot cache ===
@@ -50,12 +56,13 @@ const cacheKey = (agentId: string, binding: LeitbildAgentBinding): string =>
 const getCachedSnapshot = async (
   agentId: string,
   binding: LeitbildAgentBinding,
+  scope?: string,
 ): Promise<ControlInstanceSnapshot> => {
   const key = cacheKey(agentId, binding)
   const now = Date.now()
   const cached = snapshotCache.get(key)
   if (cached && now - cached.fetchedAt < SNAPSHOT_TTL_MS) return cached.snapshot
-  const client = createLeitbildClient(binding.baseUrl)
+  const client = createLeitbildClient(binding.baseUrl, scope ? { scope } : {})
   const snapshot = await client.getSnapshot(binding.instanceId)
   snapshotCache.set(key, { snapshot, fetchedAt: now })
   return snapshot
@@ -103,7 +110,7 @@ const createLbState = (deps: LeitbildToolDeps): Tool => ({
     const binding = requireBinding(deps, ctx)
     if ('error' in binding) return fail(binding.error)
     try {
-      const snap = await getCachedSnapshot(ctx.callerId, binding)
+      const snap = await getCachedSnapshot(ctx.callerId, binding, deps.getScope?.(ctx.callerId))
       const objects = (snap.objects as ReadonlyArray<{ domain?: string }> | undefined) ?? []
       const objectsByDomain: Record<string, number> = {}
       for (const o of objects) {
@@ -141,7 +148,7 @@ const createLbObject = (deps: LeitbildToolDeps): Tool => ({
     const id = String(params.id ?? '').trim()
     if (!id) return fail('lb_object requires non-empty id')
     try {
-      const snap = await getCachedSnapshot(ctx.callerId, binding)
+      const snap = await getCachedSnapshot(ctx.callerId, binding, deps.getScope?.(ctx.callerId))
       const objects = (snap.objects as ReadonlyArray<{ id?: string }> | undefined) ?? []
       const found = objects.find(o => o?.id === id)
       if (!found) return fail(`Object "${id}" not found in current snapshot.`)
@@ -174,7 +181,7 @@ const createLbQuery = (deps: LeitbildToolDeps): Tool => ({
     const payload = (params.payload as Record<string, unknown> | undefined) ?? {}
     if (!packId || !kind) return fail('lb_query requires packId and kind')
     try {
-      const client = createLeitbildClient(binding.baseUrl)
+      const client = createLeitbildClient(binding.baseUrl, { scope: deps.getScope?.(ctx.callerId) })
       const body = await client.callPackQuery(binding.instanceId, packId, kind, payload)
       return ok(body)
     } catch (err) {
@@ -192,8 +199,8 @@ const createLbScenario = (deps: LeitbildToolDeps): Tool => ({
     const binding = requireBinding(deps, ctx)
     if ('error' in binding) return fail(binding.error)
     try {
-      const client = createLeitbildClient(binding.baseUrl)
-      const snap = await getCachedSnapshot(ctx.callerId, binding)
+      const client = createLeitbildClient(binding.baseUrl, { scope: deps.getScope?.(ctx.callerId) })
+      const snap = await getCachedSnapshot(ctx.callerId, binding, deps.getScope?.(ctx.callerId))
       if (!snap.scenarioId) return fail('Snapshot has no scenarioId.')
       const scenario = await client.getScenario(snap.scenarioId)
       if (!scenario) return fail(`Scenario "${snap.scenarioId}" not found in catalog.`)
@@ -229,14 +236,14 @@ const createLbDispatchContext = (deps: LeitbildToolDeps): Tool => ({
     const binding = requireBinding(deps, ctx)
     if ('error' in binding) return fail(binding.error)
     try {
-      const client = createLeitbildClient(binding.baseUrl)
+      const client = createLeitbildClient(binding.baseUrl, { scope: deps.getScope?.(ctx.callerId) })
       // Fetch state, scenario, and capabilities in parallel. All three
       // call paths now route through client.* methods that share header
       // injection + URL construction (audit Findings 2.1.5 + 2.1.6).
       const [snapshot, scenarioFetched, capabilitiesRaw] = await Promise.all([
-        getCachedSnapshot(ctx.callerId, binding),
+        getCachedSnapshot(ctx.callerId, binding, deps.getScope?.(ctx.callerId)),
         (async () => {
-          const snap = await getCachedSnapshot(ctx.callerId, binding)
+          const snap = await getCachedSnapshot(ctx.callerId, binding, deps.getScope?.(ctx.callerId))
           if (!snap.scenarioId) return undefined
           return client.getScenario(snap.scenarioId)
         })(),
