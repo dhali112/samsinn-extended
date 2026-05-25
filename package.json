@@ -20,6 +20,7 @@
     "headless": "bun run src/main.ts --headless",
     "deploy": "bun run scripts/deploy.ts",
     "set-env": "bun run scripts/set-env.ts",
+    "drift": "bun run scripts/check-deploy-drift.ts",
     "smoke": "bun run scripts/smoke-streaming.ts",
     "health": "bash scripts/health.sh"
   },
