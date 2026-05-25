@@ -27,6 +27,7 @@ import { createLeitbildClient } from './client.ts'
 import type { LeitbildEvent, SubscriptionHandle } from './types.ts'
 import { formatBanner, formatEvent, formatMirrorError, formatResetBoundary } from './formatter.ts'
 import { SYSTEM_SENDER_ID } from '../../core/types/constants.ts'
+import type { LimitMetrics } from '../../core/limit-metrics.ts'
 
 interface ActiveMirror {
   readonly room: Room
@@ -85,7 +86,14 @@ export interface MirrorService {
   readonly shutdown: () => void
 }
 
-export const createMirrorService = (): MirrorService => {
+export interface MirrorServiceDeps {
+  // Optional: process-global anomaly counter sink. When provided, attach
+  // failures bump `leitbildAttachErrors` so /api/system/health surfaces
+  // them without journalctl grep. Boot wires this from shared.limitMetrics.
+  readonly limitMetrics?: LimitMetrics
+}
+
+export const createMirrorService = (deps: MirrorServiceDeps = {}): MirrorService => {
   const active = new Map<string, ActiveMirror>() // roomId → ActiveMirror
 
   const post = (room: Room, content: string, mirror: ActiveMirror, event?: LeitbildEvent): void => {
@@ -249,6 +257,7 @@ export const createMirrorService = (): MirrorService => {
       // and the active entry to avoid a leaked WS + leaked buffer entry.
       try { mirror.handle?.close() } catch { /* close may throw if WS already terminal; we're tearing down anyway */ }
       active.delete(room.profile.id)
+      deps.limitMetrics?.inc('leitbildAttachErrors')
       // Fail loud, leave the room field set so the user knows what they
       // asked for; mirror just isn't running.
       room.post({

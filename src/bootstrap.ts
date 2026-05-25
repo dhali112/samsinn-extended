@@ -357,7 +357,7 @@ export const bootstrap = async (): Promise<void> => {
   // leitbildMirror config. Without this, restored mirrors stay dormant
   // until a human hits the mirror endpoint (lazy reattach).
   const { createMirrorService } = await import('./integrations/leitbild/mirror-service.ts')
-  const leitbildMirror = createMirrorService()
+  const leitbildMirror = createMirrorService({ limitMetrics: shared.limitMetrics })
 
   // === SystemRegistry ===
   const registry = createSystemRegistry({
@@ -366,7 +366,13 @@ export const bootstrap = async (): Promise<void> => {
     // Replaces the boot-time call against a throwaway boot system. Contract
     // still runs before any traffic actually reaches a System; we just
     // don't materialize an empty instance dir for the privilege.
-    onFirstLoad: (system) => validateBootstrap(system),
+    // The wsManager closure is safe because (a) the let-with-assertion
+    // pattern guarantees it's set before any getOrLoad runs, and (b) the
+    // onSystemCreated hook below calls wireSystemEvents synchronously,
+    // so by the time onFirstLoad fires the wired-state is already true.
+    onFirstLoad: (system, id) => validateBootstrap(system, {
+      isWsWired: () => wsManager.isWired(id),
+    }),
     onSystemCreated: async (system, id, autoSaver) => {
       // No per-instance FS scans: external tools, skills, packs and MCP
       // tools all live in shared.sharedToolRegistry (populated above before

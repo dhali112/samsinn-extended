@@ -158,6 +158,68 @@ export const systemRoutes: RouteEntry[] = [
     },
   },
   {
+    // Aggregated operator-visibility snapshot. Single URL the operator
+    // can poll to see "is anything obviously wrong" without paging
+    // through /api/system/limits + /api/system/diagnostics + journalctl.
+    //
+    // Surfaces:
+    //   - typecheck / boot status (implicit: if you got this response, boot ok)
+    //   - per-provider monitor state (healthy / backoff / unhealthy / oneoff)
+    //   - process-wide anomaly counters from limit-metrics
+    //   - per-instance broadcast wiring + last-broadcast age
+    //   - per-instance leitbild mirror state (connected? lastSeq?)
+    //   - WS session count
+    //
+    // Counters are PROCESS-WIDE (aggregate across cookie-bound instances),
+    // not per-tenant. That's the right shape for operator triage; per-tenant
+    // breakdowns belong in /api/system/diagnostics.
+    //
+    // Read-only; auth-gated; safe to poll at ~30s cadence.
+    method: 'GET',
+    pattern: /^\/api\/system\/health$/,
+    handler: async (_req, _match, ctx) => {
+      const limits = ctx.system.limitMetrics.snapshot()
+      const monitors = ctx.system.monitors
+      const monitorStates: Record<string, { sub: string; consecutiveFailures: number; lastErrorAt: number | null; modelCount: number }> = {}
+      for (const [name, mon] of Object.entries(monitors)) {
+        const st = mon.getState()
+        monitorStates[name] = {
+          sub: st.sub,
+          consecutiveFailures: st.consecutiveFailures,
+          lastErrorAt: st.lastErrorAt ?? null,
+          modelCount: st.modelCount,
+        }
+      }
+      const diag = ctx.diagnostics?.snapshot() ?? { instances: [], wsSessions: 0 }
+      const now = Date.now()
+      const instances = diag.instances.map(i => ({
+        id: i.id,
+        wired: i.wired,
+        agentCount: i.agentCount,
+        lastBroadcastAt: i.lastBroadcastAt ?? null,
+        lastBroadcastAgeMs: i.lastBroadcastAt ? now - i.lastBroadcastAt : null,
+      }))
+      return json({
+        timestamp: now,
+        // Anomalies that should be near-zero in normal operation.
+        anomalies: {
+          wsInvalidJson: limits.wsInvalidJson,
+          routerMissingRoom: limits.routerMissingRoom,
+          leitbildAttachErrors: limits.leitbildAttachErrors,
+          sseBufferExceeded: limits.sseBufferExceeded,
+          wsBackpressureDropped: limits.wsBackpressureDropped,
+          evictionFlushRetries: limits.evictionFlushRetries,
+          evictionForceEvicts: limits.evictionForceEvicts,
+          rateLimitEvicted: limits.rateLimitEvicted,
+          staleSessionsEvicted: limits.staleSessionsEvicted,
+        },
+        providers: monitorStates,
+        wsSessions: diag.wsSessions,
+        instances,
+      })
+    },
+  },
+  {
     method: 'POST',
     pattern: /^\/api\/system\/shutdown$/,
     handler: async (_req, _match, _ctx) => {

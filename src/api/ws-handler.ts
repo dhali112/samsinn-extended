@@ -290,9 +290,12 @@ export const handleWSMessage = async (
     // Surface to operator so a misbehaving client (browser bug, dev-tools
     // injection, plugin) is distinguishable from a server bug. Session token
     // is redacted to its first 8 chars to keep the log line useful without
-    // leaking the full identifier.
+    // leaking the full identifier. Counter bump surfaces aggregate in
+    // /api/system/health without journalctl grep.
     console.warn(`[ws] invalid JSON from session ${session.sessionToken.slice(0, 8)}…:`,
       err instanceof Error ? err.message : String(err))
+    // Optional access: minimal test stubs may not provide limitMetrics.
+    system.limitMetrics?.inc('wsInvalidJson')
     sendError(wsManager, ws, 'Invalid JSON')
     return
   }

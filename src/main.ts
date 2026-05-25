@@ -392,7 +392,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     callSystemLLM: (options) => callLLM(llmService.bound({ source: 'system' }), options),
   }
   const house = createHouse(houseCallbacks)
-  const routeMessage = createMessageRouter({ house })
+  const routeMessage = createMessageRouter({ house, limitMetrics: shared.limitMetrics })
   // Per-instance overlay over the process-shared tool registry. Pack tools,
   // skill-bundled tools, external tools, MCP tools and the codegen suite
   // live in shared (registered once at boot). Only house-bound built-ins

@@ -31,7 +31,15 @@ const fail = (message: string, bugRef: string): never => {
   throw new BootstrapContractError(`${message} [see ${bugRef}]`, bugRef)
 }
 
-export const validateBootstrap = (system: System): void => {
+export interface ValidateBootstrapContext {
+  // Closure that reports whether wsManager has wired this system's
+  // broadcasts (via wireSystemEvents → markWired). Bootstrap supplies
+  // `() => wsManager.isWired(id)`. Headless mode supplies undefined
+  // (no WS clients, so the contract is N/A).
+  readonly isWsWired?: () => boolean
+}
+
+export const validateBootstrap = (system: System, ctx: ValidateBootstrapContext = {}): void => {
   // === Provider stack contracts ===
 
   // Contract 1: providerKeys must be wired into the System.
@@ -64,5 +72,20 @@ export const validateBootstrap = (system: System): void => {
   // contract assumes the router exists.
   if (!system.llm) {
     fail('System.llm (ProviderRouter) is missing', 'arch invariant')
+  }
+
+  // Contract 4: wsManager.isWired(id) must return true for this system by
+  // the time this contract runs. Captures the 5d73a8e invariant: every
+  // per-instance system is wired by the registry's onSystemCreated hook,
+  // which fires BEFORE onFirstLoad (where this validator is called from).
+  // If wsManager was undefined when onSystemCreated fired, wireSystemEvents
+  // was silently skipped — the bug pattern that made cookie-bound instances
+  // broadcast nothing for three days unnoticed. Headless mode supplies
+  // isWsWired=undefined (no WS clients to wire).
+  if (ctx.isWsWired !== undefined && !ctx.isWsWired()) {
+    fail(
+      'wsManager.isWired returned false at first-load — wireSystemEvents was not called for this system',
+      'commit 5d73a8e',
+    )
   }
 }

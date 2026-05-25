@@ -121,7 +121,9 @@ export interface SystemRegistryOptions {
   // process. Replaces the boot-time validateBootstrap call: the contract
   // check still runs before any traffic actually reaches a System, but
   // we don't materialize a throwaway boot instance just to validate.
-  readonly onFirstLoad?: (system: System) => void
+  // Receives the instance id so contract checks can verify per-instance
+  // wiring (e.g. wsManager.isWired(id)).
+  readonly onFirstLoad?: (system: System, id: string) => void
 }
 
 export interface SystemRegistry {
@@ -289,10 +291,10 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
   // --- Public API ---
 
   let firstLoadFired = false
-  const fireFirstLoadOnce = (system: System): void => {
+  const fireFirstLoadOnce = (system: System, id: string): void => {
     if (firstLoadFired) return
     firstLoadFired = true
-    try { opts.onFirstLoad?.(system) } catch (err) {
+    try { opts.onFirstLoad?.(system, id) } catch (err) {
       // Re-throw — the onFirstLoad contract check is meant to crash boot
       // when wiring is broken. Suppressing it would resurrect the silent-
       // skip class of bug the contract guards.
@@ -310,7 +312,7 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     const existing = map.get(id)
     if (existing && existing.state === 'active') {
       existing.lastTouchedAt = Date.now()
-      fireFirstLoadOnce(existing.system)
+      fireFirstLoadOnce(existing.system, id)
       return existing.system
     }
 
@@ -336,7 +338,7 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
           onIdle: async () => { /* set later if needed */ },
         }
         map.set(id, entry)
-        fireFirstLoadOnce(system)
+        fireFirstLoadOnce(system, id)
         return system
       } finally {
         pendingLoads.delete(id)

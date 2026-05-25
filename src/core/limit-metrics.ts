@@ -24,6 +24,14 @@ export interface LimitMetricsSnapshot {
   wsBackpressureDropped: number        // ws-handler closed slow consumer
   rateLimitEvicted: number             // rate-limit LRU dropped a key
   staleSessionsEvicted: number         // ws-handler TTL sweep dropped a session
+  // --- Anomaly counters (resilience hardening) ---
+  // Counts events the Group-3 operator-warn logs emit. Surfaces "is the
+  // system behaving sanely" without grepping journalctl. Bumped at the
+  // same site that calls console.warn so the log message and the counter
+  // stay in lockstep.
+  wsInvalidJson: number                // invalid JSON received on a WS
+  routerMissingRoom: number            // routeMessage skipped a non-existent room
+  leitbildAttachErrors: number         // mirror-service.attach threw
 }
 
 export interface LimitMetrics {
@@ -39,6 +47,9 @@ const zeroSnapshot = (): LimitMetricsSnapshot => ({
   wsBackpressureDropped: 0,
   rateLimitEvicted: 0,
   staleSessionsEvicted: 0,
+  wsInvalidJson: 0,
+  routerMissingRoom: 0,
+  leitbildAttachErrors: 0,
 })
 
 export const createLimitMetrics = (): LimitMetrics => {

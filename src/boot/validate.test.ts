@@ -70,4 +70,20 @@ describe('validateBootstrap', () => {
     expect(() => validateBootstrap(validSystem({ llm: undefined as never })))
       .toThrow(/llm.*missing/)
   })
+
+  // Contract 4: wsManager.isWired must return true at first-load.
+  test('throws when isWsWired returns false (commit 5d73a8e contract)', () => {
+    expect(() => validateBootstrap(validSystem(), { isWsWired: () => false }))
+      .toThrow(/wsManager\.isWired returned false.*5d73a8e/)
+  })
+
+  test('passes when isWsWired returns true', () => {
+    expect(() => validateBootstrap(validSystem(), { isWsWired: () => true }))
+      .not.toThrow()
+  })
+
+  test('skips wsManager contract when isWsWired is undefined (headless mode)', () => {
+    // Headless supplies no ctx — N/A because no WS clients exist.
+    expect(() => validateBootstrap(validSystem(), {})).not.toThrow()
+  })
 })
