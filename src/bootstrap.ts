@@ -319,6 +319,28 @@ export const bootstrap = async (): Promise<void> => {
     for (const tool of createLeitbildCommandTools({ getBinding: getLeitbildBinding, getAgentName, getScope: getLeitbildScope })) {
       shared.sharedToolRegistry.register(tool)
     }
+    // V3 (this commit): lb_screenshot agent tool. Requires a connected
+    // browser session — broadcasts via wsManager.broadcastToInstance,
+    // first responder wins. See src/integrations/leitbild/screenshot-tool.ts.
+    const { createLeitbildScreenshotTool } = await import('./integrations/leitbild/screenshot-tool.ts')
+    const screenshotTool = createLeitbildScreenshotTool({
+      broadcastToInstance: (id, msg) => wsManager.broadcastToInstance(id, msg),
+      getScope: getLeitbildScope,
+      getRoomByName: (roomName: string) => {
+        // ctx.roomId in tool execution is set to the trigger room ID
+        // (see ai-agent.ts callContext), but our agent tools tend to be
+        // called with the ROOM NAME. Lookup by name → first matching
+        // live system's room.
+        for (const meta of registry.list()) {
+          const sys = registry.tryGetLive(meta.id)
+          if (!sys) continue
+          const room = sys.house.getRoom(roomName)
+          if (room) return room
+        }
+        return undefined
+      },
+    })
+    shared.sharedToolRegistry.register(screenshotTool)
   }
   // Wikis used to be a fetched-content subsystem. As of commit N, packs
   // declare wiki URLs as metadata only (pack.json `wikis: [{ name, url }]`)

@@ -84,4 +84,15 @@ export const systemHandlers: SystemHandlers = {
   error(msg) {
     console.error('Server error:', msg.message)
   },
+
+  lb_screenshot_request(msg) {
+    // Server (via lb_screenshot tool) is asking THIS session to take a
+    // screenshot of its mounted Leitbild iframe. Fire-and-forget — the
+    // capture function posts the result back via the WS send-as-screenshot
+    // helper. Multiple sessions may all receive this request; the server
+    // resolves on the first responder.
+    window.dispatchEvent(new CustomEvent('lb-screenshot-request', {
+      detail: { requestId: msg.requestId, roomId: msg.roomId },
+    }))
+  },
 }

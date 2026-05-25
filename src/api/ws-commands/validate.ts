@@ -268,6 +268,29 @@ export const validateWSInbound = (raw: unknown): ValidationResult<WSInbound> => 
       if (!error.ok) return error
       return { ok: true, value: { type: 'biometric_capture_failed', captureId: captureId.value, error: error.value } }
     }
+    case 'lb_screenshot_result': {
+      const requestId = requiredString(raw, 'requestId')
+      if (!requestId.ok) return requestId
+      const dataUrl = requiredString(raw, 'dataUrl')
+      if (!dataUrl.ok) return dataUrl
+      // Accept only image/png and image/jpeg dataURLs — match the protocol
+      // doc on the Leitbild side and the captureIframeRect output types.
+      if (!dataUrl.value.startsWith('data:image/png;base64,') && !dataUrl.value.startsWith('data:image/jpeg;base64,')) {
+        return { ok: false, error: 'dataUrl must start with data:image/png;base64, or data:image/jpeg;base64,' }
+      }
+      const mimeType = dataUrl.value.startsWith('data:image/png') ? 'image/png' as const : 'image/jpeg' as const
+      if (typeof raw.width !== 'number' || typeof raw.height !== 'number') {
+        return { ok: false, error: 'width and height must be numbers' }
+      }
+      return { ok: true, value: { type: 'lb_screenshot_result', requestId: requestId.value, dataUrl: dataUrl.value, width: raw.width, height: raw.height, mimeType } }
+    }
+    case 'lb_screenshot_failed': {
+      const requestId = requiredString(raw, 'requestId')
+      if (!requestId.ok) return requestId
+      const reason = requiredString(raw, 'reason')
+      if (!reason.ok) return reason
+      return { ok: true, value: { type: 'lb_screenshot_failed', requestId: requestId.value, reason: reason.value } }
+    }
     default:
       return { ok: true, value: raw as unknown as WSInbound }
   }

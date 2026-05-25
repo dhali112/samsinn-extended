@@ -19,6 +19,7 @@ import { handleRoomCommand } from './ws-commands/room-commands.ts'
 import { handleAgentCommand } from './ws-commands/agent-commands.ts'
 import { handleMessageCommand } from './ws-commands/message-commands.ts'
 import { handleBiometricCommand } from './ws-commands/biometric-commands.ts'
+import { handleScreenshotCommand } from './ws-commands/screenshot-commands.ts'
 import { sendError } from './ws-commands/types.ts'
 import { validateWSInbound } from './ws-commands/validate.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
@@ -265,6 +266,7 @@ const commandHandlers = [
   handleRoomCommand,
   handleAgentCommand,
   handleBiometricCommand,
+  handleScreenshotCommand,
 ]
 
 // === Message Handler ===

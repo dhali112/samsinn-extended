@@ -20,6 +20,7 @@
 // No echo-specific data structures needed: V2.A's filter is sufficient.
 // ============================================================================
 
+import { createHash } from 'node:crypto'
 import type { Tool, ToolContext, ToolResult } from '../../core/types/tool.ts'
 import type { LeitbildAgentBinding } from '../../core/types/agent.ts'
 import { createLeitbildClient } from './client.ts'
@@ -78,15 +79,21 @@ const createLbCommand = (deps: LeitbildCommandToolDeps): Tool => ({
     const actorId = `actor:samsinn:${slug}`
     const clientId = `client:samsinn:${slug}`
 
-    // Client-generated idempotency key. Leitbild MAY use this to dedup
-    // re-submissions of the same logical command (older Leitbild ignores
-    // the field — forward-compat). Audit Finding 2.1.7 scaffolding: today
-    // every lb_command call generates a fresh key, so dedup only activates
-    // when the same client calls the same instance with the same key
-    // (which doesn't happen yet; LLM-eval retries re-derive args and would
-    // get a new key). When the agent loop adds retry-key reuse, this
-    // field becomes the dedup anchor without a coordinated Leitbild release.
-    const idempotencyKey = crypto.randomUUID()
+    // Deterministic idempotency key — sha256 of (callerId + kind + targets
+    // + payload). Two semantically-identical lb_command calls from the same
+    // agent get the same key. Combined with Leitbild's 1h dedup TTL (per
+    // docs/samsinn-integration.md), this means:
+    //   - LLM-eval retries that re-derive identical args = single Leitbild effect
+    //   - Intentional same-command-twice within an hour = also collapsed (the
+    //     LLM should vary something — a sequence id, a different target — to
+    //     get distinct effects; if it truly intends a duplicate, the dedup
+    //     window expires and the second one fires)
+    //   - Distinct calls (different targets / payload) = distinct keys, distinct effects
+    // The hash strategy beats a per-call cache because it has zero state in
+    // Samsinn (no eviction, no memory creep) while still giving Leitbild the
+    // stable anchor it needs.
+    const fingerprint = JSON.stringify({ callerId: ctx.callerId, kind, targets, payload })
+    const idempotencyKey = createHash('sha256').update(fingerprint).digest('hex').slice(0, 32)
 
     try {
       const client = createLeitbildClient(binding.baseUrl, { scope: deps.getScope?.(ctx.callerId) })

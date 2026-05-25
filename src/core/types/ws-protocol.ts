@@ -47,6 +47,13 @@ export type WSInbound =
   | { readonly type: 'biometric_capture_stopped'; readonly captureId: string; readonly reason: 'user' | 'agent' | 'unmount' | 'disconnect' | 'error' }
   | { readonly type: 'biometric_capture_denied'; readonly captureId: string }
   | { readonly type: 'biometric_capture_failed'; readonly captureId: string; readonly error: string }
+  // lb_screenshot — browser-side result delivery for an agent-triggered
+  // screenshot capture (see lb_screenshot tool). Browser receives the
+  // outbound lb_screenshot_request, calls captureIframeRect, posts the
+  // result back. Tool resolves the pending promise + posts the image
+  // as a message into the agent's room.
+  | { readonly type: 'lb_screenshot_result'; readonly requestId: string; readonly dataUrl: string; readonly width: number; readonly height: number; readonly mimeType: 'image/png' | 'image/jpeg' }
+  | { readonly type: 'lb_screenshot_failed'; readonly requestId: string; readonly reason: string }
 
 // Wire shape for biometric signal snapshots. Mirrors biometrics/types.ts
 // BiometricSignal but duplicated here so the WS protocol module doesn't
@@ -63,6 +70,11 @@ export interface BiometricSignalWire {
 
 export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
+  // lb_screenshot — server asks every connected session in this instance
+  // to take a screenshot of its mounted Leitbild iframe and post the
+  // result back via lb_screenshot_result. First responder wins; tool
+  // resolves on first matching requestId.
+  | { readonly type: 'lb_screenshot_request'; readonly requestId: string; readonly roomId: string }
   | { readonly type: 'agent_state'; readonly agentName: string; readonly state: StateValue; readonly context?: string; readonly generationStarted?: number }
   | { readonly type: 'room_created'; readonly profile: RoomProfile }
   | { readonly type: 'agent_joined'; readonly agent: AgentProfile }

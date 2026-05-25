@@ -20,6 +20,7 @@ import type { MessageAttachment } from '../../core/types/messaging.ts'
 import { addAttachment } from './composer-attachments.ts'
 import { icon } from './icon.ts'
 import { captureIframeRect } from './screenshot-capture.ts'
+import { send as wsSend } from './ws-send.ts'
 
 interface MirrorStatus {
   readonly status: null | {
@@ -360,3 +361,49 @@ export const updateLeitbildPanelForRoom = async (roomName: string | undefined, r
   if (ifr.src !== url) ifr.src = url
   btn.classList.remove('hidden')
 }
+
+// === Agent-callable screenshot (lb_screenshot tool) ===
+//
+// Server-side lb_screenshot broadcasts an `lb_screenshot_request` WS frame
+// to every session in the instance. We listen here, capture the iframe rect
+// via the existing captureIframeRect helper, and post back via WS. First
+// responder wins on the server side; if our session has no iframe mounted
+// we silently no-op (server timeout will fire after 10s).
+
+let agentRequestListenerInstalled = false
+
+const installAgentRequestListener = (): void => {
+  if (agentRequestListenerInstalled) return
+  agentRequestListenerInstalled = true
+  window.addEventListener('lb-screenshot-request', (e: Event) => {
+    const detail = (e as CustomEvent<{ requestId: string; roomId: string }>).detail
+    if (!iframe || !panel || panel.style.display === 'none') {
+      // No iframe mounted in this session — let some other session
+      // respond (or let the server-side timeout fire).
+      return
+    }
+    void (async () => {
+      const result = await captureIframeRect(iframe!)
+      if (result.ok === true) {
+        wsSend({
+          type: 'lb_screenshot_result',
+          requestId: detail.requestId,
+          dataUrl: result.dataUrl,
+          width: result.width,
+          height: result.height,
+          mimeType: result.mimeType,
+        })
+      } else {
+        wsSend({
+          type: 'lb_screenshot_failed',
+          requestId: detail.requestId,
+          reason: result.reason ?? 'capture-failed',
+        })
+      }
+    })()
+  })
+}
+
+// Auto-install on module load — the panel module is imported once at app boot.
+installAgentRequestListener()
+

@@ -62,16 +62,16 @@ export const isGetDisplayMediaAvailable = (): boolean =>
 // requestId, dataUrl, width, height }. Origin verified against the
 // iframe's src so a malicious other window can't spoof a response.
 //
-// Timeout: 500ms. postMessage between same-browser windows is <10ms in
-// practice; 500ms is a generous ceiling. The cost of being wrong here is
-// per-click latency for users in Chrome/Safari (which would otherwise go
-// straight to getDisplayMedia), so keeping it tight matters.
-//
-// FORWARD-COMPAT: when Leitbild adds the postMessage handler, Firefox
-// starts working AND agent-callable screenshots become possible (via a
-// future lb_screenshot tool that goes through the same path, bypassing
-// the per-user OS picker prompt).
-const POSTMESSAGE_TIMEOUT_MS = 500
+// Timeout: 3000ms. Bumped from 500ms after Codex (Leitbild author) pointed
+// out that rendering MapLibre WebGL + DOM + waiting for fonts/map-idle +
+// rasterizing + encoding can easily exceed 500ms — the postMessage frame
+// itself is <10ms but the work the responder does before posting back is
+// real. Cost of being too generous: per-click latency for Chrome/Safari
+// users when Leitbild doesn't respond (older Leitbild deploys without the
+// handler). 3s feels right: a Phase B-capable Leitbild responds in
+// 200-1000ms typical; pre-Phase B Leitbild times out after 3s and falls
+// through to getDisplayMedia (which is what those users got pre-bump).
+const POSTMESSAGE_TIMEOUT_MS = 3_000
 
 const tryPostMessageCapture = async (iframe: HTMLIFrameElement): Promise<CaptureResult | null> => {
   const win = iframe.contentWindow
