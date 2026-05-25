@@ -101,7 +101,20 @@ export const __resetMultimodalWarnTracker = (): void => { warnedKeys.clear() }
 // distinguishes "this agent can't see images, by design" from "I just
 // switched my agent to gpt-6 and didn't realize the catalog doesn't know
 // it yet."
-export const warnImageDroppedOnce = (model: string, callerId: string, imageCount: number, attDescriptions: string): void => {
+//
+// Counter sink: process-global counter increments EVERY time (not just on
+// the first warn per pair) so the operator can see total cumulative drops
+// in /api/system/health.anomalies.multimodalImagesDropped. The warn-once
+// is for journalctl readability; the counter is for aggregate visibility.
+export const warnImageDroppedOnce = (
+  model: string,
+  callerId: string,
+  imageCount: number,
+  attDescriptions: string,
+  countSink?: { inc: (field: 'multimodalImagesDropped', by?: number) => void },
+): void => {
+  // Counter always bumps so /api/system/health shows true cumulative drops.
+  countSink?.inc('multimodalImagesDropped', imageCount)
   const key = `${model}::${callerId}`
   if (warnedKeys.has(key)) return
   warnedKeys.add(key)

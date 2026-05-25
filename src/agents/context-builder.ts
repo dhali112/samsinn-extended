@@ -63,6 +63,7 @@ export const formatMessage = (
   compressedIds?: ReadonlySet<string>,
   supportsImages?: boolean,
   modelForWarn?: string,
+  metricsSink?: { inc: (field: 'multimodalImagesDropped', by?: number) => void },
 ): FormattedMessage | null => {
   if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.type === 'pass' || msg.type === 'mute' || msg.type === 'error') return null
   // Attachment handling: when the model is multimodal AND the message
@@ -84,7 +85,7 @@ export const formatMessage = (
   // catalog doesn't know about yet). See src/llm/multimodal.ts.
   if (droppingImages && modelForWarn) {
     const desc = attachments.map(a => `${a.mimeType} ${a.width}×${a.height}`).join(', ')
-    warnImageDroppedOnce(modelForWarn, agentId, attachments.length, desc)
+    warnImageDroppedOnce(modelForWarn, agentId, attachments.length, desc, metricsSink)
   }
 
   if (msg.senderId === agentId) {
@@ -205,6 +206,11 @@ export interface BuildContextDeps {
   // dropped N image(s)…` in journalctl so silent loss is audible. Optional
   // for tests; absent ⇒ no warn fires.
   readonly modelForWarn?: string
+  // Process-global counter sink (limitMetrics). When provided, the
+  // placeholder-substitution path bumps `multimodalImagesDropped` so
+  // /api/system/health surfaces cumulative drops alongside the warn-once
+  // journal lines. Optional for tests.
+  readonly metricsSink?: { inc: (field: 'multimodalImagesDropped', by?: number) => void }
 }
 
 const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePrompts> => ({
@@ -573,13 +579,13 @@ const createNormalStrategy = (
 
     const formattedOld: ChatRequest['messages'][number][] = []
     for (const msg of old) {
-      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages, deps.modelForWarn)
+      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages, deps.modelForWarn, deps.metricsSink)
       if (formatted) formattedOld.push(formatted)
     }
 
     const formattedFresh: Array<{ formatted: ChatRequest['messages'][number]; id: string }> = []
     for (const msg of fresh) {
-      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages, deps.modelForWarn)
+      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds, deps.supportsImages, deps.modelForWarn, deps.metricsSink)
       if (formatted) formattedFresh.push({ formatted, id: msg.id })
     }
 

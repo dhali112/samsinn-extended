@@ -336,6 +336,10 @@ export interface SpawnOptions {
     readonly fallback: boolean
     readonly reason: string
   }
+  // Process-global counter sink (shared.limitMetrics). Forwarded into
+  // createAIAgent's options so the multimodal placeholder-substitution
+  // path can bump multimodalImagesDropped for /api/system/health.
+  readonly metricsSink?: { inc: (field: 'multimodalImagesDropped', by?: number) => void }
 }
 
 export const spawnAIAgent = async (
@@ -465,6 +469,7 @@ export const spawnAIAgent = async (
     getScriptContext: spawnOptions?.getScriptContext,
     onEvalEvent: spawnOptions?.onEvalEvent,
     ...(spawnOptions?.resolveEffectiveModel ? { resolveEffectiveModel: spawnOptions.resolveEffectiveModel } : {}),
+    ...(spawnOptions?.metricsSink ? { metricsSink: spawnOptions.metricsSink } : {}),
   }, agentId)
 
   // Fill agentRef so the lazy ToolContext in resolveAgentTools resolves correctly

@@ -758,6 +758,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       getRoomActivation: (roomId: string) => house.getRoom(roomId),
       onEvalEvent: evalEvent.proxy,
       resolveEffectiveModel,
+      // Process-global counter sink — context-builder bumps
+      // multimodalImagesDropped whenever it swaps image bytes for a text
+      // placeholder. Surfaces in /api/system/health.
+      metricsSink: shared.limitMetrics,
     })
 
   // Provider-routing-event listener lives on the shared router (see

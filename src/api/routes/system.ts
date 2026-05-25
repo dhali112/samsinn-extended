@@ -206,6 +206,7 @@ export const systemRoutes: RouteEntry[] = [
           wsInvalidJson: limits.wsInvalidJson,
           routerMissingRoom: limits.routerMissingRoom,
           leitbildAttachErrors: limits.leitbildAttachErrors,
+          multimodalImagesDropped: limits.multimodalImagesDropped,
           sseBufferExceeded: limits.sseBufferExceeded,
           wsBackpressureDropped: limits.wsBackpressureDropped,
           evictionFlushRetries: limits.evictionFlushRetries,

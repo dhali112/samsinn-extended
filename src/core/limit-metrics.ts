@@ -32,6 +32,13 @@ export interface LimitMetricsSnapshot {
   wsInvalidJson: number                // invalid JSON received on a WS
   routerMissingRoom: number            // routeMessage skipped a non-existent room
   leitbildAttachErrors: number         // mirror-service.attach threw
+  multimodalImagesDropped: number      // images swapped for text placeholder
+                                        // (model not in catalog allowlist AND
+                                        // not in substring allowlist). Bumped
+                                        // alongside the warn-once log line so
+                                        // operators can spot a "we just hit a
+                                        // new model the catalog doesn't know
+                                        // about" gap from a single URL.
 }
 
 export interface LimitMetrics {
@@ -50,6 +57,7 @@ const zeroSnapshot = (): LimitMetricsSnapshot => ({
   wsInvalidJson: 0,
   routerMissingRoom: 0,
   leitbildAttachErrors: 0,
+  multimodalImagesDropped: 0,
 })
 
 export const createLimitMetrics = (): LimitMetrics => {

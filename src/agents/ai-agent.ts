@@ -99,6 +99,10 @@ export interface AIAgentOptions {
     readonly fallback: boolean
     readonly reason: string
   }
+  // Process-global counter sink (limitMetrics). Threaded through to
+  // context-builder so the multimodal placeholder-substitution path can
+  // bump `multimodalImagesDropped`. Wired by spawn.ts from shared.limitMetrics.
+  readonly metricsSink?: { inc: (field: 'multimodalImagesDropped', by?: number) => void }
 }
 
 // === Factory ===
@@ -240,6 +244,7 @@ export const createAIAgent = (
     suppressLeitbildMirror: !!currentLeitbildBinding,
     supportsImages: modelSupportsImages(currentModel),
     modelForWarn: currentModel,
+    metricsSink: options?.metricsSink,
   })
   // buildContext walks five sources to assemble the LLM context. Order in
   // src/agents/context-builder.ts top header. Quick map of sources here so

@@ -96,6 +96,20 @@ describe('warnImageDroppedOnce', () => {
     warnImageDroppedOnce('gpt-6-future', 'agent-a', 1, 'x')
     expect(captured.length).toBe(2)
   })
+
+  test('counter sink is bumped every call (not deduped like the warn)', () => {
+    // The warn is once-per-pair (operator readability); the counter is
+    // every-time (cumulative drop tally for /api/system/health).
+    let total = 0
+    const sink = { inc: (_field: 'multimodalImagesDropped', by = 1) => { total += by } }
+    warnImageDroppedOnce('gpt-6-future', 'agent-a', 1, 'x', sink)
+    warnImageDroppedOnce('gpt-6-future', 'agent-a', 3, 'y', sink)
+    warnImageDroppedOnce('gpt-6-future', 'agent-b', 2, 'z', sink)
+    // Three calls; counter bumped each time by imageCount.
+    expect(total).toBe(1 + 3 + 2)
+    // The warn deduped at agent-a but fired fresh for agent-b. 2 warn lines.
+    expect(captured.length).toBe(2)
+  })
 })
 
 describe('imagePlaceholder', () => {
