@@ -15,7 +15,8 @@
 import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk } from '../core/types/llm.ts'
 import type { NativeToolCall } from '../core/types/tool.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
-import { createCloudProviderError, parseRetryAfterMs } from './errors.ts'
+import { createCloudProviderError } from './errors.ts'
+import { mapHttpError } from './openai-compatible-errors.ts'
 import { fetchWithTimeout } from '../core/fetch-utils.ts'
 import { normalizeModelId, expandAnthropicAliases } from './models/normalize.ts'
 
@@ -157,71 +158,12 @@ interface OAIModelsResponse {
 }
 
 // === Error mapping ===
+// HTTP-status → CloudProviderError classification moved to
+// ./openai-compatible-errors.ts (audit Finding 2.3.2 — partial split).
+// Imported at the top of this file; re-exported below for callers who
+// already imported it from here.
 
-const mapHttpError = (
-  providerName: string,
-  status: number,
-  body: string,
-  retryAfterHeader: string | null,
-): Error => {
-  const retryAfterMs = parseRetryAfterMs(retryAfterHeader)
-  const snippet = body.slice(0, 300)
-
-  if (status === 401 || status === 403) {
-    // Many providers return 429/403 for quota; distinguish via body text.
-    const bodyLower = body.toLowerCase()
-    if (bodyLower.includes('quota') || bodyLower.includes('exceeded') || bodyLower.includes('limit')) {
-      return createCloudProviderError({
-        code: 'quota', provider: providerName, message: `${providerName} quota exceeded: ${snippet}`,
-        status, retryAfterMs,
-      })
-    }
-    return createCloudProviderError({
-      code: 'auth', provider: providerName, message: `${providerName} auth error ${status}: ${snippet}`,
-      status,
-    })
-  }
-  if (status === 429) {
-    return createCloudProviderError({
-      code: 'rate_limit', provider: providerName, message: `${providerName} rate-limited: ${snippet}`,
-      status, retryAfterMs,
-    })
-  }
-  if (status >= 500) {
-    return createCloudProviderError({
-      code: 'provider_down', provider: providerName, message: `${providerName} server error ${status}: ${snippet}`,
-      status, retryAfterMs,
-    })
-  }
-  // Per-model limitations that aren't permanent config errors — classify as
-  // provider_down so the router falls through for bare model names. Prefix-
-  // pinned models still throw because the router doesn't fall back on pins.
-  //   - context_length_exceeded: request too long for this model's window
-  //   - model_not_found: provider's /models listed it but the account can't
-  //     actually use it (common on Cerebras free-tier for premium models)
-  const bodyLowerFull = body.toLowerCase()
-  const isContextIssue = bodyLowerFull.includes('context_length_exceeded') || bodyLowerFull.includes('maximum context length')
-  const isModelIssue = status === 404 || bodyLowerFull.includes('model_not_found') || bodyLowerFull.includes('does not exist')
-  if (isContextIssue) {
-    return createCloudProviderError({
-      code: 'provider_down', provider: providerName,
-      message: `${providerName} context-length exceeded: ${snippet}`,
-      status,
-    })
-  }
-  if (isModelIssue) {
-    return createCloudProviderError({
-      code: 'provider_down', provider: providerName,
-      message: `${providerName} model not available: ${snippet}`,
-      status,
-    })
-  }
-  // Other 4xx — treat as bad_request (permanent, do not fall through).
-  return createCloudProviderError({
-    code: 'bad_request', provider: providerName, message: `${providerName} request error ${status}: ${snippet}`,
-    status,
-  })
-}
+export { mapHttpError } from './openai-compatible-errors.ts'
 
 // === Cache-marker helper ===
 // Spread-clones the array AND its last entry, attaches `cache_control:
