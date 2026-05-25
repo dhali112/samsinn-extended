@@ -175,17 +175,7 @@ const createLbQuery = (deps: LeitbildToolDeps): Tool => ({
     if (!packId || !kind) return fail('lb_query requires packId and kind')
     try {
       const client = createLeitbildClient(binding.baseUrl)
-      const manifest = await client.getManifest()
-      const linkTemplate = manifest.links['controlInstancePackQueries']?.hrefTemplate
-      if (!linkTemplate) return fail('Manifest missing controlInstancePackQueries link rel.')
-      const url = linkTemplate.replace('{id}', encodeURIComponent(binding.instanceId))
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Leitbild-Client': 'samsinn; version="0.1.0"' },
-        body: JSON.stringify({ packId, kind, payload }),
-      })
-      if (!res.ok) return fail(`lb_query HTTP ${res.status}`)
-      const body = await res.json()
+      const body = await client.callPackQuery(binding.instanceId, packId, kind, payload)
       return ok(body)
     } catch (err) {
       return fail(`lb_query failed: ${(err as Error).message}`)
@@ -240,28 +230,29 @@ const createLbDispatchContext = (deps: LeitbildToolDeps): Tool => ({
     if ('error' in binding) return fail(binding.error)
     try {
       const client = createLeitbildClient(binding.baseUrl)
-      // Fetch state, scenario, and capabilities in parallel.
-      const manifest = await client.getManifest()
-      const capsLinkTemplate = manifest.links['controlInstanceCapabilities']?.hrefTemplate
-      if (!capsLinkTemplate) return fail('Manifest missing controlInstanceCapabilities link rel (older Leitbild deployment?).')
-      const queriesLinkTemplate = manifest.links['controlInstancePackQueries']?.hrefTemplate
-      if (!queriesLinkTemplate) return fail('Manifest missing controlInstancePackQueries link rel.')
-
-      const capsUrl = capsLinkTemplate.replace('{id}', encodeURIComponent(binding.instanceId))
-      const [snapshot, scenarioFetched, capsRes] = await Promise.all([
+      // Fetch state, scenario, and capabilities in parallel. All three
+      // call paths now route through client.* methods that share header
+      // injection + URL construction (audit Findings 2.1.5 + 2.1.6).
+      const [snapshot, scenarioFetched, capabilitiesRaw] = await Promise.all([
         getCachedSnapshot(ctx.callerId, binding),
         (async () => {
           const snap = await getCachedSnapshot(ctx.callerId, binding)
           if (!snap.scenarioId) return undefined
           return client.getScenario(snap.scenarioId)
         })(),
-        fetch(capsUrl, { headers: { Accept: 'application/json', 'Leitbild-Client': 'samsinn; version="0.1.0"' } }),
+        client.getCapabilities(binding.instanceId).catch((err: Error) => {
+          // Capabilities is the manifest-rel-gated endpoint — surface the
+          // failure as a typed fail rather than throwing through the
+          // Promise.all (which would lose snapshot + scenario context).
+          return { __error: err.message } as Record<string, unknown>
+        }),
       ])
-      if (!capsRes.ok) return fail(`Capabilities fetch failed: HTTP ${capsRes.status}`)
-      const capabilities = await capsRes.json() as CapabilitiesResponse
+      if ('__error' in capabilitiesRaw) {
+        return fail(`Capabilities fetch failed: ${String(capabilitiesRaw.__error)}`)
+      }
+      const capabilities = capabilitiesRaw as unknown as CapabilitiesResponse
 
       // Walk queryKinds, call each in parallel with empty payload.
-      const queriesUrl = queriesLinkTemplate.replace('{id}', encodeURIComponent(binding.instanceId))
       const queryKindsMap = capabilities.queryKinds ?? {}
       const allKinds: Array<{ packId: string; kind: string }> = []
       for (const [packId, kinds] of Object.entries(queryKindsMap)) {
@@ -275,13 +266,9 @@ const createLbDispatchContext = (deps: LeitbildToolDeps): Tool => ({
       const queryResults = await Promise.all(
         kindsToCall.map(async ({ packId, kind }) => {
           try {
-            const res = await fetch(queriesUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Leitbild-Client': 'samsinn; version="0.1.0"' },
-              body: JSON.stringify({ packId, kind, payload: {} }),
-            })
-            if (!res.ok) return { packId, kind, ok: false as const, reason: `HTTP ${res.status}` }
-            const body = await res.json() as { response?: { ok?: boolean; result?: unknown; error?: { message?: string } } }
+            const body = await client.callPackQuery(binding.instanceId, packId, kind, {}) as {
+              readonly response?: { readonly ok?: boolean; readonly result?: unknown; readonly error?: { readonly message?: string } }
+            }
             if (body.response?.ok === false) return { packId, kind, ok: false as const, reason: body.response.error?.message ?? 'pack rejected' }
             return { packId, kind, ok: true as const, result: body.response?.result ?? body }
           } catch (err) {

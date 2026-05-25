@@ -76,17 +76,9 @@ const createLbCommand = (deps: LeitbildCommandToolDeps): Tool => ({
 
     try {
       const client = createLeitbildClient(binding.baseUrl)
-      const manifest = await client.getManifest()
-      const linkTemplate = manifest.links['controlInstanceCommands']?.hrefTemplate
-      if (!linkTemplate) return fail('Manifest missing controlInstanceCommands link rel.')
-      const url = linkTemplate.replace('{id}', encodeURIComponent(binding.instanceId))
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Leitbild-Client': 'samsinn; version="0.1.0"' },
-        body: JSON.stringify({ actorId, clientId, kind, targetObjectIds: targets, payload }),
-      })
-      if (!res.ok) return fail(`lb_command HTTP ${res.status}: ${await res.text().catch(() => '')}`)
-      const body = await res.json() as { result?: unknown }
+      const body = await client.callCommand(binding.instanceId, {
+        actorId, clientId, kind, targetObjectIds: targets, payload,
+      }) as { result?: unknown }
       return ok(body.result ?? body)
     } catch (err) {
       return fail(`lb_command failed: ${(err as Error).message}`)

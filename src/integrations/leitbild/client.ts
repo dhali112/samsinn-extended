@@ -76,6 +76,19 @@ export interface LeitbildClient {
   readonly getScenario: (scenarioId: string) => Promise<ScenarioSummary | undefined>
   readonly getEvents: (instanceId: string, afterSeq: number) => Promise<ReadonlyArray<LeitbildEvent>>
   readonly subscribe: (instanceId: string, onEvent: LeitbildEventHandler, startSeq: number) => SubscriptionHandle
+  // POST a pack-query against the instance. Resolves the URL via the
+  // manifest's `controlInstancePackQueries` link template and applies the
+  // canonical Leitbild-Client header. Returns the raw JSON body. Throws on
+  // non-2xx or manifest-missing-rel. Callers (lb_query / lb_dispatch_context)
+  // get one shared code path so CLIENT_HEADER and URL construction stay in
+  // sync with the rest of the client (audit Findings 2.1.5 + 2.1.6).
+  readonly callPackQuery: (instanceId: string, packId: string, kind: string, payload: Record<string, unknown>) => Promise<unknown>
+  // POST a command against the instance. Same shape contract as
+  // callPackQuery; resolves via `controlInstanceCommands` link template.
+  readonly callCommand: (instanceId: string, body: Record<string, unknown>) => Promise<unknown>
+  // GET the per-CI capabilities (active packs + accepted command kinds +
+  // wikiRefs + queryKinds). Resolves via `controlInstanceCapabilities`.
+  readonly getCapabilities: (instanceId: string) => Promise<Record<string, unknown>>
   readonly baseUrl: string
 }
 
@@ -172,6 +185,38 @@ export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
     const body = (await res.json()) as { events?: ReadonlyArray<LeitbildEvent> } | ReadonlyArray<LeitbildEvent>
     if (Array.isArray(body)) return body
     return (body as { events?: ReadonlyArray<LeitbildEvent> }).events ?? []
+  }
+
+  // --- Pack-query / command / capabilities (used by lb_* agent tools) ---
+
+  const postJson = async (url: string, body: Record<string, unknown>): Promise<Response> => fetch(url, {
+    method: 'POST',
+    headers: { ...defaultHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  const callPackQuery = async (instanceId: string, packId: string, kind: string, payload: Record<string, unknown>): Promise<unknown> => {
+    const url = await resolveLink('controlInstancePackQueries', { id: instanceId })
+    const res = await postJson(url, { packId, kind, payload })
+    if (!res.ok) throw new Error(`Leitbild pack-query failed: HTTP ${res.status}`)
+    return res.json()
+  }
+
+  const callCommand = async (instanceId: string, body: Record<string, unknown>): Promise<unknown> => {
+    const url = await resolveLink('controlInstanceCommands', { id: instanceId })
+    const res = await postJson(url, body)
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      throw new Error(`Leitbild command failed: HTTP ${res.status}${errBody ? `: ${errBody}` : ''}`)
+    }
+    return res.json()
+  }
+
+  const getCapabilities = async (instanceId: string): Promise<Record<string, unknown>> => {
+    const url = await resolveLink('controlInstanceCapabilities', { id: instanceId })
+    const res = await fetch(url, { headers: defaultHeaders() })
+    if (!res.ok) throw new Error(`Leitbild capabilities fetch failed: HTTP ${res.status}`)
+    return res.json() as Promise<Record<string, unknown>>
   }
 
   // --- WS subscription management ---
@@ -287,6 +332,9 @@ export const createLeitbildClient = (baseUrlRaw: string): LeitbildClient => {
     getManifest: fetchManifest,
     getSnapshot,
     getScenario,
+    callPackQuery,
+    callCommand,
+    getCapabilities,
     getEvents,
     subscribe,
     baseUrl,
