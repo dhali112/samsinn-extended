@@ -126,8 +126,15 @@ const getQueryKinds = (capabilities: Record<string, unknown>, packId: string): R
 const queryKindMatches = (actual: string, required: string): boolean =>
   actual === required || actual.endsWith(`.${required}`) || required.endsWith(`.${actual}`)
 
+const unwrapPackQueryResult = (raw: unknown): unknown => {
+  if (!isRecord(raw)) return raw
+  if (isRecord(raw.response)) return unwrapPackQueryResult(raw.response)
+  if (isRecord(raw.result)) return raw.result
+  return raw
+}
+
 const extractSystemIds = (raw: unknown): ReadonlyArray<string> => {
-  const body = isRecord(raw) && isRecord(raw.result) ? raw.result : raw
+  const body = unwrapPackQueryResult(raw)
   const systemsRaw = Array.isArray(body)
     ? body
     : isRecord(body) && Array.isArray(body.systems)

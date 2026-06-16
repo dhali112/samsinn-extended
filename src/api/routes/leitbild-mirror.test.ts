@@ -100,7 +100,7 @@ describe('Leitbild proxy control-instance selection', () => {
       },
       queryByInstance: {
         older: { systems: [{ id: 'old-plant' }] },
-        fresh: { systems: [{ id: 'fresh-plant' }] },
+        fresh: { response: { ok: true, result: { systems: [{ id: 'fresh-plant' }] } } },
       },
     })
 
