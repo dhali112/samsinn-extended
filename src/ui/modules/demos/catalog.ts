@@ -150,9 +150,9 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
   id: 'leitbild',
   title: 'Leitbild Integration',
   blurb:
-    'Connect this room to a live Leitbild PWR process-plant scenario and combine simulator data with the pwr-ops procedure wiki. Samsinn will bind the room to a readable process-plant Control Instance, mirror Leitbild events into chat, and give AI agents the lb_* plus procedure tools. Trigger a transient in Leitbild with the lightning control, then click a prompt. Re-open this list any time from the 🪄 icon in the room header.',
+    'Connect this room to a live Leitbild scenario with ambulance dispatch, weather, and PWR process-plant data. Samsinn will bind the room to a readable process-plant Control Instance, mirror Leitbild events into chat, and give AI agents the lb_* plus procedure tools. Trigger a transient in Leitbild with the lightning control, then click a prompt. Re-open this list any time from the 🪄 icon in the room header.',
   requiredPacks: ['pwr-ops'],
-  requiredTools: ['lb_state', 'lb_scenario', 'lb_query', 'procedure_lookup', 'wiki_lookup', 'eal_classify'],
+  requiredTools: ['lb_state', 'lb_scenario', 'lb_query', 'lb_dispatch_context', 'procedure_lookup', 'wiki_lookup', 'eal_classify'],
   leitbildSetup: {
     baseUrl: 'https://leitbild.samsinn.app',
     preferredScenarioId: 'halden-process-plant-demo',
@@ -160,9 +160,29 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
     requiredPackId: 'process-plant',
     requiredQueryKind: 'process-plant.systems.list',
     probePayload: {},
-    agentTools: ['lb_state', 'lb_scenario', 'lb_query', 'procedure_lookup', 'wiki_lookup', 'eal_classify'],
+    agentTools: ['lb_state', 'lb_scenario', 'lb_query', 'lb_dispatch_context', 'procedure_lookup', 'wiki_lookup', 'eal_classify'],
   },
   prompts: [
+    {
+      label: 'Summarize the scenario',
+      description: 'Use lb_dispatch_context to pull state + scenario + pack queries in one call, then summarize.',
+      prompt: 'Use lb_dispatch_context. Then in 3-4 sentences tell me: what scenario are we in, what packs are active, how many objects by domain, and any notable process-plant, ambulance dispatch, or weather state. Queries that require a systemId may show as failed slots; do not treat those failures as missing packs.',
+    },
+    {
+      label: 'Where are the ambulances?',
+      description: 'Use lb_query to read ambulance dispatch state.',
+      prompt: 'Use lb_query with packId="ambulance", kind="ambulance.dispatchState", payload={} to read the current ambulance fleet. Then list each ambulance with its label, status (idle / dispatched / en-route / on-scene / etc), and current location. Be concise — one line per ambulance.',
+    },
+    {
+      label: 'Active incidents — what needs attention?',
+      description: 'Identify incidents and prioritize.',
+      prompt: 'Use lb_query with packId="ambulance", kind="ambulance.objects", payload={} and filter for incident-type objects. For each unresolved incident, give its label, severity, and location. Then suggest which one a dispatcher should respond to first and why.',
+    },
+    {
+      label: 'Weather conditions',
+      description: 'Query the weather pack.',
+      prompt: 'Use lb_query with packId="weather", kind="weather.fieldStats", payload={} to read current weather field stats. Summarize what the agent sees and whether it would affect ambulance response time.',
+    },
     {
       label: 'Live E-0 diagnostic triage',
       description: 'Read the live PWR state, fetch E-0, and diagnose the likely procedure branch.',
