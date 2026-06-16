@@ -11,6 +11,8 @@
 import { errorResponse, json, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 import type { LeitbildMirrorConfig } from '../../core/types/room.ts'
+import { createLeitbildClient } from '../../integrations/leitbild/client.ts'
+import type { ControlInstanceSummary } from '../../integrations/leitbild/types.ts'
 
 const parseMirrorConfig = (body: Record<string, unknown>): LeitbildMirrorConfig | { error: string } => {
   if (typeof body.baseUrl !== 'string' || body.baseUrl.trim() === '') return { error: 'baseUrl is required' }
@@ -83,23 +85,107 @@ const validateProxyBaseUrl = (raw: string): { ok: true; url: URL } | { ok: false
   return { ok: true, url }
 }
 
+const parseStringArray = (raw: unknown): ReadonlyArray<string> =>
+  Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string' && v.trim() !== '').map(v => v.trim()) : []
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+const controlInstanceRecency = (instance: ControlInstanceSummary): number => {
+  if (typeof instance.snapshotSeq === 'number') return instance.snapshotSeq
+  if (typeof instance.seq === 'number') return instance.seq
+  const updated = typeof instance.updatedAt === 'string' ? Date.parse(instance.updatedAt) : Number.NaN
+  if (Number.isFinite(updated)) return updated
+  const created = typeof instance.createdAt === 'string' ? Date.parse(instance.createdAt) : Number.NaN
+  return Number.isFinite(created) ? created : 0
+}
+
+const sortControlInstances = (
+  instances: ReadonlyArray<ControlInstanceSummary>,
+  scenarioIds: ReadonlyArray<string>,
+): ReadonlyArray<ControlInstanceSummary> => {
+  const scenarioRank = new Map(scenarioIds.map((id, idx) => [id, idx]))
+  return [...instances].sort((a, b) => {
+    const aScenario = typeof a.scenarioId === 'string' ? scenarioRank.get(a.scenarioId) ?? scenarioIds.length : scenarioIds.length
+    const bScenario = typeof b.scenarioId === 'string' ? scenarioRank.get(b.scenarioId) ?? scenarioIds.length : scenarioIds.length
+    if (aScenario !== bScenario) return aScenario - bScenario
+    const aLoaded = a.loaded === true ? 1 : 0
+    const bLoaded = b.loaded === true ? 1 : 0
+    if (aLoaded !== bLoaded) return bLoaded - aLoaded
+    return controlInstanceRecency(b) - controlInstanceRecency(a)
+  })
+}
+
+const getQueryKinds = (capabilities: Record<string, unknown>, packId: string): ReadonlyArray<string> => {
+  const queryKinds = capabilities.queryKinds
+  if (!isRecord(queryKinds)) return []
+  const kinds = queryKinds[packId]
+  return Array.isArray(kinds) ? kinds.filter((v): v is string => typeof v === 'string') : []
+}
+
+const queryKindMatches = (actual: string, required: string): boolean =>
+  actual === required || actual.endsWith(`.${required}`) || required.endsWith(`.${actual}`)
+
+const extractSystemIds = (raw: unknown): ReadonlyArray<string> => {
+  const body = isRecord(raw) && isRecord(raw.result) ? raw.result : raw
+  const systemsRaw = Array.isArray(body)
+    ? body
+    : isRecord(body) && Array.isArray(body.systems)
+      ? body.systems
+      : []
+  return systemsRaw
+    .map((system): string | undefined => {
+      if (typeof system === 'string') return system
+      if (!isRecord(system)) return undefined
+      if (typeof system.id === 'string') return system.id
+      if (typeof system.systemId === 'string') return system.systemId
+      return undefined
+    })
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+}
+
+interface ProcessPlantProbe {
+  readonly ok: true
+  readonly systemIds: ReadonlyArray<string>
+}
+
+interface ProcessPlantProbeFail {
+  readonly ok: false
+  readonly reason: string
+}
+
+const probeProcessPlantInstance = async (
+  client: ReturnType<typeof createLeitbildClient>,
+  instanceId: string,
+  packId: string,
+  queryKind: string,
+  payload: Record<string, unknown>,
+): Promise<ProcessPlantProbe | ProcessPlantProbeFail> => {
+  const capabilities = await client.getCapabilities(instanceId)
+  const activePacks = Array.isArray(capabilities.activePackIds)
+    ? capabilities.activePackIds.filter((v): v is string => typeof v === 'string')
+    : []
+  if (!activePacks.includes(packId)) return { ok: false, reason: `missing active pack "${packId}"` }
+  const kinds = getQueryKinds(capabilities, packId)
+  if (!kinds.some(k => queryKindMatches(k, queryKind))) return { ok: false, reason: `missing query kind "${queryKind}"` }
+  const result = await client.callPackQuery(instanceId, packId, queryKind, payload)
+  const systemIds = extractSystemIds(result)
+  if (systemIds.length === 0) return { ok: false, reason: 'systems.list returned no process systems' }
+  return { ok: true, systemIds }
+}
+
 const proxyCreateControlInstance: RouteEntry = {
   method: 'POST',
   pattern: /^\/api\/leitbild-proxy\/control-instances$/,
-  handler: async (req) => {
+  handler: async (req, _match, { instanceId: scope }) => {
     const body = await parseBody(req)
     if (typeof body.baseUrl !== 'string') return errorResponse('baseUrl is required', 400)
     if (typeof body.scenarioId !== 'string') return errorResponse('scenarioId is required', 400)
     const guarded = validateProxyBaseUrl(body.baseUrl)
     if (!guarded.ok) return errorResponse(guarded.error, 400)
     try {
-      const res = await fetch(`${guarded.url.toString().replace(/\/$/, '')}/api/control-instances`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Leitbild-Client': 'samsinn-ui; version="0.1.0"' },
-        body: JSON.stringify({ scenarioId: body.scenarioId }),
-      })
-      if (!res.ok) return errorResponse(`Leitbild returned HTTP ${res.status}`, 502)
-      const data = await res.json() as { id?: string }
+      const client = createLeitbildClient(guarded.url.toString(), { scope })
+      const data = await client.createControlInstance(body.scenarioId)
       return json({ id: data.id })
     } catch (err) {
       return errorResponse(`Could not reach Leitbild: ${(err as Error).message}`, 502)
@@ -107,8 +193,82 @@ const proxyCreateControlInstance: RouteEntry = {
   },
 }
 
+const proxySelectControlInstance: RouteEntry = {
+  method: 'POST',
+  pattern: /^\/api\/leitbild-proxy\/control-instances\/select$/,
+  handler: async (req, _match, { instanceId: scope }) => {
+    const body = await parseBody(req)
+    if (typeof body.baseUrl !== 'string') return errorResponse('baseUrl is required', 400)
+    const guarded = validateProxyBaseUrl(body.baseUrl)
+    if (!guarded.ok) return errorResponse(guarded.error, 400)
+
+    const preferredScenarioId = typeof body.preferredScenarioId === 'string' && body.preferredScenarioId.trim() !== ''
+      ? body.preferredScenarioId.trim()
+      : 'halden-process-plant-demo'
+    const candidateScenarioIds = [
+      preferredScenarioId,
+      ...parseStringArray(body.candidateScenarioIds).filter(id => id !== preferredScenarioId),
+    ]
+    const requiredPackId = typeof body.requiredPackId === 'string' && body.requiredPackId.trim() !== ''
+      ? body.requiredPackId.trim()
+      : 'process-plant'
+    const requiredQueryKind = typeof body.requiredQueryKind === 'string' && body.requiredQueryKind.trim() !== ''
+      ? body.requiredQueryKind.trim()
+      : 'process-plant.systems.list'
+    const probePayload = isRecord(body.probePayload) ? body.probePayload : {}
+    const client = createLeitbildClient(guarded.url.toString(), { scope })
+    const failures: string[] = []
+
+    try {
+      const allInstances = await client.listControlInstances()
+      const candidates = sortControlInstances(
+        allInstances.filter(i => typeof i.id === 'string' && candidateScenarioIds.includes(i.scenarioId ?? '')),
+        candidateScenarioIds,
+      )
+      for (const candidate of candidates) {
+        try {
+          const probe = await probeProcessPlantInstance(client, candidate.id, requiredPackId, requiredQueryKind, probePayload)
+          if (probe.ok) {
+            return json({
+              id: candidate.id,
+              instanceId: candidate.id,
+              scenarioId: candidate.scenarioId,
+              created: false,
+              reused: true,
+              systemIds: probe.systemIds,
+            })
+          }
+          failures.push(`${candidate.id}: ${probe.reason}`)
+        } catch (err) {
+          failures.push(`${candidate.id}: ${(err as Error).message}`)
+        }
+      }
+
+      const created = await client.createControlInstance(preferredScenarioId)
+      const probe = await probeProcessPlantInstance(client, created.id, requiredPackId, requiredQueryKind, probePayload)
+      if (!probe.ok) {
+        failures.push(`${created.id}: ${probe.reason}`)
+        return errorResponse(`Created Leitbild instance but it is not ${requiredPackId}-ready: ${probe.reason}`, 502)
+      }
+      return json({
+        id: created.id,
+        instanceId: created.id,
+        scenarioId: preferredScenarioId,
+        created: true,
+        reused: false,
+        systemIds: probe.systemIds,
+        ...(failures.length > 0 ? { skippedCandidates: failures } : {}),
+      })
+    } catch (err) {
+      const skipped = failures.length > 0 ? `; skipped candidates: ${failures.join('; ')}` : ''
+      return errorResponse(`Could not select Leitbild control instance: ${(err as Error).message}${skipped}`, 502)
+    }
+  },
+}
+
 export const leitbildMirrorRoutes: RouteEntry[] = [
   proxyCreateControlInstance,
+  proxySelectControlInstance,
   {
     method: 'GET',
     pattern: /^\/api\/rooms\/([^/]+)\/leitbild-mirror$/,

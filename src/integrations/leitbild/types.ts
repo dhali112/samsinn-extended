@@ -75,6 +75,17 @@ export interface ControlInstanceSnapshot {
   readonly [k: string]: unknown
 }
 
+export interface ControlInstanceSummary {
+  readonly id: string
+  readonly scenarioId?: string
+  readonly loaded?: boolean
+  readonly seq?: number
+  readonly snapshotSeq?: number
+  readonly createdAt?: string
+  readonly updatedAt?: string
+  readonly [k: string]: unknown
+}
+
 // Scenario summary projection — banner uses title/description.
 export interface ScenarioSummary {
   readonly id: string

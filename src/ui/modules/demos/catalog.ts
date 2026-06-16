@@ -18,6 +18,16 @@ export interface DemoPrompt {
 
 export type DemoId = 'procedures' | 'biometrics' | 'aviation' | 'leitbild'
 
+export interface LeitbildDemoSetup {
+  readonly baseUrl: string
+  readonly preferredScenarioId: string
+  readonly candidateScenarioIds: ReadonlyArray<string>
+  readonly requiredPackId: string
+  readonly requiredQueryKind: string
+  readonly probePayload: Record<string, unknown>
+  readonly agentTools: ReadonlyArray<string>
+}
+
 export interface Demo {
   readonly id: DemoId
   readonly title: string
@@ -26,6 +36,7 @@ export interface Demo {
   // Tool names the prompts call. A boot-time test (catalog.test.ts) asserts
   // each is registered so silent demo-breakage from tool renames is caught.
   readonly requiredTools: ReadonlyArray<string>
+  readonly leitbildSetup?: LeitbildDemoSetup
   readonly prompts: ReadonlyArray<DemoPrompt>
 }
 
@@ -139,29 +150,33 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
   id: 'leitbild',
   title: 'Leitbild Integration',
   blurb:
-    'Connect this room to a live Leitbild ambulance-dispatch scenario. A fresh Control Instance is created at leitbild.samsinn.app, mirrored events flow into this chat, and a Leitbild dashboard becomes available bottom-right. If an AI agent is in the room it gets a leitbildBinding plus lb_* tools automatically. Re-open this list any time from the 🪄 icon in the room header.',
-  requiredPacks: [],
-  requiredTools: ['lb_state', 'lb_scenario', 'lb_query', 'lb_object', 'lb_dispatch_context'],
+    'Connect this room to a live Leitbild PWR process-plant scenario and combine simulator data with the pwr-ops procedure wiki. Samsinn will bind the room to a readable process-plant Control Instance, mirror Leitbild events into chat, and give AI agents the lb_* plus procedure tools. Trigger a transient in Leitbild with the lightning control, then click a prompt. Re-open this list any time from the 🪄 icon in the room header.',
+  requiredPacks: ['pwr-ops'],
+  requiredTools: ['lb_state', 'lb_scenario', 'lb_query', 'procedure_lookup', 'wiki_lookup', 'eal_classify'],
+  leitbildSetup: {
+    baseUrl: 'https://leitbild.samsinn.app',
+    preferredScenarioId: 'halden-process-plant-demo',
+    candidateScenarioIds: ['halden-process-plant-demo', 'oslo-all-packs-demo'],
+    requiredPackId: 'process-plant',
+    requiredQueryKind: 'process-plant.systems.list',
+    probePayload: {},
+    agentTools: ['lb_state', 'lb_scenario', 'lb_query', 'procedure_lookup', 'wiki_lookup', 'eal_classify'],
+  },
   prompts: [
     {
-      label: 'Summarize the scenario',
-      description: 'Use lb_dispatch_context to pull state + scenario + all pack queries in one call, then summarize.',
-      prompt: 'Use lb_dispatch_context (one tool call gives you the full picture: state, scenario, capabilities, all pack queries). Then in 3-4 sentences tell me: what scenario are we in, what packs are active, how many objects by domain, and any notable incidents or ambulance dispatch state.',
+      label: 'Live E-0 diagnostic triage',
+      description: 'Read the live PWR state, fetch E-0, and diagnose the likely procedure branch.',
+      prompt: 'Use lb_query and procedure_lookup. First call lb_query with packId="process-plant", kind="process-plant.systems.list", payload={} and choose one returned PWR systemId; if several are present, pick the most recently active/readable one from the query result and state which systemId you chose. Then call lb_query with packId="process-plant", kind="process-plant.transient.diagnostics", payload={"systemId":"<chosen-systemId>"}. Also call lb_query with packId="process-plant", kind="process-plant.procedure-tags.read", payload={"systemId":"<chosen-systemId>","tags":[{"id":"TRIP-BKR-A"},{"id":"TRIP-BKR-B"},{"id":"PT-455"},{"id":"SUB-MARGIN"},{"id":"SG-A-LVL-NR"},{"id":"SG-B-LVL-NR"},{"id":"SG-C-LVL-NR"},{"id":"SG-D-LVL-NR"},{"id":"SG-A-N16"},{"id":"SG-B-N16"},{"id":"SG-C-N16"},{"id":"SG-D-N16"}]}. Fetch E-0 with procedure_lookup using id="E-0" and format="json". Diagnose which E-0 branch is best supported (normal post-trip, E-1 LOCA, E-2 faulted SG, E-3 SGTR, ECA-0.0 SBO, FR-S.1 ATWS, or insufficient evidence). Show a compact evidence table with units, then a one-paragraph recommendation and any missing data.',
     },
     {
-      label: 'Where are the ambulances?',
-      description: 'Use lb_query to read ambulance dispatch state.',
-      prompt: 'Use lb_query with packId="ambulance" kind="ambulance.dispatchState" to read the current ambulance fleet. Then list each ambulance with its label, status (idle / dispatched / en-route / etc), and current location. Be concise — one line per ambulance.',
+      label: 'SGTR evidence board',
+      description: 'Use live SG data plus E-0/E-3 to decide whether an SGTR branch is justified.',
+      prompt: 'Use lb_query, procedure_lookup, and wiki_lookup. First call lb_query with packId="process-plant", kind="process-plant.systems.list", payload={} and choose one PWR systemId. Then read live data with lb_query using packId="process-plant", kind="process-plant.procedure-tags.read", payload={"systemId":"<chosen-systemId>","tags":[{"id":"PT-455"},{"id":"SUB-MARGIN"},{"id":"SG-A-LVL-NR"},{"id":"SG-B-LVL-NR"},{"id":"SG-C-LVL-NR"},{"id":"SG-D-LVL-NR"},{"id":"SG-A-N16"},{"id":"SG-B-N16"},{"id":"SG-C-N16"},{"id":"SG-D-N16"},{"id":"SG-A-TUBE-LEAK"},{"id":"SG-B-TUBE-LEAK"},{"id":"SG-C-TUBE-LEAK"},{"id":"SG-D-TUBE-LEAK"}]}. Also call lb_query with packId="process-plant", kind="process-plant.transient.diagnostics", payload={"systemId":"<chosen-systemId>"}. Fetch E-0 and E-3 with procedure_lookup using format="json"; fetch wiki_lookup with type="scenario", id="sgtr" for scenario context. Identify the most likely ruptured steam generator, explain whether E-0 to E-3 criteria are satisfied, list disqualifying evidence for E-2 faulted SG if relevant, and give the first E-3 actions. Use a table, not long prose.',
     },
     {
-      label: 'Active incidents — what needs attention?',
-      description: 'Identify incidents and prioritize.',
-      prompt: 'Use lb_query("ambulance", "ambulance.objects", {}) and filter for incident-type objects. For each unresolved incident, give its label, severity, and location. Then suggest which one a dispatcher should respond to first and why.',
-    },
-    {
-      label: 'Weather conditions',
-      description: 'Query the weather pack.',
-      prompt: 'Use lb_query with packId="weather" kind="weather.fieldStats" to read current weather field stats. Summarize what the agent sees and whether it would affect ambulance response time.',
+      label: 'Transient classifier + EAL check',
+      description: 'Rank SGTR, LOCA, SBO, and faulted-SG hypotheses from live data and procedure context.',
+      prompt: 'Use lb_query, procedure_lookup, wiki_lookup, and eal_classify. Call lb_query with packId="process-plant", kind="process-plant.systems.list", payload={} and choose one PWR systemId. Then call lb_query with packId="process-plant", kind="process-plant.transient.diagnostics", payload={"systemId":"<chosen-systemId>"}; lb_query with packId="process-plant", kind="process-plant.alarms.summary", payload={"systemId":"<chosen-systemId>"}; and lb_query with packId="process-plant", kind="process-plant.ic.status", payload={"systemId":"<chosen-systemId>"}. Fetch procedure summaries for E-0, E-1, E-2, E-3, and ECA-0.0 with procedure_lookup mode="summary". Fetch wiki_lookup scenario pages for sgtr, lb-loca, and sbo. Rank the likely transient family (SGTR, LOCA, SBO, faulted SG, normal/no active transient, or unknown), cite the live evidence, name the recommended procedure entry point, and run eal_classify only if the live evidence supports an emergency classification. Keep the final answer operator-friendly and explicit about uncertainty.',
     },
   ],
 })

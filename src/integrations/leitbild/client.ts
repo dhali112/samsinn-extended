@@ -16,6 +16,7 @@
 // ============================================================================
 
 import type {
+  ControlInstanceSummary,
   ControlInstanceSnapshot,
   LeitbildEvent,
   LeitbildEventHandler,
@@ -72,6 +73,8 @@ interface InstanceSubscription {
 
 export interface LeitbildClient {
   readonly getManifest: () => Promise<LeitbildManifestSummary>
+  readonly listControlInstances: () => Promise<ReadonlyArray<ControlInstanceSummary>>
+  readonly createControlInstance: (scenarioId: string) => Promise<{ readonly id: string }>
   readonly getSnapshot: (instanceId: string) => Promise<ControlInstanceSnapshot>
   readonly getScenario: (scenarioId: string) => Promise<ScenarioSummary | undefined>
   readonly getEvents: (instanceId: string, afterSeq: number) => Promise<ReadonlyArray<LeitbildEvent>>
@@ -195,6 +198,26 @@ export const createLeitbildClient = (baseUrlRaw: string, options: CreateLeitbild
     // Surface scenarioId either at top level or nested under .scenario.
     const scenarioId = body.scenarioId ?? body.scenario?.scenarioId
     return { ...body, seq, ...(scenarioId ? { scenarioId } : {}) }
+  }
+
+  const listControlInstances = async (): Promise<ReadonlyArray<ControlInstanceSummary>> => {
+    const url = await resolveLink('controlInstances')
+    const res = await fetch(url, { headers: defaultHeaders() })
+    if (!res.ok) throw new Error(`Leitbild control-instance list fetch failed: HTTP ${res.status}`)
+    const body = (await res.json()) as { instances?: ReadonlyArray<ControlInstanceSummary>; controlInstances?: ReadonlyArray<ControlInstanceSummary> } | ReadonlyArray<ControlInstanceSummary>
+    if (Array.isArray(body)) return body as ReadonlyArray<ControlInstanceSummary>
+    const envelope = body as { instances?: ReadonlyArray<ControlInstanceSummary>; controlInstances?: ReadonlyArray<ControlInstanceSummary> }
+    return envelope.instances ?? envelope.controlInstances ?? []
+  }
+
+  const createControlInstance = async (scenarioId: string): Promise<{ readonly id: string }> => {
+    const url = await resolveLink('controlInstances')
+    const res = await postJson(url, { scenarioId })
+    if (!res.ok) throw new Error(`Leitbild control-instance create failed: HTTP ${res.status}`)
+    const body = await res.json() as { id?: string; instance?: { readonly id?: string } }
+    const id = body.id ?? body.instance?.id
+    if (!id) throw new Error('Leitbild create response did not include an instance id')
+    return { id }
   }
 
   const getScenario = async (scenarioId: string): Promise<ScenarioSummary | undefined> => {
@@ -357,6 +380,8 @@ export const createLeitbildClient = (baseUrlRaw: string, options: CreateLeitbild
 
   const client: LeitbildClient = {
     getManifest: fetchManifest,
+    listControlInstances,
+    createControlInstance,
     getSnapshot,
     getScenario,
     callPackQuery,
