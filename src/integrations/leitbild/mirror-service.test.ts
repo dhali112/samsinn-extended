@@ -47,6 +47,7 @@ const mkClient = (opts: {
   snapshot: { seq: number; scenarioId?: string }
   snapshotDelayMs?: number
   manifestThrows?: boolean
+  snapshotThrows?: boolean
 }): { client: LeitbildClient; subs: CapturedSub[]; release: () => void } => {
   const subs: CapturedSub[] = []
   let releaseSnapshot: (() => void) | undefined
@@ -61,6 +62,7 @@ const mkClient = (opts: {
         return { manifestSchemaVersion: '1.0.0', identity: { operator: 'Test' }, links: {}, realtime: { model: '' } } as never
       },
       getSnapshot: async () => {
+        if (opts.snapshotThrows) throw new Error('snapshot unavailable')
         if (opts.snapshotDelayMs !== undefined) await snapshotReady
         return { seq: opts.snapshot.seq, objects: [], scenarioId: opts.snapshot.scenarioId } as never
       },
@@ -108,7 +110,7 @@ describe('mirror-service attach — race-safe buffering', () => {
     })
   })
 
-  test('events arriving during snapshot fetch are buffered and drained', async () => {
+  test('events arriving during snapshot fetch are absorbed quietly', async () => {
     const { client, subs, release } = mkClient({ snapshot: { seq: 100 }, snapshotDelayMs: 10 })
     const svc = createMirrorService()
     const room = mkRoom('r2')
@@ -125,16 +127,14 @@ describe('mirror-service attach — race-safe buffering', () => {
       release()
       await attachPromise
 
-      // 1 banner + 1 post-snapshot event = 2 messages.
-      // The two events with seq <= 100 are dropped by the forward-only filter.
-      expect(room.posted.length).toBe(2)
-      expect(room.posted[0]!.content).toContain('Connected')           // banner
-      expect(room.posted[1]!.content).toContain('object.upserted')     // drained event
+      // Attach is quiet: no connection banner, and replay/buffered events
+      // are absorbed so loading Samsinn doesn't flood the room transcript.
+      expect(room.posted.length).toBe(0)
     })
   })
 
   test('attach failure during snapshot fetch tears down subscription', async () => {
-    const { client, subs } = mkClient({ snapshot: { seq: 0 }, manifestThrows: true })
+    const { client, subs } = mkClient({ snapshot: { seq: 0 }, snapshotThrows: true })
     const svc = createMirrorService()
     const room = mkRoom('r3')
     const config: LeitbildMirrorConfig = { baseUrl: 'https://fake.test', instanceId: 'i3', format: 'summary' }
@@ -157,7 +157,7 @@ describe('mirror-service attach — race-safe buffering', () => {
     })
   })
 
-  test('events arriving AFTER attach completes go through direct path (not buffer)', async () => {
+  test('events arriving AFTER attach completes advance mirror state without chat', async () => {
     const { client, subs, release } = mkClient({ snapshot: { seq: 50 }, snapshotDelayMs: 1 })
     const svc = createMirrorService()
     const room = mkRoom('r4')
@@ -168,14 +168,32 @@ describe('mirror-service attach — race-safe buffering', () => {
       release()
       await attachPromise
 
-      // Banner posted.
-      expect(room.posted.length).toBe(1)
+      // Attach is quiet.
+      expect(room.posted.length).toBe(0)
 
       // Live event after attach.
       subs[0]!.handler({ seq: 60, type: 'scenario.tick' } as LeitbildEvent)
-      // No async work for non-reset events — post is synchronous via room.post.
-      expect(room.posted.length).toBe(2)
-      expect(room.posted[1]!.content).toContain('scenario.tick')
+      expect(room.posted.length).toBe(0)
+      expect(svc.statusFor(room)?.lastSeq).toBe(60)
+    })
+  })
+
+  test('reset events still post a visible boundary', async () => {
+    const { client, subs, release } = mkClient({ snapshot: { seq: 50 }, snapshotDelayMs: 1 })
+    const svc = createMirrorService()
+    const room = mkRoom('r5')
+    const config: LeitbildMirrorConfig = { baseUrl: 'https://fake.test', instanceId: 'i5', format: 'summary' }
+
+    await withFakeClient(config.baseUrl, client, async () => {
+      const attachPromise = svc.attach(room, config)
+      release()
+      await attachPromise
+
+      subs[0]!.handler({ seq: 60, type: 'controlInstance.reset' } as LeitbildEvent)
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      expect(room.posted.length).toBe(1)
+      expect(room.posted[0]!.content).toContain('CONTROL INSTANCE RESET')
     })
   })
 })

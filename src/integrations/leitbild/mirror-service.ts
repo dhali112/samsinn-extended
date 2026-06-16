@@ -3,8 +3,8 @@
 //
 // One MirrorService per Samsinn process. Tracks active mirrors per room.
 // Lifecycle hooks:
-//   - attach(room, config)   — fetch manifest+snapshot+scenario, post overview
-//                              banner, subscribe to WS, format and post events
+//   - attach(room, config)   — fetch snapshot, subscribe to WS, absorb routine
+//                              events quietly, post only reset/errors
 //   - detach(room)           — close subscription
 //   - restoreAll(house)      — boot-time reattach for rooms with persisted config
 //   - shutdown()             — close every subscription (process exit)
@@ -13,8 +13,8 @@
 //   1. Open WS, capture readySeq from realtime.ready
 //   2. Buffer subsequent events (do not deliver yet)
 //   3. Fetch snapshot
-//   4. Post overview banner anchored at snapshot.seq
-//   5. Deliver buffered/live events with seq > snapshot.seq
+//   4. Anchor at snapshot.seq
+//   5. Absorb buffered replay quietly, then keep routine live events quiet
 //
 // Reset-aware: when Leitbild emits a reset-shaped event, the mirror posts
 // a clear boundary message and refreshes the snapshot baseline.
@@ -25,7 +25,7 @@ import type { Room, LeitbildMirrorConfig } from '../../core/types/room.ts'
 import type { LeitbildClient, } from './client.ts'
 import { createLeitbildClient } from './client.ts'
 import type { LeitbildEvent, SubscriptionHandle } from './types.ts'
-import { formatBanner, formatEvent, formatMirrorError, formatResetBoundary } from './formatter.ts'
+import { formatMirrorError, formatResetBoundary } from './formatter.ts'
 import { SYSTEM_SENDER_ID } from '../../core/types/constants.ts'
 import type { LimitMetrics } from '../../core/limit-metrics.ts'
 
@@ -114,6 +114,25 @@ export const createMirrorService = (deps: MirrorServiceDeps = {}): MirrorService
     })
   }
 
+  const rememberMeaningfulState = (mirror: ActiveMirror, event: LeitbildEvent): boolean => {
+    const meaningful = meaningfulSignature(event)
+    if (!meaningful) return true
+    const prev = mirror.objectSignatures.get(meaningful.objectId)
+    if (prev === meaningful.sig) return false
+    mirror.objectSignatures.set(meaningful.objectId, meaningful.sig)
+    return true
+  }
+
+  const absorbBufferedEvent = (mirror: ActiveMirror, event: LeitbildEvent): void => {
+    if (isResetSignal(event, mirror)) {
+      void handleEvent(mirror)(event)
+      return
+    }
+    if (typeof event.seq === 'number' && event.seq <= mirror.lastSeq) return
+    if (typeof event.seq === 'number') mirror.lastSeq = event.seq
+    rememberMeaningfulState(mirror, event)
+  }
+
   // Detect Leitbild Control Instance reset. Two signals:
   //   1. Explicit `controlInstance.reset` event from Leitbild (preferred,
   //      requires Leitbild V1.1+ — see leitbild docs/discovery.md).
@@ -165,20 +184,10 @@ export const createMirrorService = (deps: MirrorServiceDeps = {}): MirrorService
     if (typeof event.seq === 'number' && event.seq <= mirror.lastSeq) return
     if (typeof event.seq === 'number') mirror.lastSeq = event.seq
 
-    // Suppress position-only object.upserted events: only post when the
-    // meaningful signature (lifecycle, operational status, domain payload,
-    // alerts) changes. Filters the firehose of ambulance position updates
-    // while preserving real state transitions (new incidents, status
-    // changes, capacity changes). Other event types (command.issued,
-    // command.result, scenario.* events, etc.) always post.
-    const meaningful = meaningfulSignature(event)
-    if (meaningful) {
-      const prev = mirror.objectSignatures.get(meaningful.objectId)
-      if (prev === meaningful.sig) return  // same meaningful state — skip
-      mirror.objectSignatures.set(meaningful.objectId, meaningful.sig)
-    }
-
-    post(mirror.room, formatEvent(event, mirror.config.format), mirror, event)
+    // Routine mirror events stay out of chat/history. The current Leitbild
+    // state is available through lb_* tools and the iframe; chat is reserved
+    // for human/agent conversation plus reset/error boundaries.
+    rememberMeaningfulState(mirror, event)
   }
 
   const attach = async (room: Room, config: LeitbildMirrorConfig, scope?: string): Promise<void> => {
@@ -208,56 +217,26 @@ export const createMirrorService = (deps: MirrorServiceDeps = {}): MirrorService
     active.set(room.profile.id, mirror)
 
     try {
-      const manifest = await client.getManifest()
       const snapshot = await client.getSnapshot(config.instanceId)
       mirror.lastSeq = snapshot.seq
-
-      const scenarioId = snapshot.scenarioId
-      const scenario = scenarioId ? await client.getScenario(scenarioId) : undefined
-      const objects = (snapshot.objects as ReadonlyArray<unknown> | undefined)?.length
 
       // Persist the binding on the room (in case attach was triggered
       // outside the route handler, e.g. by restoreAll).
       room.setLeitbildMirror(config)
 
-      room.post({
-        senderId: SYSTEM_SENDER_ID,
-        senderName: 'Leitbild',
-        content: formatBanner({
-          baseUrl: config.baseUrl,
-          instanceId: config.instanceId,
-          scenarioTitle: scenario?.title,
-          scenarioDescription: scenario?.description,
-          objectCount: objects,
-          operator: manifest.identity?.operator,
-          authPosture: 'open',
-          clockPaused: snapshot.clock?.paused,
-          clockSpeed: snapshot.clock?.speed,
-          clockCurrentTime: snapshot.clock?.currentTime,
-          snapshotSeq: snapshot.seq,
-        }),
-        type: 'system',
-        cause: {
-          kind: 'external-mirror',
-          name: `${config.baseUrl}:${config.instanceId}:${snapshot.seq}:banner`,
-        },
-      })
-
       // Drain the buffer. Switch to live mode FIRST (clear bufferedEvents)
       // so events arriving DURING the drain go straight to handleEvent's
       // direct path — otherwise a slow drain could let live events queue
-      // behind already-stale buffered ones. The drain re-runs each via
-      // handleEvent; the seq <= mirror.lastSeq filter drops events the
-      // snapshot already accounts for. Reset events buffered during attach
-      // pass through normally — if a real reset happened mid-attach, the
-      // drain's re-anchor is the correct response.
+      // behind already-stale buffered ones. Routine replay is absorbed
+      // quietly to avoid chat spam on page load/restore; object signatures
+      // are still recorded so the next position-only update stays quiet.
+      // Reset events buffered during attach pass through normally — if a
+      // real reset happened mid-attach, the re-anchor is the correct response.
       const buffered = mirror.bufferedEvents
       mirror.bufferedEvents = null
       if (buffered !== null) {
         for (const event of buffered) {
-          // void: drain is best-effort; we don't await each one (handleEvent
-          // is async only for the reset-snapshot-refetch path, which is rare).
-          void handleEvent(mirror)(event)
+          absorbBufferedEvent(mirror, event)
         }
       }
     } catch (err) {

@@ -87,6 +87,12 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
   const getAgent = (id: string): AgentInfo | undefined =>
     agents instanceof Map ? agents.get(id) : agents[id]
 
+  const isRoutineExternalMirror =
+    msg.cause?.kind === 'external-mirror' &&
+    !msg.content.includes('mirror error') &&
+    !msg.content.includes('CONTROL INSTANCE RESET')
+  if (isRoutineExternalMirror) return
+
   const isJoinLeave = msg.type === 'join' || msg.type === 'leave'
   const ageMs = Date.now() - msg.timestamp
   // Join/leave messages auto-fade 10s after posting; skip rendering if already expired.
