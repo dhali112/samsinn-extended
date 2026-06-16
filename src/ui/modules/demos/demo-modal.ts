@@ -116,16 +116,37 @@ interface LeitbildSelectResponse {
   readonly systemIds?: ReadonlyArray<string>
 }
 
-interface LeitbildSetupOk {
+interface LeitbildSelectOk {
   readonly ok: true
   readonly instanceId: string
   readonly created: boolean
   readonly systemIds: ReadonlyArray<string>
 }
 
+interface LeitbildModelUpdate {
+  readonly agentName: string
+  readonly from: string
+  readonly to: string
+}
+
+interface LeitbildSetupOk extends LeitbildSelectOk {
+  readonly modelUpdates: ReadonlyArray<LeitbildModelUpdate>
+}
+
 interface LeitbildSetupFail {
   readonly ok: false
   readonly reason: string
+}
+
+interface DemoModelProvider {
+  readonly name: string
+  readonly status: 'ok' | 'no_key' | 'cooldown' | 'down'
+  readonly models: ReadonlyArray<{ readonly id: string }>
+}
+
+interface DemoModelCatalog {
+  readonly providers: ReadonlyArray<DemoModelProvider>
+  readonly defaultModel: string
 }
 
 const parseErrorResponse = async (res: Response): Promise<string> => {
@@ -137,7 +158,60 @@ const parseErrorResponse = async (res: Response): Promise<string> => {
   }
 }
 
-const selectLeitbildInstance = async (setup: LeitbildDemoSetup): Promise<LeitbildSetupOk | LeitbildSetupFail> => {
+const fetchDemoModelCatalog = async (): Promise<DemoModelCatalog | undefined> => {
+  try {
+    const res = await fetch('/api/models', { credentials: 'same-origin' })
+    if (!res.ok) {
+      console.warn(`[demos] Could not load model catalog for demo setup: HTTP ${res.status}`)
+      return undefined
+    }
+    const body = await res.json() as { providers?: unknown; defaultModel?: unknown }
+    const rawProviders = Array.isArray(body.providers) ? body.providers : []
+    const providers: DemoModelProvider[] = []
+    for (const p of rawProviders) {
+      if (!p || typeof p !== 'object') continue
+      const r = p as { name?: unknown; status?: unknown; models?: unknown }
+      if (typeof r.name !== 'string') continue
+      if (r.status !== 'ok' && r.status !== 'no_key' && r.status !== 'cooldown' && r.status !== 'down') continue
+      const models = Array.isArray(r.models)
+        ? r.models
+          .map(m => (m && typeof m === 'object' && typeof (m as { id?: unknown }).id === 'string') ? { id: (m as { id: string }).id } : undefined)
+          .filter((m): m is { readonly id: string } => m !== undefined)
+        : []
+      providers.push({ name: r.name, status: r.status, models })
+    }
+    const defaultModel = typeof body.defaultModel === 'string' ? body.defaultModel.trim() : ''
+    return { providers, defaultModel }
+  } catch (err) {
+    console.warn(`[demos] Could not load model catalog for demo setup: ${(err as Error).message}`)
+    return undefined
+  }
+}
+
+const parseModelRef = (modelRef: string): { readonly provider?: string; readonly modelId: string } => {
+  const idx = modelRef.indexOf(':')
+  if (idx <= 0) return { modelId: modelRef }
+  return { provider: modelRef.slice(0, idx), modelId: modelRef.slice(idx + 1) }
+}
+
+const modelIsRoutable = (modelRef: string, catalog: DemoModelCatalog): boolean => {
+  const trimmed = modelRef.trim()
+  if (!trimmed) return false
+  const parsed = parseModelRef(trimmed)
+  return catalog.providers.some(p =>
+    p.status === 'ok' &&
+    (!parsed.provider || p.name === parsed.provider) &&
+    p.models.some(m => m.id === parsed.modelId))
+}
+
+const rescueModelForDemo = (currentModel: string | undefined, catalog: DemoModelCatalog | undefined): string | undefined => {
+  if (!catalog || !catalog.defaultModel) return undefined
+  if (currentModel && modelIsRoutable(currentModel, catalog)) return undefined
+  if (!modelIsRoutable(catalog.defaultModel, catalog)) return undefined
+  return catalog.defaultModel
+}
+
+const selectLeitbildInstance = async (setup: LeitbildDemoSetup): Promise<LeitbildSelectOk | LeitbildSetupFail> => {
   try {
     const res = await fetch('/api/leitbild-proxy/control-instances/select', {
       method: 'POST',
@@ -181,7 +255,7 @@ const setupLeitbildDemo = async (roomId: string, setup: LeitbildDemoSetup): Prom
   //    Samsinn-side proxy (avoids CORS; Leitbild declares no direct browser
   //    access in its manifest).
   const selected = await selectLeitbildInstance(setup)
-  if (!selected.ok) return selected
+  if (selected.ok === false) return selected
 
   // 2. Bind the room mirror
   try {
@@ -200,26 +274,43 @@ const setupLeitbildDemo = async (roomId: string, setup: LeitbildDemoSetup): Prom
   const members = $roomMembers.get()[roomId] ?? []
   const agents = $agents.get()
   const ais = members.map(id => agents[id]).filter((a): a is NonNullable<typeof a> => !!a && a.kind === 'ai')
+  const modelCatalog = ais.length > 0 ? await fetchDemoModelCatalog() : undefined
+  const modelUpdates: LeitbildModelUpdate[] = []
   for (const ai of ais) {
     try {
       // Fetch current tools so we don't overwrite the agent's allowlist.
       const detailRes = await fetch(`/api/agents/${encodeURIComponent(ai.name)}`, { credentials: 'same-origin' })
-      const detail = detailRes.ok ? await detailRes.json() as { tools?: ReadonlyArray<string> } : { tools: [] as string[] }
+      const detail = detailRes.ok
+        ? await detailRes.json() as { model?: string; tools?: ReadonlyArray<string> }
+        : { model: ai.model, tools: [] as string[] }
       const existingTools = new Set(detail.tools ?? [])
       for (const t of setup.agentTools) existingTools.add(t)
-      await fetch(`/api/agents/${encodeURIComponent(ai.name)}`, {
+      const currentModel = typeof detail.model === 'string' ? detail.model : ai.model
+      const rescueModel = rescueModelForDemo(currentModel, modelCatalog)
+      const patchBody: {
+        tools: string[]
+        leitbildBinding: { baseUrl: string; instanceId: string; role: 'observer' }
+        model?: string
+      } = {
+        tools: [...existingTools],
+        leitbildBinding: { baseUrl: setup.baseUrl, instanceId: selected.instanceId, role: 'observer' },
+        ...(rescueModel ? { model: rescueModel } : {}),
+      }
+      const patchRes = await fetch(`/api/agents/${encodeURIComponent(ai.name)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({
-          tools: [...existingTools],
-          leitbildBinding: { baseUrl: setup.baseUrl, instanceId: selected.instanceId, role: 'observer' },
-        }),
+        body: JSON.stringify(patchBody),
       })
-    } catch { /* non-fatal — toast in caller will note no-AI case */ }
+      if (patchRes.ok && rescueModel && currentModel && currentModel !== rescueModel) {
+        modelUpdates.push({ agentName: ai.name, from: currentModel, to: rescueModel })
+      }
+    } catch (err) {
+      console.warn(`[demos] Non-fatal Leitbild agent setup failure for ${ai.name}: ${(err as Error).message}`)
+    }
   }
 
-  return selected
+  return { ...selected, modelUpdates }
 }
 
 // Best-effort: install an external pack if it isn't already present.
@@ -281,9 +372,12 @@ export const openDemoModal = async (demoId: string): Promise<void> => {
     const aiHint = aiCount > 0
       ? `${aiCount} AI agent${aiCount > 1 ? 's' : ''} configured with Leitbild + procedure tools.`
       : 'Add an AI agent to this room (from room members panel) so it can use the Leitbild + procedure tools — then try the prompts.'
+    const modelHint = setup.modelUpdates.length > 0
+      ? ` Model fallback applied: ${setup.modelUpdates.map(u => `${u.agentName} ${u.from}→${u.to}`).join(', ')}.`
+      : ''
     const action = setup.created ? 'created' : 'reused'
     const systems = setup.systemIds.length > 0 ? ` · systems: ${setup.systemIds.slice(0, 3).join(', ')}` : ''
-    showToast(document.body, `Leitbild ${action}: ${setup.instanceId.slice(0, 36)}…${systems} · ${aiHint}`, { type: 'success', position: 'fixed', durationMs: 10000 })
+    showToast(document.body, `Leitbild ${action}: ${setup.instanceId.slice(0, 36)}…${systems} · ${aiHint}${modelHint}`, { type: 'success', position: 'fixed', durationMs: 10000 })
     // Refresh the iframe panel for the current room — it was last evaluated
     // when the room was selected (before the mirror existed), so the toggle
     // button is currently hidden. Re-evaluate so it appears.
