@@ -149,6 +149,8 @@ interface DemoModelCatalog {
   readonly defaultModel: string
 }
 
+const staleDemoModelIds = new Set(['gpt-5.4'])
+
 const parseErrorResponse = async (res: Response): Promise<string> => {
   try {
     const body = await res.json() as { error?: unknown }
@@ -206,7 +208,14 @@ const modelIsRoutable = (modelRef: string, catalog: DemoModelCatalog): boolean =
 
 const rescueModelForDemo = (currentModel: string | undefined, catalog: DemoModelCatalog | undefined): string | undefined => {
   if (!catalog || !catalog.defaultModel) return undefined
-  if (currentModel && modelIsRoutable(currentModel, catalog)) return undefined
+  const current = currentModel?.trim()
+  if (current) {
+    const parsed = parseModelRef(current)
+    // gpt-5.4 was the earlier showcase default. Existing demo rooms can keep
+    // old agents on it even after ops pins a healthier default such as gpt-5.1.
+    if (parsed.modelId !== catalog.defaultModel && staleDemoModelIds.has(parsed.modelId)) return catalog.defaultModel
+    if (modelIsRoutable(current, catalog)) return undefined
+  }
   if (!modelIsRoutable(catalog.defaultModel, catalog)) return undefined
   return catalog.defaultModel
 }
@@ -373,7 +382,7 @@ export const openDemoModal = async (demoId: string): Promise<void> => {
       ? `${aiCount} AI agent${aiCount > 1 ? 's' : ''} configured with Leitbild + procedure tools.`
       : 'Add an AI agent to this room (from room members panel) so it can use the Leitbild + procedure tools — then try the prompts.'
     const modelHint = setup.modelUpdates.length > 0
-      ? ` Model fallback applied: ${setup.modelUpdates.map(u => `${u.agentName} ${u.from}→${u.to}`).join(', ')}.`
+      ? ` Model rescue applied: ${setup.modelUpdates.map(u => `${u.agentName} ${u.from}→${u.to}`).join(', ')}.`
       : ''
     const action = setup.created ? 'created' : 'reused'
     const systems = setup.systemIds.length > 0 ? ` · systems: ${setup.systemIds.slice(0, 3).join(', ')}` : ''
