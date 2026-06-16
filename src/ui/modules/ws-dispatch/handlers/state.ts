@@ -89,8 +89,12 @@ export const stateHandlers: StateHandlers = {
     $mutedAgents.set(new Set())
     $turnInfo.set(null)
 
-    // Auto-select first room if none selected
-    if (!$selectedRoomId.get() && msg.rooms.length > 0) {
+    // Select a valid room for this authoritative snapshot. Instance switches
+    // and resets can leave the UI holding a room id from the previous house.
+    const selectedRoomId = $selectedRoomId.get()
+    if (msg.rooms.length === 0) {
+      if (selectedRoomId) $selectedRoomId.set(null)
+    } else if (!selectedRoomId || !roomMap[selectedRoomId]) {
       $selectedRoomId.set(msg.rooms[0]!.id)
     }
 

@@ -129,6 +129,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     const rooms = sys.house.listAllRooms()
     expect(rooms.length).toBe(1)
     expect(rooms[0]?.name).toBe('Cafe')
+    expect(sys.house.getRoom(rooms[0]!.id)?.getActivePacks()).toContain('demos')
     const aiAgents = sys.team.listAgents().filter(a => a.kind === 'ai')
     expect(aiAgents.length).toBe(1)
     const helper = aiAgents[0]!

@@ -84,6 +84,36 @@ describe('stateHandlers.snapshot — stale cache eviction', () => {
     $roomMessages.setKey = origSetKey
   })
 
+  test('replaces stale selected room with the first room from the snapshot', () => {
+    $selectedRoomId.set('old-instance-room')
+
+    const snap: Snapshot = {
+      type: 'snapshot',
+      rooms: [mkRoom('fresh-cafe', 'Cafe')],
+      agents: [],
+      roomStates: {},
+    }
+
+    stateHandlers.snapshot!(snap as never)
+
+    expect($selectedRoomId.get()).toBe('fresh-cafe')
+  })
+
+  test('clears selected room when authoritative snapshot has no rooms', () => {
+    $selectedRoomId.set('old-instance-room')
+
+    const snap: Snapshot = {
+      type: 'snapshot',
+      rooms: [],
+      agents: [],
+      roomStates: {},
+    }
+
+    stateHandlers.snapshot!(snap as never)
+
+    expect($selectedRoomId.get()).toBeNull()
+  })
+
   test('triggers fetchRoomMessages for the selected room', async () => {
     $rooms.setKey('r1', { id: 'r1', name: 'R1', createdAt: 0, createdBy: 't' } as never)
     $selectedRoomId.set('r1')

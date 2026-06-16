@@ -76,6 +76,12 @@ export const systemHandlers: SystemHandlers = {
     window.dispatchEvent(new CustomEvent('reset-failed', { detail: { reason: msg.reason } }))
   },
 
+  reset_committed(msg) {
+    window.dispatchEvent(new CustomEvent('reset-committed', {
+      detail: { oldId: msg.oldId, newId: msg.newId },
+    }))
+  },
+
   summary_config_changed(_msg) {
     // Room config is server-authoritative; the settings modal re-fetches on open.
     // No store write needed unless we want to surface the current config elsewhere.

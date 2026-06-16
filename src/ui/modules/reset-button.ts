@@ -128,4 +128,8 @@ export const initResetPanel = (): void => {
     removeBanner()
     showToast(document.body, `Reset failed: ${detail.reason}`, { type: 'error', position: 'fixed' })
   })
+  window.addEventListener('reset-committed', () => {
+    removeBanner()
+    window.location.reload()
+  })
 }
