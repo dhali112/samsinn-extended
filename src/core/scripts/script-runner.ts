@@ -166,6 +166,14 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     setTimeout(() => { void stop(run.roomId) }, 50)
   }
 
+  const removeScriptAgent = (agentId: string, roomId: string): void => {
+    const system = getSystem()
+    try {
+      system.removeAgentFromRoom(agentId, roomId, 'script-runner', { deleteRoomIfEmpty: false })
+    } catch { /* best-effort */ }
+    try { system.removeAgent(agentId) } catch { /* best-effort */ }
+  }
+
   // --- Lifecycle ---
 
   const start = async (roomId: string, scriptName: string): Promise<{ ok: boolean; reason?: string }> => {
@@ -239,7 +247,7 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       }
     } catch (err) {
       for (const id of spawned) {
-        try { system.removeAgent(id) } catch { /* best-effort */ }
+        removeScriptAgent(id, roomId)
       }
       room.setPaused(false)
       return { ok: false, reason: `cast spawn failed: ${err instanceof Error ? err.message : String(err)}` }
@@ -316,7 +324,7 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       if (ai) {
         try { await ai.whenIdle(5000) } catch { /* timed out — proceed */ }
       }
-      try { system.removeAgent(agent.id) } catch { /* best-effort */ }
+      removeScriptAgent(agent.id, roomId)
     }
 
     if (room && run.priorMode && room.deliveryMode !== run.priorMode) {

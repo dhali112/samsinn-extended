@@ -110,6 +110,9 @@ export const runHandlers: RunHandlers = {
     // whisper badges can still render the historical state. Cleared only
     // when a NEW script starts in the same room.
     $activeScriptByRoom.setKey(roomId, { ...cur, ended: true })
+    const agents = { ...$agents.get() }
+    for (const cast of cur.cast) delete agents[cast.id]
+    $agents.set(agents)
   },
 
   script_catalog_changed(_msg) {

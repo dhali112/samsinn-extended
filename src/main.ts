@@ -10,7 +10,7 @@ import type { DeliverFn, ResolveAgentName, ResolveTagFn } from './core/types/mes
 import type {
   House, HouseCallbacks, OnAgentSettingsChanged, OnBookmarksChanged, OnDeliveryModeChanged,
   OnMembershipChanged, OnMessagePosted, OnModeAutoSwitched,
-  OnRoomCreated, OnRoomDeleted, OnSummaryConfigChanged, OnSummaryUpdated,
+  OnRoomCreated, OnRoomDeleted, OnSummaryConfigChanged, OnSummaryUpdated, RemoveAgentFromRoomOptions,
   OnTurnChanged,
 } from './core/types/room.ts'
 import type { SummaryScheduler, SummaryTarget } from './core/summaries/summary-scheduler.ts'
@@ -159,7 +159,7 @@ export interface System {
   // removed so results from cancelled runs don't post into the next run.
   readonly resetState: () => Promise<{ readonly rooms: number; readonly agents: number }>
   readonly addAgentToRoom: (agentId: string, roomId: string, invitedBy?: string) => Promise<void>
-  readonly removeAgentFromRoom: (agentId: string, roomId: string, removedBy?: string) => void
+  readonly removeAgentFromRoom: (agentId: string, roomId: string, removedBy?: string, options?: RemoveAgentFromRoomOptions) => void
   readonly spawnAIAgent: (config: AIAgentConfig, options?: SpawnOptions) => Promise<Agent>
   readonly spawnHumanAgent: (config: HumanAgentConfig, send: TransportSend, options?: { overrideId?: string }) => Promise<HumanAgent>
   // Manual-mode activation: catch the agent up and force one eval.

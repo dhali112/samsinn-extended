@@ -3,12 +3,13 @@
 // factory closes over team/house/routeMessage and the late-bound callbacks
 // it needs, and returns four functions with the original signatures.
 //
-// Internal cross-reference: systemRemoveAgentFromRoom calls systemRemoveRoom
-// when the last member leaves, so the four ops share a closure rather than
-// being free functions.
+// Internal cross-reference: systemRemoveAgentFromRoom usually calls
+// systemRemoveRoom when the last member leaves, so the four ops share a
+// closure rather than being free functions. Orchestrated teardown paths can
+// opt out when the room itself is the durable artifact.
 
 import type { RouteMessage, Team } from './types/agent.ts'
-import type { House, OnMembershipChanged } from './types/room.ts'
+import type { House, OnMembershipChanged, RemoveAgentFromRoomOptions } from './types/room.ts'
 import type { TriggerScheduler } from './triggers/scheduler.ts'
 import { addAgentToRoom, removeAgentFromRoom } from '../agents/actions.ts'
 import { asAIAgent } from '../agents/shared.ts'
@@ -23,7 +24,7 @@ export interface RoomOperationsDeps {
 
 export interface RoomOperations {
   readonly addAgentToRoom: (agentId: string, roomId: string, invitedBy?: string) => Promise<void>
-  readonly removeAgentFromRoom: (agentId: string, roomId: string, removedBy?: string) => void
+  readonly removeAgentFromRoom: (agentId: string, roomId: string, removedBy?: string, options?: RemoveAgentFromRoomOptions) => void
   readonly removeRoom: (roomId: string) => boolean
   readonly cancelGenerationsInRoom: (roomId: string) => void
 }
@@ -39,13 +40,18 @@ export const createRoomOperations = (deps: RoomOperationsDeps): RoomOperations =
     onMembershipChanged(roomId, room.profile.name, agentId, agent.name, 'added')
   }
 
-  const systemRemoveAgentFromRoom = (agentId: string, roomId: string, removedBy?: string): void => {
+  const systemRemoveAgentFromRoom = (
+    agentId: string,
+    roomId: string,
+    removedBy?: string,
+    options?: RemoveAgentFromRoomOptions,
+  ): void => {
     const agent = team.getAgent(agentId)
     const room = house.getRoom(roomId)
     if (!agent || !room) return
     removeAgentFromRoom(agentId, agent.name, roomId, removedBy, team, routeMessage, house)
     onMembershipChanged(roomId, room.profile.name, agentId, agent.name, 'removed')
-    if (room.getParticipantIds().length === 0) {
+    if ((options?.deleteRoomIfEmpty ?? true) && room.getParticipantIds().length === 0) {
       systemRemoveRoom(roomId)
     }
   }

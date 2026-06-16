@@ -21,6 +21,9 @@ export type OnTurnChanged = (roomId: string, agentId?: string, waitingForHuman?:
 export type OnRoomCreated = (profile: RoomProfile) => void
 export type OnRoomDeleted = (roomId: string, roomName: string) => void
 export type OnMembershipChanged = (roomId: string, roomName: string, agentId: string, agentName: string, action: 'added' | 'removed') => void
+export interface RemoveAgentFromRoomOptions {
+  readonly deleteRoomIfEmpty?: boolean
+}
 export type OnBookmarksChanged = () => void
 // Fired by the API/MCP layer after agent settings (persona, model, tools,
 // triggers, name, etc.) are mutated. Bookmarks-style: argless, "something
