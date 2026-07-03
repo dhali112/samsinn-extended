@@ -30,6 +30,17 @@ const stubProvider = (): LLMProvider => ({
   runningModels: async () => [],
 })
 
+const blockingStreamProvider = (): LLMProvider => ({
+  chat: async (_req: ChatRequest): Promise<ChatResponse> =>
+    ({ content: 'ok', generationMs: 0, tokensUsed: { prompt: 1, completion: 1 } }),
+  stream: async function* () {
+    yield { delta: 'hold', done: false }
+    await new Promise<void>(() => { /* held until caller closes iterator */ })
+  },
+  models: async () => [],
+  runningModels: async () => [],
+})
+
 describe('createProviderGateway config merge', () => {
   test('undefined override does NOT clobber default (the bug)', () => {
     const gw = createProviderGateway(stubProvider(), { maxConcurrent: undefined })
@@ -65,6 +76,21 @@ describe('createProviderGateway config merge', () => {
     const r = await gw.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })
     expect(r.content).toBe('ok')
     expect(Date.now() - start).toBeLessThan(1000) // way under the 30s queue timeout
+  })
+
+  test('stream() honors maxQueueDepth override for immediate shed', async () => {
+    const gw = createProviderGateway(blockingStreamProvider(), { maxConcurrent: 1, queueTimeoutMs: 10_000 })
+    const first = gw.stream({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })[Symbol.asyncIterator]()
+    const firstChunk = await first.next()
+    expect(firstChunk.value?.delta).toBe('hold')
+
+    const second = gw.stream(
+      { model: 'm', messages: [{ role: 'user', content: 'hi again' }] },
+      undefined,
+      { maxQueueDepth: 0 },
+    )[Symbol.asyncIterator]()
+    await expect(second.next()).rejects.toThrow(/queue full/)
+    await first.return?.()
   })
 })
 

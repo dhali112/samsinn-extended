@@ -619,7 +619,7 @@ export const createProviderRouter = (
       // pinned, in which case we emit all_failed and rethrow).
       let iter: AsyncIterator<StreamChunk>
       try {
-        iter = gateway.stream!(adjusted, signal)[Symbol.asyncIterator]()
+        iter = gateway.stream!(adjusted, signal, { ...options, maxQueueDepth: 0 })[Symbol.asyncIterator]()
       } catch (err) {
         const decision = classifyProviderError(err, name, attempts, request, agentId)
         if (decision === 'rethrow') throw err

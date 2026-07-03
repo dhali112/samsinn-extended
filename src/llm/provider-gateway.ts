@@ -53,6 +53,7 @@ export type HealthChangeCallback<H extends ProviderHealth = ProviderHealth> = (h
 
 export interface ProviderGateway extends LLMProvider {
   readonly chat: (request: ChatRequest, options?: ChatCallOptions) => Promise<ChatResponse>
+  readonly stream: (request: ChatRequest, signal?: AbortSignal, options?: ChatCallOptions) => AsyncIterable<StreamChunk>
   readonly getMetrics: () => GatewayMetrics
   readonly getHealth: () => ProviderHealth
   readonly getConfig: () => ProviderGatewayConfig
@@ -196,13 +197,14 @@ export const createProviderGateway = (
     }
   }
 
-  const stream = async function* (request: ChatRequest, signal?: AbortSignal): AsyncIterable<StreamChunk> {
+  const stream = async function* (request: ChatRequest, signal?: AbortSignal, options?: ChatCallOptions): AsyncIterable<StreamChunk> {
     if (!provider.stream) throw createGatewayError('not_supported', 'Provider does not support streaming')
     if (!cb.shouldAllow()) {
       shedCount++
       throw createGatewayError('circuit_open', 'Circuit breaker open')
     }
-    const queueWaitMs = await semaphore.acquire(config.queueTimeoutMs, config.maxQueueDepth)
+    const queueDepth = options?.maxQueueDepth ?? config.maxQueueDepth
+    const queueWaitMs = await semaphore.acquire(config.queueTimeoutMs, queueDepth)
     const startMs = performance.now()
     try {
       yield* provider.stream(enrich(request), signal)

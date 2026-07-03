@@ -48,6 +48,38 @@ export interface ProviderSnapshot {
 // add them automatically anymore.
 const formatModelRef = (_providerName: string, modelId: string): string => modelId
 
+const orderedProviders = (providers: ReadonlyArray<ProviderSnapshot>): ReadonlyArray<ProviderSnapshot> => {
+  const seen = new Set<string>()
+  const out: ProviderSnapshot[] = []
+  for (const prov of DEFAULT_PREFERENCE_ORDER) {
+    const p = providers.find(x => x.name === prov && x.status === 'ok')
+    if (!p) continue
+    seen.add(prov)
+    out.push(p)
+  }
+  for (const p of providers) {
+    if (p.status !== 'ok' || seen.has(p.name)) continue
+    seen.add(p.name)
+    out.push(p)
+  }
+  return out
+}
+
+const firstFastModel = (provider: ProviderSnapshot): { readonly id: string } | undefined =>
+  provider.models.find(m => !isThinking(provider.name, m.id))
+
+export const resolveDefaultModelChain = (providers: ReadonlyArray<ProviderSnapshot>): ReadonlyArray<string> => {
+  const seenModels = new Set<string>()
+  const chain: string[] = []
+  for (const p of orderedProviders(providers)) {
+    const firstFast = firstFastModel(p)
+    if (!firstFast || seenModels.has(firstFast.id)) continue
+    seenModels.add(firstFast.id)
+    chain.push(formatModelRef(p.name, firstFast.id))
+  }
+  return chain
+}
+
 export const resolveDefaultModel = (providers: ReadonlyArray<ProviderSnapshot>): string => {
   // First pass: walk the curated preference order, pick the first ok provider
   // whose first NON-thinking model is available.

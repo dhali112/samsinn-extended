@@ -1,8 +1,8 @@
 import { describe, test, expect } from 'bun:test'
 import type { ChatRequest, ChatResponse, StreamChunk, ProviderHealth, GatewayMetrics } from '../core/types/llm.ts'
-import type { ProviderGateway } from './provider-gateway.ts'
+import type { ChatCallOptions, ProviderGateway } from './provider-gateway.ts'
 import { createProviderRouter, parseProviderPrefix, type ProviderRoutingEvent } from './router.ts'
-import { createCloudProviderError } from './errors.ts'
+import { createCloudProviderError, createGatewayError } from './errors.ts'
 import { createProviderMonitor, type ProviderMonitor } from './provider-monitor.ts'
 
 // Helper: build a fake-monitor map for the given provider names so the
@@ -31,10 +31,15 @@ interface FakeScript {
   readonly availableModels?: ReadonlyArray<string>
 }
 
-const createFakeGateway = (script: FakeScript): ProviderGateway & { callCount: () => number; externalFailCount: () => number } => {
+const createFakeGateway = (script: FakeScript): ProviderGateway & {
+  callCount: () => number
+  externalFailCount: () => number
+  streamOptions: () => ReadonlyArray<ChatCallOptions>
+} => {
   let chatCallIdx = 0
   let streamCallIdx = 0
   let externalFails = 0
+  const streamOptions: ChatCallOptions[] = []
   const health: ProviderHealth = {
     status: 'healthy',
     latencyMs: 100,
@@ -55,7 +60,8 @@ const createFakeGateway = (script: FakeScript): ProviderGateway & { callCount: (
     return r
   }
 
-  const stream = async function* (_request: ChatRequest): AsyncIterable<StreamChunk> {
+  const stream = async function* (_request: ChatRequest, _signal?: AbortSignal, options?: ChatCallOptions): AsyncIterable<StreamChunk> {
+    streamOptions.push(options ?? {})
     const idx = streamCallIdx++
     const r = script.streamResponses?.[idx]
     if (!r) {
@@ -93,6 +99,7 @@ const createFakeGateway = (script: FakeScript): ProviderGateway & { callCount: (
     dispose: () => {},
     callCount: () => chatCallIdx,
     externalFailCount: () => externalFails,
+    streamOptions: () => streamOptions,
   }
 }
 
@@ -303,6 +310,24 @@ describe('createProviderRouter — streaming', () => {
     const chunks: StreamChunk[] = []
     for await (const chunk of router.stream(chatReq('m'))) chunks.push(chunk)
     expect(chunks.map(c => c.delta).join('')).toBe('ok')
+  })
+
+  test('stream failover attempts shed immediately instead of waiting in gateway queues', async () => {
+    const a = createFakeGateway({
+      streamResponses: [createGatewayError('queue_full', 'LLM gateway queue full — request shed')],
+      availableModels: ['m'],
+    })
+    const b = createFakeGateway({
+      streamResponses: [[{ delta: 'ok', done: false }, { delta: '', done: true }]],
+      availableModels: ['m'],
+    })
+    const router = createProviderRouter({ a, b }, { order: ['a', 'b'] })
+    const chunks: StreamChunk[] = []
+    for await (const chunk of router.stream(chatReq('m'))) chunks.push(chunk)
+
+    expect(chunks.map(c => c.delta).join('')).toBe('ok')
+    expect(a.streamOptions()[0]?.maxQueueDepth).toBe(0)
+    expect(b.streamOptions()[0]?.maxQueueDepth).toBe(0)
   })
 
   test('mid-stream failure → provider_stream_failed event, no retry', async () => {

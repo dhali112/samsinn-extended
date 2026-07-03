@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveDefaultModel, type ProviderSnapshot } from './default-resolver.ts'
+import { resolveDefaultModel, resolveDefaultModelChain, type ProviderSnapshot } from './default-resolver.ts'
 
 const p = (
   name: string,
@@ -115,5 +115,15 @@ describe('resolveDefaultModel', () => {
       p('mistral', 'ok', ['some-future-model-id-not-in-catalog']),
     ])
     expect(out).toBe('some-future-model-id-not-in-catalog')
+  })
+
+  test('chain returns one default per usable provider, in default preference order', () => {
+    const out = resolveDefaultModelChain([
+      p('kimi', 'ok', ['moonshot-v1-128k']),
+      p('openai', 'cooldown', ['gpt-5.4']),
+      p('gemini', 'ok', ['gemini-2.5-flash', 'gemini-2.5-pro']),
+      p('mistral', 'ok', ['mistral-small-latest']),
+    ])
+    expect(out).toEqual(['gemini-2.5-flash', 'moonshot-v1-128k', 'mistral-small-latest'])
   })
 })

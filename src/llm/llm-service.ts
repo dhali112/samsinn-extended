@@ -34,6 +34,9 @@
 // Chain resolution priority:
 //   per-call override   — opts.fallbackChain (rare, code-only)
 //   system default      — getSystemChain() at request time (live policy)
+//   implicit default    — derived from live provider catalogs when no
+//                         explicit chain exists; used only after transient
+//                         capacity/availability failures, not pure typos
 //
 // Per-call override wins; empty array means "primary only — do not walk".
 // ============================================================================
@@ -42,6 +45,8 @@ import type { ChatRequest, ChatResponse, LLMProvider, StreamChunk } from '../cor
 import type { ProviderRouter, ProviderAttemptRecord, RouterCallOptions } from './router.ts'
 import type { MonitorState } from './provider-monitor.ts'
 import { parsePrefixedModel } from './models/parse-prefix.ts'
+import { resolveDefaultModelChain, type ProviderSnapshot } from './models/default-resolver.ts'
+import { CURATED_MODELS } from './models/catalog.ts'
 import { isAgentFallbackable as classifyIsAgentFallbackable } from '../agents/error-classify.ts'
 
 // === Source tagging — every call site declares its identity ===
@@ -101,8 +106,21 @@ const COOLDOWN_SKIP_GUARD_MS = 1_000
 // this path and go straight to fallback. Avoids a ~5-10% spurious-fallback
 // rate observed in prod on flaky residential connections.
 const NETWORK_RETRY_BACKOFF_MS = 250
+const IMPLICIT_CHAIN_CACHE_MS = 10_000
 
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/g
+
+type ChainSource = 'explicit' | 'implicit'
+
+const IMPLICIT_FALLBACK_TRIGGER_CODES: ReadonlySet<ProviderAttemptRecord['code']> = new Set([
+  'backoff', 'unhealthy',
+  'rate_limit', 'quota', 'provider_down',
+  'queue_full', 'queue_timeout', 'circuit_open',
+  'network', 'forced_fail',
+])
+
+const hasImplicitFallbackTrigger = (attempts: ReadonlyArray<ProviderAttemptRecord>): boolean =>
+  attempts.some(a => IMPLICIT_FALLBACK_TRIGGER_CODES.has(a.code))
 
 // Bare network errors that warrant one in-place retry on the same chain
 // element before advancing. Classified provider errors (CloudProviderError,
@@ -124,6 +142,47 @@ const dedupChain = (primary: string, chain: ReadonlyArray<string>): ReadonlyArra
     out.push(t)
   }
   return out
+}
+
+const orderReportedModelsForDefault = (provider: string, ids: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const available = new Set(ids)
+  const seen = new Set<string>()
+  const out: string[] = []
+  const push = (id: string): void => {
+    if (!available.has(id) || seen.has(id)) return
+    seen.add(id)
+    out.push(id)
+  }
+  for (const m of CURATED_MODELS[provider] ?? []) push(m.id)
+  for (const id of ids) push(id)
+  return out
+}
+
+const monitorStatus = (state: MonitorState | null | undefined): ProviderSnapshot['status'] => {
+  if (!state) return 'ok'
+  if (state.sub === 'ok') return 'ok'
+  if (state.sub === 'backoff') return 'cooldown'
+  if (state.sub === 'no_key' || state.sub === 'disabled') return 'no_key'
+  return 'down'
+}
+
+const buildImplicitFallbackChain = async (router: ProviderRouter): Promise<ReadonlyArray<string>> => {
+  const refs = await router.models().catch(() => [] as string[])
+  const byProvider = new Map<string, string[]>()
+  for (const ref of refs) {
+    const { provider, modelId } = parsePrefixedModel(ref)
+    if (!provider || !modelId) continue
+    const list = byProvider.get(provider) ?? []
+    list.push(modelId)
+    byProvider.set(provider, list)
+  }
+  const monitor = router.getMonitorSnapshot()
+  const snapshots: ProviderSnapshot[] = router.getProviderNames().map(name => ({
+    name,
+    status: monitorStatus(monitor[name]),
+    models: orderReportedModelsForDefault(name, byProvider.get(name) ?? []).map(id => ({ id })),
+  }))
+  return resolveDefaultModelChain(snapshots)
 }
 
 // Decide whether to skip the primary based on monitor state.
@@ -186,6 +245,7 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
   const now = deps.now ?? Date.now
   const router = deps.router
   const getSystemChain = deps.getSystemChain ?? (() => undefined)
+  let implicitChainCache: { readonly at: number; readonly refs: ReadonlyArray<string> } | null = null
 
   // Reorder candidates: if primary is doomed by monitor state and chain is
   // non-empty, demote primary to last so we still try it if the chain
@@ -213,9 +273,17 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
     )
   }
 
-  const resolveChain = (override: ReadonlyArray<string> | undefined): ReadonlyArray<string> => {
-    if (override !== undefined) return override
-    return getSystemChain() ?? []
+  const resolveChain = async (override: ReadonlyArray<string> | undefined): Promise<{ refs: ReadonlyArray<string>; source: ChainSource }> => {
+    if (override !== undefined) return { refs: override, source: 'explicit' }
+    const systemChain = getSystemChain() ?? []
+    if (systemChain.length > 0) return { refs: systemChain, source: 'explicit' }
+    const t = now()
+    if (implicitChainCache && t - implicitChainCache.at < IMPLICIT_CHAIN_CACHE_MS) {
+      return { refs: implicitChainCache.refs, source: 'implicit' }
+    }
+    const refs = await buildImplicitFallbackChain(router)
+    implicitChainCache = { at: t, refs }
+    return { refs, source: 'implicit' }
   }
 
   const finalizeFailure = (
@@ -241,7 +309,8 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
   }
 
   const callChat = async (request: ChatRequest, opts: LLMServiceBindOptions): Promise<ChatResponse> => {
-    const chain = dedupChain(request.model, resolveChain(opts.fallbackChain))
+    const resolvedChain = await resolveChain(opts.fallbackChain)
+    const chain = dedupChain(request.model, resolvedChain.refs)
     const order = buildAttemptOrder(request, chain)
     const allAttempts: ProviderAttemptRecord[] = []
     let lastError: unknown
@@ -288,6 +357,7 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
         }
       }
       if (!classifyIsAgentFallbackable(lastError)) break
+      if (resolvedChain.source === 'implicit' && !hasImplicitFallbackTrigger(allAttempts)) break
     }
     return finalizeFailure(allAttempts, firstFallbackable, chain.length > 0, request.model, lastError)
   }
@@ -297,7 +367,8 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
     signal: AbortSignal | undefined,
     opts: LLMServiceBindOptions,
   ): AsyncIterable<StreamChunk> {
-    const chain = dedupChain(request.model, resolveChain(opts.fallbackChain))
+    const resolvedChain = await resolveChain(opts.fallbackChain)
+    const chain = dedupChain(request.model, resolvedChain.refs)
     const order = buildAttemptOrder(request, chain)
     const allAttempts: ProviderAttemptRecord[] = []
     let lastError: unknown
@@ -381,6 +452,7 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
         }
       }
       if (!classifyIsAgentFallbackable(lastError)) break
+      if (resolvedChain.source === 'implicit' && !hasImplicitFallbackTrigger(allAttempts)) break
     }
     return finalizeFailure(allAttempts, firstFallbackable, chain.length > 0, request.model, lastError)
   }
