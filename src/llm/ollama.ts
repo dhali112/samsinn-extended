@@ -52,7 +52,10 @@ const TAGS_TIMEOUT_MS = 10_000
 // Warn the user at warnMs so they know Ollama is slow; hard-abort at
 // hardMs so a truly dead stream eventually fails over.
 const STREAM_SLOW_WARN_MS = 15_000
-const STREAM_HARD_ABORT_MS = 90_000
+// 300s (not 90s): CPU-only prefill of a large prompt emits no chunks for
+// well over 90s (e.g. ~8k tokens at ~80 tok/s ≈ 105s of silence), which
+// made the old threshold abort healthy requests before the first token.
+const STREAM_HARD_ABORT_MS = 300_000
 const DEFAULT_NUM_CTX = 16384  // modern models support 32K+; 16K gives room for rich context + history
 
 const validateChatResponse = (data: unknown): OllamaChatResponse => {
