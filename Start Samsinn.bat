@@ -5,6 +5,8 @@ rem   for the CUDA toolkit newer Ollama builds ship)
 rem - Starts the Samsinn server and opens the app in your browser
 
 set CUDA_VISIBLE_DEVICES=-1
+rem Seed new sandboxes with the local model that actually works here
+set SAMSINN_SEED_MODEL=ollama:qwen2.5:7b
 cd /d "%~dp0"
 
 rem Start Ollama if it is not already running
