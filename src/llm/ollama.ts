@@ -241,6 +241,7 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
 
     const decoder = new TextDecoder()
     let buffer = ''
+    const collectedToolCalls: Array<{ function: { name: string; arguments: Record<string, unknown> } }> = []
     // Race read vs warn timer (see openai-compatible.ts for rationale).
     let pendingRead: Promise<{ done: boolean; value: Uint8Array | undefined }> | null = null
     let warnEmitted = false
@@ -291,9 +292,18 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
           const thinking = (parsed as Record<string, unknown>).thinking as string | undefined
           const delta = parsed.message?.content ?? ''
           const isDone = parsed.done === true
-          const toolCalls = isDone && parsed.message?.tool_calls?.length
-            ? parsed.message.tool_calls.map(tc => ({ function: { name: tc.function.name, arguments: tc.function.arguments } }))
-            : undefined
+          // Ollama ≥0.9 streams tool_calls in intermediate done:false chunks
+          // (the final done:true chunk carries none); older versions attach
+          // them to the done chunk. Accumulate from every chunk and deliver
+          // on done so both behaviors work and consumers keep seeing
+          // toolCalls only alongside done — reading only the done chunk
+          // silently dropped every tool call on newer Ollama.
+          if (parsed.message?.tool_calls?.length) {
+            collectedToolCalls.push(...parsed.message.tool_calls.map(
+              tc => ({ function: { name: tc.function.name, arguments: tc.function.arguments } }),
+            ))
+          }
+          const toolCalls = isDone && collectedToolCalls.length ? collectedToolCalls : undefined
           const tokensUsed = isDone && (parsed.prompt_eval_count !== undefined || parsed.eval_count !== undefined)
             ? { prompt: parsed.prompt_eval_count ?? 0, completion: parsed.eval_count ?? 0 }
             : undefined
