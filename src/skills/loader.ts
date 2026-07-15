@@ -142,7 +142,9 @@ const unquote = (raw: string): string => {
 }
 
 export const parseFrontmatter = (content: string): { frontmatter: Frontmatter; body: string } => {
-  const lines = content.split('\n')
+  // Split on \r?\n so CRLF checkouts (Windows git autocrlf) parse identically
+  // to LF — the exact-match indexOf('---') below would otherwise miss "---\r".
+  const lines = content.split(/\r?\n/)
   if (lines[0]?.trim() !== '---') return { frontmatter: {}, body: content }
 
   const endIdx = lines.indexOf('---', 1)

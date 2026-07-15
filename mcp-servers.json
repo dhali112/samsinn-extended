@@ -2,7 +2,7 @@
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp", "/private/tmp"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\User\\Documents\\Claude\\samsinn-workspace"]
     }
   }
 }
