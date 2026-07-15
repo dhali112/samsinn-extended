@@ -32,6 +32,9 @@ const buildMapContainer = (height = DEFAULT_HEIGHT_PX): HTMLElement => {
   return wrapper
 }
 
+const escapeHtml = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+
 const addEnvelopeFeature = (L: LeafletApi, map: LeafletMap, f: EnvelopeFeature): void => {
   if (f.type === 'marker') {
     // Unified divIcon path. Previously markers without an icon/color used
@@ -41,9 +44,20 @@ const addEnvelopeFeature = (L: LeafletApi, map: LeafletMap, f: EnvelopeFeature):
     // inline SVG with no external asset dependency, so a marker either
     // shows or fails loud.
     const spec = buildIconSpec(f.icon, f.color)
+    // When a marker carries BOTH label and tooltip, the label used to be
+    // ignored entirely (tooltip won the hover slot). Give it a purpose:
+    // render it as a permanent bold caption beside the icon, with the
+    // tooltip staying hover-only. Label-only markers keep the historical
+    // hover-label behavior, so existing maps are unaffected.
+    const permanentLabel = f.label && f.tooltip
+      ? `<span style="position:absolute;left:calc(100% + 4px);top:50%;transform:translateY(-50%);white-space:nowrap;font-weight:700;font-size:12px;line-height:1;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,.88);color:#111;box-shadow:0 1px 2px rgba(0,0,0,.35)">${escapeHtml(f.label)}</span>`
+      : ''
+    const html = permanentLabel
+      ? `<div style="position:relative;width:100%;height:100%">${spec.html}${permanentLabel}</div>`
+      : spec.html
     const m = L.marker([f.lat, f.lng], {
       icon: L.divIcon({
-        html: spec.html,
+        html,
         className: 'samsinn-marker',
         iconSize: spec.size,
         iconAnchor: spec.anchor,

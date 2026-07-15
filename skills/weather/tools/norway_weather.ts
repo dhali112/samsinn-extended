@@ -5,12 +5,15 @@
 //
 // Day-part periods (Europe/Oslo local time):
 //   morning 06–12 · afternoon 12–17 · evening 17–21 · night 21–06
-// The report shows current conditions plus the NEXT THREE periods after the
-// one we are currently in (e.g. during the evening: night, morning, afternoon).
+// Projections cover the NEXT THREE periods after the one we are currently in
+// (e.g. during the evening: night, morning, afternoon).
 //
-// Per period: condition (most frequent WMO code, ties → more severe),
-// peak temp (max), low temp (min), feels-like (mean apparent temperature),
-// precipitation chance (max hourly probability).
+// Output is a single ```map fence framed on Norway. Each city marker shows a
+// permanent bold label "City <symbol> <temp>°"; hovering the marker reveals
+// current conditions plus the three projected periods (condition, peak, low,
+// feels-like, precipitation chance). The label+tooltip pairing relies on the
+// renderer treating markers with BOTH fields as permanently labeled
+// (src/ui/modules/map/index.ts).
 
 const CITIES = [
   { name: 'Oslo', lat: 59.9139, lng: 10.7522 },
@@ -19,6 +22,10 @@ const CITIES = [
   { name: 'Stavanger', lat: 58.9700, lng: 5.7331 },
   { name: 'Drammen', lat: 59.7439, lng: 10.2045 },
 ] as const
+
+// Frame the whole of Norway (Lindesnes to Nordkapp), not just the five
+// southern cities — auto-fit would crop everything north of Trondheim.
+const NORWAY_VIEW = { center: [64.5, 12.5] as [number, number], zoom: 4 }
 
 const WMO: Record<number, string> = {
   0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast',
@@ -34,6 +41,19 @@ const WMO: Record<number, string> = {
 }
 
 const condition = (code: number): string => WMO[code] ?? `Code ${code}`
+
+const symbol = (code: number): string => {
+  if (code === 0) return '☀️'
+  if (code === 1) return '🌤️'
+  if (code === 2) return '⛅'
+  if (code === 3) return '☁️'
+  if (code === 45 || code === 48) return '🌫️'
+  if (code >= 51 && code <= 57) return '🌦️'
+  if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return '🌧️'
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return '🌨️'
+  if (code >= 95) return '⛈️'
+  return '🌡️'
+}
 
 type PeriodName = 'morning' | 'afternoon' | 'evening' | 'night'
 
@@ -65,6 +85,7 @@ interface PeriodSummary {
   readonly period: PeriodName
   readonly weekday: string
   readonly condition: string
+  readonly symbol: string
   readonly peak: number
   readonly low: number
   readonly feelsLike: number
@@ -87,15 +108,19 @@ const dominantCode = (codes: ReadonlyArray<number>): number => {
   return best
 }
 
-const summarize = (period: PeriodName, hours: ReadonlyArray<HourPoint>): PeriodSummary => ({
-  period,
-  weekday: weekdayOf(hours[0]!.date),
-  condition: condition(dominantCode(hours.map(h => h.code))),
-  peak: Math.round(Math.max(...hours.map(h => h.temp))),
-  low: Math.round(Math.min(...hours.map(h => h.temp))),
-  feelsLike: Math.round(hours.reduce((s, h) => s + h.feels, 0) / hours.length),
-  precipChance: Math.round(Math.max(...hours.map(h => h.precip))),
-})
+const summarize = (period: PeriodName, hours: ReadonlyArray<HourPoint>): PeriodSummary => {
+  const code = dominantCode(hours.map(h => h.code))
+  return {
+    period,
+    weekday: weekdayOf(hours[0]!.date),
+    condition: condition(code),
+    symbol: symbol(code),
+    peak: Math.round(Math.max(...hours.map(h => h.temp))),
+    low: Math.round(Math.min(...hours.map(h => h.temp))),
+    feelsLike: Math.round(hours.reduce((s, h) => s + h.feels, 0) / hours.length),
+    precipChance: Math.round(Math.max(...hours.map(h => h.precip))),
+  }
+}
 
 // Walk hours after `nowTime`, skip the remainder of the current period, then
 // collect the next three consecutive-period groups. The night group spans
@@ -117,6 +142,8 @@ const nextThreePeriods = (hours: ReadonlyArray<HourPoint>, nowTime: string, curr
   return groups
 }
 
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
+
 interface OpenMeteoLocation {
   readonly current: { time: string; temperature_2m: number; apparent_temperature: number; weather_code: number }
   readonly hourly: {
@@ -130,9 +157,9 @@ interface OpenMeteoLocation {
 
 const tool = {
   name: 'norway_weather',
-  description: "Current weather and the next three day-part forecasts (morning/afternoon/evening/night) for Norway's 5 biggest cities: Oslo, Bergen, Trondheim, Stavanger, Drammen. No parameters.",
-  usage: 'Call with no arguments whenever the user asks about weather in Norway or Norwegian cities. Present the returned `report` field verbatim — it contains a rendered map and formatted tables.',
-  returns: 'Object with `report` (markdown incl. a ```map fence, ready to post) and `data` (structured per-city numbers).',
+  description: "Live weather map of Norway: current conditions and the next three day-part forecasts (morning/afternoon/evening/night) for the 5 biggest cities — Oslo, Bergen, Trondheim, Stavanger, Drammen. No parameters.",
+  usage: 'Call with no arguments whenever the user wants to check the weather in Norway or Norwegian cities. Present the returned `report` field verbatim — it is a map fence; city labels show current weather, hovering a city shows the forecast.',
+  returns: 'Object with `report` (a ```map fence of Norway, ready to post) and `data` (structured per-city numbers).',
   parameters: { type: 'object', properties: {}, required: [] },
   execute: async (): Promise<Record<string, unknown>> => {
     const lats = CITIES.map(c => c.lat).join(',')
@@ -179,6 +206,7 @@ const tool = {
         lng: city.lng,
         current: {
           condition: condition(loc.current.weather_code),
+          symbol: symbol(loc.current.weather_code),
           temp: Math.round(loc.current.temperature_2m),
           feelsLike: Math.round(loc.current.apparent_temperature),
           precipChance: nowIdx >= 0 ? Math.round(hours[nowIdx]!.precip) : null,
@@ -187,43 +215,31 @@ const tool = {
       }
     })
 
-    // --- Ready-to-post report: map fence + one table per section ---
+    // Marker label = permanent bold caption (city + current symbol + temp).
+    // Tooltip = hover detail; the map renderer inserts it as HTML.
     const mapEnvelope = {
-      features: cities.map(c => ({
-        type: 'marker', lat: c.lat, lng: c.lng,
-        label: `${c.city} ${c.current.temp}°`, tooltip: c.current.condition, icon: 'city',
-      })),
+      view: NORWAY_VIEW,
+      features: cities.map(c => {
+        const rows = c.projected.map(p =>
+          `<b>${cap(p.period)} (${p.weekday} ${PERIOD_RANGE[p.period]}):</b> ${p.symbol} ${p.condition} · peak ${p.peak}° · low ${p.low}° · feels ${p.feelsLike}° · precip ${p.precipChance}%`,
+        )
+        return {
+          type: 'marker', lat: c.lat, lng: c.lng, icon: 'dot',
+          label: `${c.city} ${c.current.symbol} ${c.current.temp}°`,
+          tooltip: [
+            `<b>Now:</b> ${c.current.symbol} ${c.current.condition} · ${c.current.temp}° · feels ${c.current.feelsLike}° · precip ${c.current.precipChance ?? '–'}%`,
+            ...rows,
+          ].join('<br>'),
+        }
+      }),
     }
 
-    const lines: string[] = []
-    lines.push('```map')
-    lines.push(JSON.stringify(mapEnvelope, null, 1))
-    lines.push('```')
-    lines.push('')
-    lines.push(`**Current — ${weekdayOf(nowTime.slice(0, 10))} ${nowTime.slice(11, 16)} (${currentPeriod})**`)
-    lines.push('')
-    lines.push('| City | Weather | Temp | Feels like | Precip |')
-    lines.push('|---|---|---|---|---|')
-    for (const c of cities) {
-      lines.push(`| ${c.city} | ${c.current.condition} | ${c.current.temp}° | ${c.current.feelsLike}° | ${c.current.precipChance ?? '–'}% |`)
-    }
-    const periods = cities[0]!.projected
-    periods.forEach((p, pi) => {
-      lines.push('')
-      lines.push(`**${p.period.charAt(0).toUpperCase() + p.period.slice(1)} (${p.weekday} ${PERIOD_RANGE[p.period]})**`)
-      lines.push('')
-      lines.push('| City | Weather | Peak | Low | Feels like | Precip |')
-      lines.push('|---|---|---|---|---|---|')
-      for (const c of cities) {
-        const s = c.projected[pi]
-        if (s) lines.push(`| ${c.city} | ${s.condition} | ${s.peak}° | ${s.low}° | ${s.feelsLike}° | ${s.precipChance}% |`)
-      }
-    })
+    const report = '```map\n' + JSON.stringify(mapEnvelope, null, 1) + '\n```'
 
     return {
       success: true,
       data: {
-        report: lines.join('\n'),
+        report,
         generatedAt: nowTime,
         currentPeriod,
         cities,
