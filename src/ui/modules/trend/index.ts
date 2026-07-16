@@ -432,6 +432,86 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
     chips.appendChild(chip)
   }
 
+  // --- Statistics table (live: computed over the VISIBLE window, so it
+  // tracks the on-screen time-axis controls) ---
+  const visibleSeries = env.series.filter(s => !state.hidden.has(s.tag))
+  if (visibleSeries.length > 0) {
+    const table = document.createElement('table')
+    table.style.cssText = 'width:calc(100% - 16px);margin:2px 8px 6px;border-collapse:collapse;font-size:11px'
+    const thead = document.createElement('thead')
+    const hrow = document.createElement('tr')
+    for (const h of ['Tag', 'Avg', 'Min', 'Max', 'Last', 'Info']) {
+      const th = document.createElement('th')
+      th.textContent = h
+      th.style.cssText = `text-align:${h === 'Tag' || h === 'Info' ? 'left' : 'right'};padding:2px 6px;border-bottom:1px solid rgba(128,128,128,.35);opacity:.7;font-weight:600`
+      hrow.appendChild(th)
+    }
+    thead.appendChild(hrow)
+    table.appendChild(thead)
+    const tbody = document.createElement('tbody')
+
+    for (const s of visibleSeries) {
+      const pts = inWindow(s)
+      if (pts.length === 0) continue
+      const vals = pts.map(p => p[1])
+      const min = Math.min(...vals), max = Math.max(...vals)
+      const avg = vals.reduce((a, v) => a + v, 0) / vals.length
+      const last = vals[vals.length - 1]!
+      const tMax = pts[vals.indexOf(max)]![0]
+      const tMin = pts[vals.indexOf(min)]![0]
+      const u = s.unit
+
+      // Binary duty cycle must be TIME-weighted: points are change-point
+      // compressed, so a plain mean of sample values is wrong.
+      let dutyPct = 0
+      if (s.kind === 'binary') {
+        let onS = 0
+        for (let i = 1; i < pts.length; i++) {
+          if (pts[i - 1]![1] >= 0.5) onS += pts[i]![0] - pts[i - 1]![0]
+        }
+        dutyPct = Math.round(onS / Math.max(1, pts[pts.length - 1]![0] - pts[0]![0]) * 100)
+      }
+
+      let info: string
+      if (s.kind === 'power') {
+        info = `≈ ${Math.round(energyMWh(pts)).toLocaleString()} MWh in window`
+      } else if (s.kind === 'binary') {
+        let stops = 0
+        for (let i = 1; i < pts.length; i++) {
+          if (pts[i]![1] < 0.5 && pts[i - 1]![1] >= 0.5) stops++
+        }
+        info = `${stops} stop${stops === 1 ? '' : 's'} in window`
+      } else if (s.limits && (s.limits.high !== undefined || s.limits.low !== undefined)) {
+        const n = (env.events ?? []).filter(e => e.tag === s.tag && e.t >= from && e.t <= to && e.level !== 'STATE').length
+        info = n > 0 ? `⚠ ${n} alarm event${n === 1 ? '' : 's'} in window` : 'no limit violations'
+      } else {
+        const std = Math.sqrt(vals.reduce((a, v) => a + (v - avg) ** 2, 0) / vals.length)
+        info = `σ ${std.toFixed(2)}${u}`
+      }
+
+      const row = document.createElement('tr')
+      const fmtV = (v: number): string => s.kind === 'binary' ? String(Math.round(v * 100) / 100) : `${(+v.toFixed(2)).toLocaleString()}${u}`
+      const cells: Array<{ text: string; align: string; title?: string; color?: string }> = [
+        { text: `● ${s.tag}`, align: 'left', color: colorOf.get(s.tag)!, title: s.label ?? s.tag },
+        { text: s.kind === 'binary' ? `${dutyPct}% on` : fmtV(avg), align: 'right' },
+        { text: fmtV(min), align: 'right', title: `at ${fmt(tMin)}` },
+        { text: fmtV(max), align: 'right', title: `at ${fmt(tMax)}` },
+        { text: fmtV(last), align: 'right' },
+        { text: info, align: 'left' },
+      ]
+      for (const c of cells) {
+        const td = document.createElement('td')
+        td.textContent = c.text
+        if (c.title) td.title = c.title
+        td.style.cssText = `text-align:${c.align};padding:2px 6px;border-bottom:1px solid rgba(128,128,128,.15);white-space:nowrap${c.color ? `;color:${c.color};font-weight:600` : ''}`
+        row.appendChild(td)
+      }
+      tbody.appendChild(row)
+    }
+    table.appendChild(tbody)
+    wrapper.appendChild(table)
+  }
+
   // --- Event list (compact, below the chart) ---
   if (events.length > 0) {
     const list = document.createElement('div')
