@@ -19,9 +19,14 @@ Procedure:
 
 1. Choose tags from the catalog based on the operator's request (multiple tags
    on one display is fine and encouraged when they are related, e.g. coolant
-   temperature + pressure). Choose a window: 15m, 30m, 1h, 4h, 8h, 24h, 48h —
-   default 8h if the operator didn't say.
-2. Call `trend_query` with { tags, window }.
+   temperature + pressure). Choose ONE time-axis mode from the operator's
+   phrasing:
+   - Absolute range → { from, to } as ISO datetimes
+     ("between 06:00 and noon yesterday" → from: 2026-07-14T06:00, to: 2026-07-14T12:00)
+   - Last N samples → { points } ("show me the last 100 data points" → points: 100, max 240)
+   - Relative window → { window }: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w
+     ("past week" → 1w). Default 8h if the operator didn't say.
+2. Call `trend_query` with { tags } plus the chosen time-axis fields.
 3. Post the returned `report` field EXACTLY as returned (it is a ```trend
    fence — the display has its own on-screen series toggles and time-window
    selector; alarms and anomalies are marked on it automatically).

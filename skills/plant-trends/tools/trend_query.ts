@@ -43,7 +43,21 @@ const TAGS: Record<string, TagMeta> = {
 
 const WINDOWS: Record<string, number> = {
   '15m': 15 * 60, '30m': 30 * 60, '1h': 3600, '4h': 4 * 3600,
-  '8h': 8 * 3600, '24h': 24 * 3600, '48h': 48 * 3600,
+  '8h': 8 * 3600, '24h': 24 * 3600, '48h': 48 * 3600, '1w': 7 * 86400,
+}
+
+// Explicit sample-count mode is capped so the fence stays small enough to
+// stream out of a local model in reasonable time.
+const MAX_POINTS = 240
+
+// Accepts epoch seconds, epoch milliseconds, or an ISO-ish datetime string.
+const parseWhen = (v: unknown): number | null => {
+  if (typeof v === 'number' && isFinite(v)) return v > 1e12 ? Math.floor(v / 1000) : Math.floor(v)
+  if (typeof v === 'string' && v.trim()) {
+    const ms = Date.parse(v.trim().replace(' ', 'T'))
+    if (!Number.isNaN(ms)) return Math.floor(ms / 1000)
+  }
+  return null
 }
 
 type Point = readonly [number, number]   // [epoch_s, value]
@@ -204,13 +218,16 @@ const analyzeSeries = (
 const tool = {
   name: 'trend_query',
   description: 'Historical trend display for plant process tags (like WinCC OnlineTrendControl). Plots one or more tags over a time window with alarm limits, event markers, stepped binary traces, and energy totals for power tags. Returns a report to post and an analysis to interpret.',
-  usage: 'Pick tags matching what the operator asked about (see skill for the tag catalog) and a window (15m|30m|1h|4h|8h|24h|48h, default 8h). Post the returned `report` verbatim, then interpret using `analysis.lines` and `analysis.overall`.',
+  usage: 'Pick tags matching what the operator asked about (see skill for the tag catalog) and ONE time-axis mode: from/to for an absolute range, points for the last N samples, or window for a relative duration (default 8h). Post the returned `report` verbatim, then interpret using `analysis.lines` and `analysis.overall`.',
   returns: 'Object with `report` (a ```trend fence, ready to post) and `analysis` { overall: NORMAL|ATTENTION|ALARM, lines: string[], series: per-tag stats }.',
   parameters: {
     type: 'object',
     properties: {
       tags: { type: 'array', items: { type: 'string' }, description: 'Tag names to plot, e.g. ["RCS_TEMP_C","RCS_PRESS_BAR"]' },
-      window: { type: 'string', description: 'Time window back from latest data: 15m, 30m, 1h, 4h, 8h, 24h, 48h (default 8h)' },
+      window: { type: 'string', description: 'Relative window back from latest data: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w (default 8h)' },
+      from: { type: 'string', description: 'Absolute range start (ISO datetime, e.g. 2026-07-14T06:00). Overrides window/points.' },
+      to: { type: 'string', description: 'Absolute range end (ISO datetime). Defaults to latest data when only from is given.' },
+      points: { type: 'number', description: `Plot exactly the last N samples per tag (10–${MAX_POINTS}). Overrides window.` },
     },
     required: ['tags'],
   },
@@ -220,14 +237,46 @@ const tool = {
     if (tags.length === 0 || unknown.length > 0) {
       return { success: false, error: `${unknown.length ? `Unknown tag(s): ${unknown.join(', ')}. ` : 'No tags given. '}Available: ${Object.keys(TAGS).join(', ')}` }
     }
-    const windowKey = typeof params.window === 'string' && WINDOWS[params.window] ? params.window : '8h'
-    const windowS = WINDOWS[windowKey]!
-
     const all = await loadAll()
-    let dataEnd = 0
-    for (const pts of all.values()) if (pts.length) dataEnd = Math.max(dataEnd, pts[pts.length - 1]![0])
+    let dataEnd = 0, dataStart = Infinity
+    for (const pts of all.values()) if (pts.length) {
+      dataEnd = Math.max(dataEnd, pts[pts.length - 1]![0])
+      dataStart = Math.min(dataStart, pts[0]![0])
+    }
     if (dataEnd === 0) return { success: false, error: 'Historian is empty' }
-    const from = dataEnd - windowS
+
+    // Time-axis mode resolution: absolute range > point count > window.
+    const fromP = parseWhen(params.from)
+    const toP = parseWhen(params.to)
+    const nPts = typeof params.points === 'number' && isFinite(params.points)
+      ? Math.min(MAX_POINTS, Math.max(10, Math.round(params.points))) : null
+
+    let from: number, to: number, modeLabel: string, pointsMode = false
+    if (fromP !== null || toP !== null) {
+      from = Math.max(dataStart, fromP ?? dataStart)
+      to = Math.min(dataEnd, toP ?? dataEnd)
+      if (from >= to) return { success: false, error: `Empty range: from must be before to (data covers ${new Date(dataStart * 1000).toISOString()} – ${new Date(dataEnd * 1000).toISOString()})` }
+      const f = (t: number): string => { const d = new Date(t * 1000); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${hhmm(t)}` }
+      modeLabel = `${f(from)} – ${f(to)}`
+    } else if (nPts !== null) {
+      // Last N raw samples per tag; the envelope window spans the widest series.
+      pointsMode = true
+      to = dataEnd
+      from = dataStart
+      let earliest = dataEnd
+      for (const tag of tags) {
+        const pts = all.get(tag) ?? []
+        const slice = pts.slice(-nPts)
+        if (slice.length) earliest = Math.min(earliest, slice[0]![0])
+      }
+      from = earliest
+      modeLabel = `last ${nPts} samples`
+    } else {
+      const windowKey = typeof params.window === 'string' && WINDOWS[params.window] ? params.window : '8h'
+      to = dataEnd
+      from = Math.max(dataStart, dataEnd - WINDOWS[windowKey]!)
+      modeLabel = `last ${windowKey}`
+    }
 
     const seriesOut: Record<string, unknown>[] = []
     const allEvents: TrendEvent[] = []
@@ -236,7 +285,8 @@ const tool = {
 
     for (const tag of tags) {
       const meta = TAGS[tag]!
-      const pts = await loadHistory(tag, from, dataEnd)
+      let pts = await loadHistory(tag, from, to)
+      if (pointsMode && nPts !== null) pts = pts.slice(-nPts)
       const { stats, events, lines } = analyzeSeries(tag, meta, pts)
       allEvents.push(...events)
       allLines.push(...lines)
@@ -246,7 +296,9 @@ const tool = {
         step: meta.kind === 'binary',
         ...(meta.limits ? { limits: meta.limits } : {}),
         stats,
-        points: downsample(pts, meta.kind).map(p => [p[0], +p[1].toFixed(2)]),
+        // Points mode is exact by request (≤ MAX_POINTS raw samples);
+        // range/window modes downsample to keep the fence small.
+        points: (pointsMode ? pts : downsample(pts, meta.kind)).map(p => [p[0], +p[1].toFixed(2)]),
       })
     }
 
@@ -263,8 +315,8 @@ const tool = {
       : allEvents.length > 0 ? 'ATTENTION' : 'NORMAL'
 
     const envelope = {
-      title: `Plant trend — ${tags.join(', ')} (last ${windowKey})`,
-      from, to: dataEnd,
+      title: `Plant trend — ${tags.join(', ')} (${modeLabel})`,
+      from, to,
       series: seriesOut,
       events: cappedEvents.map(e => ({ t: e.t, tag: e.tag, level: e.level, text: e.text })),
     }
@@ -274,7 +326,7 @@ const tool = {
       data: {
         report: '```trend\n' + JSON.stringify(envelope) + '\n```',
         analysis: { overall, lines: allLines, series: seriesStats, eventCount: allEvents.length },
-        window: windowKey,
+        window: modeLabel,
       },
     }
   },

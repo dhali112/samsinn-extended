@@ -52,8 +52,30 @@ const EVENT_COLOR: Record<string, string> = {
   HIHI: '#dc2626', HIGH: '#ea580c', LOW: '#0284c7', ROC: '#9333ea', STATE: '#6b7280',
 }
 const WINDOW_CHOICES: ReadonlyArray<readonly [label: string, seconds: number]> = [
-  ['15m', 900], ['1h', 3600], ['4h', 14400], ['8h', 28800], ['24h', 86400],
+  ['15m', 900], ['1h', 3600], ['4h', 14400], ['8h', 28800], ['24h', 86400], ['1 week', 604800],
 ]
+
+// Time-axis modes: relative window ("Last 4h"), absolute start–end range,
+// or the last N data points — all navigate within the data embedded in the
+// fence (the tool controls what range was queried in the first place).
+interface TrendState {
+  readonly hidden: Set<string>
+  mode: 'last' | 'range' | 'points'
+  windowS: number | null
+  rFrom: number | null
+  rTo: number | null
+  nPts: number
+}
+
+const epochToLocalInput = (ts: number): string => {
+  const d = new Date(ts * 1000)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+const localInputToEpoch = (v: string): number | null => {
+  const ms = Date.parse(v)
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000)
+}
 
 const SVGNS = 'http://www.w3.org/2000/svg'
 const el = <K extends string>(tag: K, attrs: Record<string, string | number> = {}): SVGElement => {
@@ -114,15 +136,27 @@ const buildPath = (
   return d
 }
 
-const render = (
-  wrapper: HTMLElement, env: TrendEnvelope,
-  state: { hidden: Set<string>; windowS: number | null },
-): void => {
+const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): void => {
   wrapper.textContent = ''
   const colorOf = new Map(env.series.map((s, i) => [s.tag, PALETTE[i % PALETTE.length]!]))
 
-  const to = env.to
-  const from = state.windowS === null ? env.from : Math.max(env.from, to - state.windowS)
+  // Resolve visible time domain from the active mode.
+  let from = env.from
+  let to = env.to
+  if (state.mode === 'last' && state.windowS !== null) {
+    from = Math.max(env.from, env.to - state.windowS)
+  } else if (state.mode === 'range') {
+    from = Math.max(env.from, Math.min(state.rFrom ?? env.from, env.to - 60))
+    to = Math.min(env.to, Math.max(state.rTo ?? env.to, from + 60))
+  } else if (state.mode === 'points') {
+    // Densest visible series defines the span covering its last N points.
+    const candidates = env.series.filter(s => !state.hidden.has(s.tag))
+    const densest = [...candidates].sort((a, b) => b.points.length - a.points.length)[0]
+    if (densest) {
+      const slice = densest.points.slice(-Math.max(2, state.nPts))
+      if (slice.length) from = Math.max(env.from, slice[0]![0])
+    }
+  }
   const inWindow = (s: TrendSeries): Array<readonly [number, number]> => {
     const pts = s.points.filter(p => p[0] >= from && p[0] <= to)
     // Keep the last point before the window edge so lines/lanes enter from the left.
@@ -139,27 +173,85 @@ const render = (
   title.style.cssText = 'font-weight:700;margin-right:auto'
   bar.appendChild(title)
 
-  const sel = document.createElement('select')
-  sel.style.cssText = 'font-size:12px;padding:1px 4px;border:1px solid rgba(128,128,128,.4);border-radius:4px;background:transparent;color:inherit'
+  const ctlStyle = 'font-size:12px;padding:1px 4px;border:1px solid rgba(128,128,128,.4);border-radius:4px;background:transparent;color:inherit'
   const total = env.to - env.from
-  for (const [label, secs] of WINDOW_CHOICES) {
-    if (secs >= total) continue
+
+  // Mode picker: Last … / Start–end / N points
+  const modeSel = document.createElement('select')
+  modeSel.style.cssText = ctlStyle
+  for (const [value, label] of [['last', 'Last…'], ['range', 'Start–end'], ['points', 'N points']] as const) {
     const o = document.createElement('option')
-    o.value = String(secs)
-    o.textContent = `Last ${label}`
-    if (state.windowS === secs) o.selected = true
-    sel.appendChild(o)
+    o.value = value
+    o.textContent = label
+    if (state.mode === value) o.selected = true
+    modeSel.appendChild(o)
   }
-  const oAll = document.createElement('option')
-  oAll.value = 'all'
-  oAll.textContent = `All (${(total / 3600).toFixed(0)}h)`
-  if (state.windowS === null) oAll.selected = true
-  sel.appendChild(oAll)
-  sel.onchange = () => {
-    state.windowS = sel.value === 'all' ? null : Number(sel.value)
+  modeSel.onchange = () => {
+    state.mode = modeSel.value as TrendState['mode']
     render(wrapper, env, state)
   }
-  bar.appendChild(sel)
+  bar.appendChild(modeSel)
+
+  if (state.mode === 'last') {
+    const sel = document.createElement('select')
+    sel.style.cssText = ctlStyle
+    for (const [label, secs] of WINDOW_CHOICES) {
+      if (secs >= total) continue
+      const o = document.createElement('option')
+      o.value = String(secs)
+      o.textContent = `Last ${label}`
+      if (state.windowS === secs) o.selected = true
+      sel.appendChild(o)
+    }
+    const oAll = document.createElement('option')
+    oAll.value = 'all'
+    oAll.textContent = `All (${(total / 3600).toFixed(0)}h)`
+    if (state.windowS === null) oAll.selected = true
+    sel.appendChild(oAll)
+    sel.onchange = () => {
+      state.windowS = sel.value === 'all' ? null : Number(sel.value)
+      render(wrapper, env, state)
+    }
+    bar.appendChild(sel)
+  } else if (state.mode === 'range') {
+    const mk = (initial: number, onSet: (ts: number) => void): HTMLInputElement => {
+      const inp = document.createElement('input')
+      inp.type = 'datetime-local'
+      inp.style.cssText = ctlStyle
+      inp.value = epochToLocalInput(initial)
+      inp.min = epochToLocalInput(env.from)
+      inp.max = epochToLocalInput(env.to)
+      inp.onchange = () => {
+        const ts = localInputToEpoch(inp.value)
+        if (ts !== null) { onSet(ts); render(wrapper, env, state) }
+      }
+      return inp
+    }
+    bar.appendChild(mk(state.rFrom ?? env.from, ts => { state.rFrom = ts }))
+    const dash = document.createElement('span')
+    dash.textContent = '–'
+    bar.appendChild(dash)
+    bar.appendChild(mk(state.rTo ?? env.to, ts => { state.rTo = ts }))
+  } else {
+    const maxPts = Math.max(...env.series.map(s => s.points.length), 2)
+    const inp = document.createElement('input')
+    inp.type = 'number'
+    inp.min = '2'
+    inp.max = String(maxPts)
+    inp.value = String(Math.min(state.nPts, maxPts))
+    inp.style.cssText = ctlStyle + ';width:64px'
+    inp.title = `Show the last N data points (2–${maxPts} embedded in this display)`
+    inp.onchange = () => {
+      const n = Math.max(2, Math.min(maxPts, Math.round(Number(inp.value) || 2)))
+      state.nPts = n
+      render(wrapper, env, state)
+    }
+    bar.appendChild(inp)
+    const lbl = document.createElement('span')
+    lbl.textContent = 'points'
+    lbl.style.opacity = '0.7'
+    bar.appendChild(lbl)
+  }
   wrapper.appendChild(bar)
 
   const chips = document.createElement('div')
@@ -382,7 +474,7 @@ export const renderTrendBlocks = async (container: HTMLElement): Promise<void> =
     const wrapper = document.createElement('div')
     wrapper.className = 'my-2 rounded border border-border overflow-hidden'
     pre.replaceWith(wrapper)
-    render(wrapper, env, { hidden: new Set(), windowS: null })
+    render(wrapper, env, { hidden: new Set(), mode: 'last', windowS: null, rFrom: null, rTo: null, nPts: 60 })
   }
 }
 
