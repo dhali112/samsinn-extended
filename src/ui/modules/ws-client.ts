@@ -17,7 +17,8 @@
 const BACKOFF_SCHEDULE_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]
 
 export interface WSClient {
-  send: (data: unknown) => void
+  /** Returns false when the socket is not OPEN and the payload was dropped. */
+  send: (data: unknown) => boolean
 }
 
 export const createWSClient = (
@@ -63,7 +64,9 @@ export const createWSClient = (
     send: (data: unknown) => {
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(data))
+        return true
       }
+      return false
     },
   }
 }
