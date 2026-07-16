@@ -10,6 +10,7 @@ import type { UIMessage, AgentInfo } from '../render/render-types.ts'
 // layer (../extensions/registry.ts), not via static import.
 import '../mermaid/index.ts'
 import '../map/index.ts'
+import '../trend/index.ts'
 import { getPostRenderProcessors } from '../extensions/post-render-registry.ts'
 import { icon } from '../icon.ts'
 import { appendWhisperBadge } from '../whisper-badge.ts'
