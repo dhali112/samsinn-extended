@@ -1,29 +1,26 @@
-// Trend rendering — WinCC-OnlineTrendControl-style historical trends.
+// Trend control — WinCC-OnlineTrendControl-style front-end object.
 //
-//   renderTrendBlocks(container) — post-processes ```trend code fences inside
-//     a rendered markdown container (registered like mermaid/map).
+// ARCHITECTURE: this is a pure front-end control. A ```trend fence carries
+// only a CONFIG (pens + time axis); the control fetches actual samples from
+// /api/trends/data and re-fetches on every operator interaction. Data never
+// travels through chat messages or the LLM.
 //
-// Envelope (produced by the plant-trends skill's trend_query tool):
-//   {
-//     title?, from, to,                      // epoch seconds
-//     series: [{ tag, label?, unit, kind: 'analog'|'binary'|'power',
-//                step?, limits?: {low?,high?,highHigh?},
-//                stats?, points: [[ts,v],...] }],
-//     events?: [{ t, tag, level: 'HIGH'|'HIHI'|'LOW'|'ROC'|'STATE', text }]
-//   }
+// Config fence (produced by trend_query or written by hand):
+//   { "title"?: string,
+//     "trends": [{ "tag": "RCS_TEMP_C" }, ...],
+//     "time": { "window": "8h" } | { "from": ISO, "to": ISO } | { "points": N } }
 //
-// Interactive controls (no external libs — hand-rolled SVG):
-//   - series toggle chips (click to show/hide a trace)
-//   - time-window <select> (15m … All) filtering within the embedded data
-// Behavior rules:
-//   - binary series render stepped in dedicated lanes below the plot
-//   - power series show trapezoid-integrated energy (MWh) for the visible
-//     window in their chip
-//   - alarm limits render as dashed lines; events as vertical markers with
-//     native-tooltip text
-// Axis policy: first unit among visible analog series → left axis; second
-// unit → right axis; any further units are min-max normalized (chip marked
-// "norm").
+// Legacy fences with embedded data ({ series: [{points…}] }) still render,
+// backed by a local provider (spec's "manual" Provider kind) instead of the
+// archive API.
+//
+// Operator surface (spec correspondence):
+//   pen add/remove + visibility chips … ShowTrendSelection / ShowTagSelection
+//   time-axis mode controls           … ShowTimeSelection
+//   ruler with per-pen readout        … Ruler / RulerControl
+//   stats table                       … CalculateStatistic
+//   CSV export                        … Export()
+//   binary lanes, limit lines, event markers … pen semantics from tag metadata
 
 import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
 
@@ -34,56 +31,46 @@ interface TrendSeries {
   readonly kind: 'analog' | 'binary' | 'power'
   readonly step?: boolean
   readonly limits?: { low?: number; high?: number; highHigh?: number }
+  readonly stats?: Record<string, number>
   readonly points: ReadonlyArray<readonly [number, number]>
 }
-
 interface TrendEvent { readonly t: number; readonly tag: string; readonly level: string; readonly text: string }
-
-interface TrendEnvelope {
-  readonly title?: string
+interface TrendData {
   readonly from: number
   readonly to: number
   readonly series: ReadonlyArray<TrendSeries>
   readonly events?: ReadonlyArray<TrendEvent>
+}
+interface TimeCfg { window?: string; from?: string; to?: string; points?: number }
+interface TagInfo { readonly tag: string; readonly label: string; readonly unit: string; readonly kind: string }
+
+// Provider: resolves (pens, time) → data. 'archive' hits the API; 'manual'
+// slices data embedded in a legacy fence.
+type Provider = (pens: ReadonlyArray<string>, time: TimeCfg) => Promise<TrendData | { error: string }>
+
+interface CtlState {
+  pens: string[]
+  readonly hidden: Set<string>
+  time: TimeCfg
+  rulerLocked: boolean
+  rulerT: number | null
 }
 
 const PALETTE = ['#2563eb', '#f59e0b', '#059669', '#8b5cf6', '#0891b2', '#d946ef', '#84cc16', '#f97316']
 const EVENT_COLOR: Record<string, string> = {
   HIHI: '#dc2626', HIGH: '#ea580c', LOW: '#0284c7', ROC: '#9333ea', STATE: '#6b7280',
 }
-const WINDOW_CHOICES: ReadonlyArray<readonly [label: string, seconds: number]> = [
-  ['15m', 900], ['1h', 3600], ['4h', 14400], ['8h', 28800], ['24h', 86400], ['1 week', 604800],
+const WINDOW_CHOICES: ReadonlyArray<readonly [string, string]> = [
+  ['15m', '15m'], ['1h', '1h'], ['4h', '4h'], ['8h', '8h'], ['24h', '24h'], ['1 week', '1w'],
 ]
-
-// Time-axis modes: relative window ("Last 4h"), absolute start–end range,
-// or the last N data points — all navigate within the data embedded in the
-// fence (the tool controls what range was queried in the first place).
-interface TrendState {
-  readonly hidden: Set<string>
-  mode: 'last' | 'range' | 'points'
-  windowS: number | null
-  rFrom: number | null
-  rTo: number | null
-  nPts: number
-}
-
-const epochToLocalInput = (ts: number): string => {
-  const d = new Date(ts * 1000)
-  const p = (n: number): string => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
-}
-const localInputToEpoch = (v: string): number | null => {
-  const ms = Date.parse(v)
-  return Number.isNaN(ms) ? null : Math.floor(ms / 1000)
-}
+const CTL_STYLE = 'font-size:12px;padding:1px 4px;border:1px solid rgba(128,128,128,.4);border-radius:4px;background:transparent;color:inherit'
 
 const SVGNS = 'http://www.w3.org/2000/svg'
-const el = <K extends string>(tag: K, attrs: Record<string, string | number> = {}): SVGElement => {
+const el = (tag: string, attrs: Record<string, string | number> = {}): SVGElement => {
   const node = document.createElementNS(SVGNS, tag)
   for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v))
   return node
 }
-
 const hhmm = (ts: number): string => {
   const d = new Date(ts * 1000)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -91,6 +78,11 @@ const hhmm = (ts: number): string => {
 const dayHhmm = (ts: number): string => {
   const d = new Date(ts * 1000)
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${hhmm(ts)}`
+}
+const epochToLocalInput = (ts: number): string => {
+  const d = new Date(ts * 1000)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 const niceTicks = (min: number, max: number, count: number): number[] => {
@@ -105,17 +97,6 @@ const niceTicks = (min: number, max: number, count: number): number[] => {
   return out
 }
 
-const parseEnvelope = (source: string): TrendEnvelope | null => {
-  try {
-    const raw = JSON.parse(source) as TrendEnvelope
-    if (!raw || !Array.isArray(raw.series)) return null
-    for (const s of raw.series) if (!Array.isArray(s.points)) return null
-    return raw
-  } catch { return null }
-}
-
-// Trapezoidal MWh over visible (already-downsampled) points — approximate,
-// labeled with ≈ in the chip.
 const energyMWh = (pts: ReadonlyArray<readonly [number, number]>): number => {
   let mwS = 0
   for (let i = 1; i < pts.length; i++) mwS += (pts[i]![1] + pts[i - 1]![1]) / 2 * (pts[i]![0] - pts[i - 1]![0])
@@ -136,115 +117,173 @@ const buildPath = (
   return d
 }
 
-const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): void => {
-  wrapper.textContent = ''
-  const colorOf = new Map(env.series.map((s, i) => [s.tag, PALETTE[i % PALETTE.length]!]))
+// --- Providers ---
 
-  // Resolve visible time domain from the active mode.
-  let from = env.from
-  let to = env.to
-  if (state.mode === 'last' && state.windowS !== null) {
-    from = Math.max(env.from, env.to - state.windowS)
-  } else if (state.mode === 'range') {
-    from = Math.max(env.from, Math.min(state.rFrom ?? env.from, env.to - 60))
-    to = Math.min(env.to, Math.max(state.rTo ?? env.to, from + 60))
-  } else if (state.mode === 'points') {
-    // Densest visible series defines the span covering its last N points.
-    const candidates = env.series.filter(s => !state.hidden.has(s.tag))
-    const densest = [...candidates].sort((a, b) => b.points.length - a.points.length)[0]
-    if (densest) {
-      const slice = densest.points.slice(-Math.max(2, state.nPts))
-      if (slice.length) from = Math.max(env.from, slice[0]![0])
-    }
+const archiveProvider: Provider = async (pens, time) => {
+  const qs = new URLSearchParams({ tags: pens.join(',') })
+  if (time.from) qs.set('from', time.from)
+  if (time.to) qs.set('to', time.to)
+  if (!time.from && !time.to && time.points) qs.set('points', String(time.points))
+  else if (!time.from && !time.to && time.window) qs.set('window', time.window)
+  try {
+    const res = await fetch(`/api/trends/data?${qs}`)
+    if (!res.ok) return { error: `Trend data request failed (${res.status}): ${(await res.text()).slice(0, 200)}` }
+    return await res.json() as TrendData
+  } catch (err) {
+    return { error: `Trend data request failed: ${err instanceof Error ? err.message : String(err)}` }
   }
-  const inWindow = (s: TrendSeries): Array<readonly [number, number]> => {
+}
+
+const makeEmbeddedProvider = (envData: TrendData): Provider => async (pens, time) => {
+  const slice = (s: TrendSeries, from: number, to: number): TrendSeries => {
     const pts = s.points.filter(p => p[0] >= from && p[0] <= to)
-    // Keep the last point before the window edge so lines/lanes enter from the left.
     const before = s.points.filter(p => p[0] < from)
     if (before.length > 0) pts.unshift([from, before[before.length - 1]![1]])
-    return pts
+    return { ...s, points: pts }
   }
+  let from = envData.from, to = envData.to
+  if (time.window) {
+    const secs: Record<string, number> = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '8h': 28800, '24h': 86400, '48h': 172800, '1w': 604800 }
+    from = Math.max(envData.from, envData.to - (secs[time.window] ?? Infinity))
+  } else if (time.from || time.to) {
+    const p = (v?: string): number | null => { const ms = v ? Date.parse(v) : NaN; return Number.isNaN(ms) ? null : ms / 1000 }
+    from = Math.max(envData.from, p(time.from) ?? envData.from)
+    to = Math.min(envData.to, p(time.to) ?? envData.to)
+  } else if (time.points) {
+    const densest = [...envData.series].sort((a, b) => b.points.length - a.points.length)[0]
+    const sl = densest?.points.slice(-Math.max(2, time.points))
+    if (sl?.length) from = Math.max(envData.from, sl[0]![0])
+  }
+  return {
+    from, to,
+    series: envData.series.filter(s => pens.includes(s.tag)).map(s => slice(s, from, to)),
+    events: (envData.events ?? []).filter(e => e.t >= from && e.t <= to),
+  }
+}
 
-  // --- Toolbar: title, window select, series chips ---
+// --- Tag catalog (for the add-pen picker; fetched once, shared) ---
+let catalogCache: TagInfo[] | null = null
+const loadCatalog = async (): Promise<TagInfo[]> => {
+  if (catalogCache) return catalogCache
+  try {
+    const res = await fetch('/api/trends/tags')
+    if (res.ok) catalogCache = await res.json() as TagInfo[]
+  } catch { /* catalog unavailable → add-pen picker simply not shown */ }
+  return catalogCache ?? []
+}
+
+// --- Control ---
+
+const renderControl = (
+  wrapper: HTMLElement, title: string, provider: Provider,
+  state: CtlState, live: boolean,
+): void => {
+  const refresh = (): void => renderControl(wrapper, title, provider, state, live)
+
+  wrapper.textContent = ''
+  const loading = document.createElement('div')
+  loading.style.cssText = 'padding:10px;font-size:12px;opacity:.7'
+  loading.textContent = 'Loading trend data…'
+  wrapper.appendChild(loading)
+
+  void (async () => {
+    const [data, catalog] = await Promise.all([
+      provider(state.pens, state.time),
+      live ? loadCatalog() : Promise.resolve([] as TagInfo[]),
+    ])
+    wrapper.textContent = ''
+
+    if ('error' in data) {
+      const err = document.createElement('div')
+      err.style.cssText = 'padding:10px;font-size:12px;color:#dc2626'
+      err.textContent = `⚠ ${data.error}`
+      const retry = document.createElement('button')
+      retry.textContent = 'Retry'
+      retry.style.cssText = CTL_STYLE + ';margin-left:8px;cursor:pointer'
+      retry.onclick = refresh
+      err.appendChild(retry)
+      wrapper.appendChild(err)
+      return
+    }
+    draw(wrapper, title, data, catalog, state, live, refresh)
+  })()
+}
+
+const draw = (
+  wrapper: HTMLElement, title: string, data: TrendData, catalog: TagInfo[],
+  state: CtlState, live: boolean, refresh: () => void,
+): void => {
+  const colorOf = new Map(state.pens.map((tag, i) => [tag, PALETTE[i % PALETTE.length]!]))
+  const from = data.from, to = data.to
+  const redraw = (): void => draw(wrapper, title, data, catalog, state, live, refresh)
+
+  wrapper.textContent = ''
+
+  // --- Toolbar ---
   const bar = document.createElement('div')
   bar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;font-size:12px'
-  const title = document.createElement('span')
-  title.textContent = env.title ?? 'Trend'
-  title.style.cssText = 'font-weight:700;margin-right:auto'
-  bar.appendChild(title)
+  const titleEl = document.createElement('span')
+  titleEl.textContent = title
+  titleEl.style.cssText = 'font-weight:700;margin-right:auto'
+  bar.appendChild(titleEl)
 
-  const ctlStyle = 'font-size:12px;padding:1px 4px;border:1px solid rgba(128,128,128,.4);border-radius:4px;background:transparent;color:inherit'
-  const total = env.to - env.from
-
-  // Mode picker: Last … / Start–end / N points
+  // Time-axis mode picker
+  const mode: 'last' | 'range' | 'points' = state.time.from || state.time.to ? 'range' : state.time.points ? 'points' : 'last'
   const modeSel = document.createElement('select')
-  modeSel.style.cssText = ctlStyle
+  modeSel.style.cssText = CTL_STYLE
   for (const [value, label] of [['last', 'Last…'], ['range', 'Start–end'], ['points', 'N points']] as const) {
     const o = document.createElement('option')
     o.value = value
     o.textContent = label
-    if (state.mode === value) o.selected = true
+    if (mode === value) o.selected = true
     modeSel.appendChild(o)
   }
   modeSel.onchange = () => {
-    state.mode = modeSel.value as TrendState['mode']
-    render(wrapper, env, state)
+    if (modeSel.value === 'last') state.time = { window: '8h' }
+    else if (modeSel.value === 'points') state.time = { points: 60 }
+    else state.time = { from: epochToLocalInput(from), to: epochToLocalInput(to) }
+    refresh()
   }
   bar.appendChild(modeSel)
 
-  if (state.mode === 'last') {
+  if (mode === 'last') {
     const sel = document.createElement('select')
-    sel.style.cssText = ctlStyle
-    for (const [label, secs] of WINDOW_CHOICES) {
-      if (secs >= total) continue
+    sel.style.cssText = CTL_STYLE
+    for (const [label, key] of WINDOW_CHOICES) {
       const o = document.createElement('option')
-      o.value = String(secs)
+      o.value = key
       o.textContent = `Last ${label}`
-      if (state.windowS === secs) o.selected = true
+      if (state.time.window === key) o.selected = true
       sel.appendChild(o)
     }
-    const oAll = document.createElement('option')
-    oAll.value = 'all'
-    oAll.textContent = `All (${(total / 3600).toFixed(0)}h)`
-    if (state.windowS === null) oAll.selected = true
-    sel.appendChild(oAll)
-    sel.onchange = () => {
-      state.windowS = sel.value === 'all' ? null : Number(sel.value)
-      render(wrapper, env, state)
-    }
+    sel.onchange = () => { state.time = { window: sel.value }; refresh() }
     bar.appendChild(sel)
-  } else if (state.mode === 'range') {
-    const mk = (initial: number, onSet: (ts: number) => void): HTMLInputElement => {
+  } else if (mode === 'range') {
+    const mk = (initial: string, onSet: (v: string) => void): HTMLInputElement => {
       const inp = document.createElement('input')
       inp.type = 'datetime-local'
-      inp.style.cssText = ctlStyle
-      inp.value = epochToLocalInput(initial)
-      inp.min = epochToLocalInput(env.from)
-      inp.max = epochToLocalInput(env.to)
-      inp.onchange = () => {
-        const ts = localInputToEpoch(inp.value)
-        if (ts !== null) { onSet(ts); render(wrapper, env, state) }
-      }
+      inp.style.cssText = CTL_STYLE
+      inp.value = initial
+      inp.onchange = () => { if (inp.value) { onSet(inp.value); refresh() } }
       return inp
     }
-    bar.appendChild(mk(state.rFrom ?? env.from, ts => { state.rFrom = ts }))
+    bar.appendChild(mk(state.time.from ?? epochToLocalInput(from), v => { state.time = { ...state.time, from: v, window: undefined, points: undefined } }))
     const dash = document.createElement('span')
     dash.textContent = '–'
     bar.appendChild(dash)
-    bar.appendChild(mk(state.rTo ?? env.to, ts => { state.rTo = ts }))
+    bar.appendChild(mk(state.time.to ?? epochToLocalInput(to), v => { state.time = { ...state.time, to: v, window: undefined, points: undefined } }))
   } else {
-    const maxPts = Math.max(...env.series.map(s => s.points.length), 2)
     const inp = document.createElement('input')
     inp.type = 'number'
-    inp.min = '2'
-    inp.max = String(maxPts)
-    inp.value = String(Math.min(state.nPts, maxPts))
-    inp.style.cssText = ctlStyle + ';width:64px'
-    inp.title = `Show the last N data points (2–${maxPts} embedded in this display)`
+    inp.min = '10'
+    inp.max = '240'
+    inp.value = String(state.time.points ?? 60)
+    inp.style.cssText = CTL_STYLE + ';width:64px'
+    inp.title = 'Show the last N samples (10–240)'
     inp.onchange = () => {
-      const n = Math.max(2, Math.min(maxPts, Math.round(Number(inp.value) || 2)))
-      state.nPts = n
-      render(wrapper, env, state)
+      const n = Math.max(10, Math.min(240, Math.round(Number(inp.value) || 60)))
+      state.time = { points: n }
+      refresh()
     }
     bar.appendChild(inp)
     const lbl = document.createElement('span')
@@ -252,15 +291,59 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
     lbl.style.opacity = '0.7'
     bar.appendChild(lbl)
   }
+
+  // Add-pen picker (live/archive mode only)
+  if (live && catalog.length > 0) {
+    const addable = catalog.filter(t => !state.pens.includes(t.tag))
+    if (addable.length > 0) {
+      const add = document.createElement('select')
+      add.style.cssText = CTL_STYLE
+      const o0 = document.createElement('option')
+      o0.value = ''
+      o0.textContent = '＋ add pen…'
+      add.appendChild(o0)
+      for (const t of addable) {
+        const o = document.createElement('option')
+        o.value = t.tag
+        o.textContent = `${t.tag}${t.unit ? ` (${t.unit})` : ''}`
+        o.title = t.label
+        add.appendChild(o)
+      }
+      add.onchange = () => {
+        if (add.value) { state.pens = [...state.pens, add.value]; refresh() }
+      }
+      bar.appendChild(add)
+    }
+  }
+
+  // Export CSV of what is currently displayed
+  const exp = document.createElement('button')
+  exp.textContent = '⬇ CSV'
+  exp.title = 'Export the displayed data as CSV'
+  exp.style.cssText = CTL_STYLE + ';cursor:pointer'
+  exp.onclick = () => {
+    const rows = ['ts_iso,tag,value']
+    for (const s of data.series) {
+      if (state.hidden.has(s.tag)) continue
+      for (const p of s.points) rows.push(`${new Date(p[0] * 1000).toISOString()},${s.tag},${p[1]}`)
+    }
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'trend-export.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+  bar.appendChild(exp)
   wrapper.appendChild(bar)
 
   const chips = document.createElement('div')
   chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:0 8px 6px;font-size:11px'
   wrapper.appendChild(chips)
 
-  // --- Layout ---
+  // --- Plot layout ---
   const width = Math.max(360, wrapper.clientWidth || 640)
-  const visible = env.series.filter(s => !state.hidden.has(s.tag))
+  const visible = data.series.filter(s => !state.hidden.has(s.tag))
   const analog = visible.filter(s => s.kind !== 'binary')
   const binary = visible.filter(s => s.kind === 'binary')
   const laneH = 18
@@ -274,14 +357,13 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
 
   const x = (t: number): number => ml + (t - from) / Math.max(1, to - from) * (width - ml - mr)
 
-  // --- Axis groups: unit → series ---
   const unitOrder: string[] = []
   for (const s of analog) if (!unitOrder.includes(s.unit)) unitOrder.push(s.unit)
   const axisUnits = unitOrder.slice(0, 2)
   const groupDomain = (unit: string): { min: number; max: number } => {
     let min = Infinity, max = -Infinity
     for (const s of analog.filter(sr => sr.unit === unit)) {
-      for (const p of inWindow(s)) { min = Math.min(min, p[1]); max = Math.max(max, p[1]) }
+      for (const p of s.points) { min = Math.min(min, p[1]); max = Math.max(max, p[1]) }
       if (s.limits?.high !== undefined) max = Math.max(max, s.limits.high)
       if (s.limits?.highHigh !== undefined) max = Math.max(max, s.limits.highHigh)
       if (s.limits?.low !== undefined) min = Math.min(min, s.limits.low)
@@ -296,21 +378,18 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
       const d = domains.get(s.unit)!
       return v => mt + plotH - (v - d.min) / (d.max - d.min) * plotH
     }
-    // Normalized series (3rd+ unit): min-max of its own visible points
-    const pts = inWindow(s)
     let mn = Infinity, mx = -Infinity
-    for (const p of pts) { mn = Math.min(mn, p[1]); mx = Math.max(mx, p[1]) }
+    for (const p of s.points) { mn = Math.min(mn, p[1]); mx = Math.max(mx, p[1]) }
     if (!isFinite(mn) || mn === mx) { mn = 0; mx = 1 }
     return v => mt + plotH - (v - mn) / (mx - mn) * plotH
   }
 
-  // --- Grid + left/right axis labels ---
+  // Grid + axes
   const leftDomain = axisUnits[0] ? domains.get(axisUnits[0])! : { min: 0, max: 1 }
   for (const tick of niceTicks(leftDomain.min, leftDomain.max, 5)) {
     const y = mt + plotH - (tick - leftDomain.min) / (leftDomain.max - leftDomain.min) * plotH
     if (y < mt - 1 || y > mt + plotH + 1) continue
-    const line = el('line', { x1: ml, x2: width - mr, y1: y, y2: y, stroke: 'currentColor', 'stroke-opacity': 0.12 })
-    svg.appendChild(line)
+    svg.appendChild(el('line', { x1: ml, x2: width - mr, y1: y, y2: y, stroke: 'currentColor', 'stroke-opacity': 0.12 }))
     const label = el('text', { x: ml - 6, y: y + 3.5, 'text-anchor': 'end', 'font-size': 10, fill: 'currentColor', 'fill-opacity': 0.65 })
     label.textContent = String(tick)
     svg.appendChild(label)
@@ -334,7 +413,6 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
     svg.appendChild(uLabel)
   }
 
-  // --- X axis ticks ---
   const fmt = to - from > 26 * 3600 ? dayHhmm : hhmm
   const tickCount = 6
   for (let i = 0; i <= tickCount; i++) {
@@ -347,7 +425,7 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
   }
   svg.appendChild(el('line', { x1: ml, x2: width - mr, y1: mt + plotH, y2: mt + plotH, stroke: 'currentColor', 'stroke-opacity': 0.4 }))
 
-  // --- Limit lines (only for series on a real axis) ---
+  // Limit lines
   for (const s of analog) {
     if (!s.limits || !axisUnits.includes(s.unit)) continue
     const y = yFor(s)
@@ -364,45 +442,41 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
     if (s.limits.low !== undefined) drawLimit(s.limits.low, `LOW ${s.limits.low}`, '#0284c7')
   }
 
-  // --- Analog traces ---
+  // Analog traces
   for (const s of analog) {
-    const pts = inWindow(s)
-    if (pts.length === 0) continue
-    const path = el('path', {
-      d: buildPath(pts, x, yFor(s), !!s.step),
-      fill: 'none', stroke: colorOf.get(s.tag)!, 'stroke-width': 1.6, 'stroke-linejoin': 'round',
-    })
-    svg.appendChild(path)
+    if (s.points.length === 0) continue
+    svg.appendChild(el('path', {
+      d: buildPath(s.points, x, yFor(s), !!s.step),
+      fill: 'none', stroke: colorOf.get(s.tag) ?? '#888', 'stroke-width': 1.6, 'stroke-linejoin': 'round',
+    }))
   }
 
-  // --- Binary lanes (stepped, below the plot) ---
+  // Binary lanes
   binary.forEach((s, i) => {
     const laneTop = mt + plotH + 4 + i * (laneH + 4)
-    const pts = inWindow(s)
+    const pts = s.points
     const y = (v: number): number => laneTop + (v >= 0.5 ? 2 : laneH - 2)
     svg.appendChild(el('rect', { x: ml, y: laneTop, width: width - ml - mr, height: laneH, fill: 'currentColor', 'fill-opacity': 0.05 }))
-    // Shade ON intervals
     for (let j = 0; j < pts.length; j++) {
       if (pts[j]![1] < 0.5) continue
       const x0 = x(pts[j]![0])
       const x1 = x(j + 1 < pts.length ? pts[j + 1]![0] : to)
-      svg.appendChild(el('rect', { x: x0, y: laneTop, width: Math.max(0.5, x1 - x0), height: laneH, fill: colorOf.get(s.tag)!, 'fill-opacity': 0.25 }))
+      svg.appendChild(el('rect', { x: x0, y: laneTop, width: Math.max(0.5, x1 - x0), height: laneH, fill: colorOf.get(s.tag) ?? '#888', 'fill-opacity': 0.25 }))
     }
     if (pts.length > 0) {
-      svg.appendChild(el('path', { d: buildPath(pts, x, y, true), fill: 'none', stroke: colorOf.get(s.tag)!, 'stroke-width': 1.4 }))
+      svg.appendChild(el('path', { d: buildPath(pts, x, y, true), fill: 'none', stroke: colorOf.get(s.tag) ?? '#888', 'stroke-width': 1.4 }))
     }
     const label = el('text', { x: ml - 6, y: laneTop + laneH / 2 + 3, 'text-anchor': 'end', 'font-size': 9, fill: 'currentColor', 'fill-opacity': 0.65 })
     label.textContent = s.tag
     svg.appendChild(label)
   })
 
-  // --- Event markers ---
-  const events = (env.events ?? []).filter(e => e.t >= from && e.t <= to && !state.hidden.has(e.tag))
+  // Event markers
+  const events = (data.events ?? []).filter(e => !state.hidden.has(e.tag))
   for (const e of events) {
     const px = x(e.t)
     const color = EVENT_COLOR[e.level] ?? '#6b7280'
-    const line = el('line', { x1: px, x2: px, y1: mt, y2: mt + plotH, stroke: color, 'stroke-opacity': 0.55, 'stroke-dasharray': '2 3' })
-    svg.appendChild(line)
+    svg.appendChild(el('line', { x1: px, x2: px, y1: mt, y2: mt + plotH, stroke: color, 'stroke-opacity': 0.55, 'stroke-dasharray': '2 3' }))
     const marker = el('path', { d: `M${px - 4},${mt} L${px + 4},${mt} L${px},${mt + 7} Z`, fill: color })
     const tip = el('title')
     tip.textContent = `[${e.level}] ${e.text}`
@@ -410,35 +484,96 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
     svg.appendChild(marker)
   }
 
-  wrapper.appendChild(svg)
+  // --- Ruler: vertical cursor + per-pen readout; click to lock ---
+  const rulerLine = el('line', { x1: -10, x2: -10, y1: mt, y2: mt + plotH + lanesH, stroke: 'currentColor', 'stroke-opacity': 0.6, 'stroke-width': 1 })
+  svg.appendChild(rulerLine)
+  const readout = document.createElement('div')
+  readout.style.cssText = 'position:absolute;display:none;pointer-events:none;background:rgba(20,20,25,.92);color:#eee;font-size:10px;line-height:1.5;padding:4px 7px;border-radius:4px;z-index:10;white-space:nowrap'
+  const nearestValue = (s: TrendSeries, t: number): number | null => {
+    if (s.points.length === 0) return null
+    let best: readonly [number, number] | null = null
+    for (const p of s.points) {
+      if (s.step || s.kind === 'binary') { if (p[0] <= t) best = p; else break }
+      else if (best === null || Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p
+    }
+    return best ? best[1] : null
+  }
+  const positionRuler = (t: number, clientX: number, clientY: number): void => {
+    const px = x(t)
+    rulerLine.setAttribute('x1', String(px))
+    rulerLine.setAttribute('x2', String(px))
+    const lines = [`<b>${fmt(t)}</b>`]
+    for (const s of visible) {
+      const v = nearestValue(s, t)
+      const color = colorOf.get(s.tag) ?? '#888'
+      lines.push(`<span style="color:${color}">●</span> ${s.tag}: ${v === null ? '–' : `${+v.toFixed(2)}${s.unit}`}`)
+    }
+    readout.innerHTML = lines.join('<br>')
+    readout.style.display = 'block'
+    const rect = wrapper.getBoundingClientRect()
+    const rx = clientX - rect.left + 12
+    readout.style.left = `${Math.min(rx, rect.width - 170)}px`
+    readout.style.top = `${clientY - rect.top + 12}px`
+  }
+  svg.addEventListener('mousemove', (ev) => {
+    if (state.rulerLocked) return
+    const rect = svg.getBoundingClientRect()
+    const sx = (ev.clientX - rect.left) * (width / rect.width)
+    if (sx < ml || sx > width - mr) { rulerLine.setAttribute('x1', '-10'); rulerLine.setAttribute('x2', '-10'); readout.style.display = 'none'; return }
+    const t = from + (sx - ml) / (width - ml - mr) * (to - from)
+    state.rulerT = t
+    positionRuler(t, ev.clientX, ev.clientY)
+  })
+  svg.addEventListener('mouseleave', () => {
+    if (state.rulerLocked) return
+    rulerLine.setAttribute('x1', '-10')
+    rulerLine.setAttribute('x2', '-10')
+    readout.style.display = 'none'
+  })
+  svg.addEventListener('click', (ev) => {
+    state.rulerLocked = !state.rulerLocked
+    if (state.rulerLocked && state.rulerT !== null) positionRuler(state.rulerT, ev.clientX, ev.clientY)
+  })
+  svg.style.cursor = 'crosshair'
 
-  // --- Series chips (click to toggle) ---
-  for (const s of env.series) {
+  wrapper.style.position = 'relative'
+  wrapper.appendChild(svg)
+  wrapper.appendChild(readout)
+
+  // --- Pen chips: click toggles visibility; ✕ removes the pen ---
+  for (const tag of state.pens) {
+    const s = data.series.find(sr => sr.tag === tag)
     const chip = document.createElement('button')
-    const off = state.hidden.has(s.tag)
-    const normalized = s.kind !== 'binary' && !axisUnits.includes(s.unit)
-    const pts = inWindow(s)
-    const last = pts.length ? pts[pts.length - 1]![1] : null
-    let statText = last !== null ? ` ${last}${s.unit}` : ''
-    if (s.kind === 'power' && pts.length > 1) statText += ` · ≈${Math.round(energyMWh(pts)).toLocaleString()} MWh`
-    chip.textContent = `${off ? '◻' : '◼'} ${s.tag}${statText}${normalized ? ' (norm)' : ''}`
-    chip.title = `${s.label ?? s.tag} — click to ${off ? 'show' : 'hide'}`
-    chip.style.cssText = `border:1px solid rgba(128,128,128,.35);border-radius:10px;padding:1px 8px;background:transparent;cursor:pointer;font-size:11px;color:${off ? 'inherit' : colorOf.get(s.tag)};opacity:${off ? 0.55 : 1}`
+    const off = state.hidden.has(tag)
+    const last = s && s.points.length ? s.points[s.points.length - 1]![1] : null
+    let statText = s && last !== null ? ` ${+last.toFixed(2)}${s.unit}` : ''
+    if (s?.kind === 'power' && typeof s.stats?.energyMWh === 'number') statText += ` · ≈${Math.round(s.stats.energyMWh).toLocaleString()} MWh`
+    chip.textContent = `${off ? '◻' : '◼'} ${tag}${statText} `
+    chip.title = `${s?.label ?? tag} — click to ${off ? 'show' : 'hide'}`
+    chip.style.cssText = `border:1px solid rgba(128,128,128,.35);border-radius:10px;padding:1px 8px;background:transparent;cursor:pointer;font-size:11px;color:${off ? 'inherit' : colorOf.get(tag)};opacity:${off ? 0.55 : 1}`
+    const removeBtn = document.createElement('span')
+    removeBtn.textContent = '✕'
+    removeBtn.title = `Remove ${tag} from the display`
+    removeBtn.style.cssText = 'margin-left:4px;opacity:.5'
+    removeBtn.onclick = (ev) => {
+      ev.stopPropagation()
+      state.pens = state.pens.filter(p => p !== tag)
+      state.hidden.delete(tag)
+      refresh()
+    }
+    chip.appendChild(removeBtn)
     chip.onclick = () => {
-      if (state.hidden.has(s.tag)) state.hidden.delete(s.tag)
-      else state.hidden.add(s.tag)
-      render(wrapper, env, state)
+      if (state.hidden.has(tag)) state.hidden.delete(tag)
+      else state.hidden.add(tag)
+      redraw()
     }
     chips.appendChild(chip)
   }
 
-  // --- Statistics table (live: computed over the VISIBLE window, so it
-  // tracks the on-screen time-axis controls) ---
-  const visibleSeries = env.series.filter(s => !state.hidden.has(s.tag))
-  if (visibleSeries.length > 0) {
+  // --- Statistics table (server stats are exact for the fetched window) ---
+  if (visible.length > 0) {
     const table = document.createElement('table')
     table.style.cssText = 'width:calc(100% - 16px);margin:2px 8px 6px;border-collapse:collapse;font-size:11px'
-    const thead = document.createElement('thead')
     const hrow = document.createElement('tr')
     for (const h of ['Tag', 'Avg', 'Min', 'Max', 'Last', 'Info']) {
       const th = document.createElement('th')
@@ -446,43 +581,39 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
       th.style.cssText = `text-align:${h === 'Tag' || h === 'Info' ? 'left' : 'right'};padding:2px 6px;border-bottom:1px solid rgba(128,128,128,.35);opacity:.7;font-weight:600`
       hrow.appendChild(th)
     }
+    const thead = document.createElement('thead')
     thead.appendChild(hrow)
     table.appendChild(thead)
     const tbody = document.createElement('tbody')
 
-    for (const s of visibleSeries) {
-      const pts = inWindow(s)
-      if (pts.length === 0) continue
-      const vals = pts.map(p => p[1])
-      const min = Math.min(...vals), max = Math.max(...vals)
-      const avg = vals.reduce((a, v) => a + v, 0) / vals.length
-      const last = vals[vals.length - 1]!
-      const tMax = pts[vals.indexOf(max)]![0]
-      const tMin = pts[vals.indexOf(min)]![0]
+    for (const s of visible) {
+      if (s.points.length === 0) continue
+      const st = s.stats ?? {}
+      const vals = s.points.map(p => p[1])
+      const min = st.min ?? Math.min(...vals)
+      const max = st.max ?? Math.max(...vals)
+      const avg = st.avg ?? vals.reduce((a, v) => a + v, 0) / vals.length
+      const last = st.last ?? vals[vals.length - 1]!
       const u = s.unit
 
-      // Binary duty cycle must be TIME-weighted: points are change-point
-      // compressed, so a plain mean of sample values is wrong.
       let dutyPct = 0
       if (s.kind === 'binary') {
         let onS = 0
-        for (let i = 1; i < pts.length; i++) {
-          if (pts[i - 1]![1] >= 0.5) onS += pts[i]![0] - pts[i - 1]![0]
+        for (let i = 1; i < s.points.length; i++) {
+          if (s.points[i - 1]![1] >= 0.5) onS += s.points[i]![0] - s.points[i - 1]![0]
         }
-        dutyPct = Math.round(onS / Math.max(1, pts[pts.length - 1]![0] - pts[0]![0]) * 100)
+        dutyPct = Math.round(onS / Math.max(1, s.points[s.points.length - 1]![0] - s.points[0]![0]) * 100)
       }
 
       let info: string
       if (s.kind === 'power') {
-        info = `≈ ${Math.round(energyMWh(pts)).toLocaleString()} MWh in window`
+        const e = typeof st.energyMWh === 'number' ? st.energyMWh : energyMWh(s.points)
+        info = `≈ ${Math.round(e).toLocaleString()} MWh in window`
       } else if (s.kind === 'binary') {
-        let stops = 0
-        for (let i = 1; i < pts.length; i++) {
-          if (pts[i]![1] < 0.5 && pts[i - 1]![1] >= 0.5) stops++
-        }
+        const stops = (data.events ?? []).filter(ev => ev.tag === s.tag && ev.level === 'STATE' && ev.text.includes('STOPPED')).length
         info = `${stops} stop${stops === 1 ? '' : 's'} in window`
       } else if (s.limits && (s.limits.high !== undefined || s.limits.low !== undefined)) {
-        const n = (env.events ?? []).filter(e => e.tag === s.tag && e.t >= from && e.t <= to && e.level !== 'STATE').length
+        const n = (data.events ?? []).filter(ev => ev.tag === s.tag && ev.level !== 'STATE').length
         info = n > 0 ? `⚠ ${n} alarm event${n === 1 ? '' : 's'} in window` : 'no limit violations'
       } else {
         const std = Math.sqrt(vals.reduce((a, v) => a + (v - avg) ** 2, 0) / vals.length)
@@ -491,18 +622,17 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
 
       const row = document.createElement('tr')
       const fmtV = (v: number): string => s.kind === 'binary' ? String(Math.round(v * 100) / 100) : `${(+v.toFixed(2)).toLocaleString()}${u}`
-      const cells: Array<{ text: string; align: string; title?: string; color?: string }> = [
-        { text: `● ${s.tag}`, align: 'left', color: colorOf.get(s.tag)!, title: s.label ?? s.tag },
+      const cells: Array<{ text: string; align: string; color?: string }> = [
+        { text: `● ${s.tag}`, align: 'left', color: colorOf.get(s.tag) },
         { text: s.kind === 'binary' ? `${dutyPct}% on` : fmtV(avg), align: 'right' },
-        { text: fmtV(min), align: 'right', title: `at ${fmt(tMin)}` },
-        { text: fmtV(max), align: 'right', title: `at ${fmt(tMax)}` },
+        { text: fmtV(min), align: 'right' },
+        { text: fmtV(max), align: 'right' },
         { text: fmtV(last), align: 'right' },
         { text: info, align: 'left' },
       ]
       for (const c of cells) {
         const td = document.createElement('td')
         td.textContent = c.text
-        if (c.title) td.title = c.title
         td.style.cssText = `text-align:${c.align};padding:2px 6px;border-bottom:1px solid rgba(128,128,128,.15);white-space:nowrap${c.color ? `;color:${c.color};font-weight:600` : ''}`
         row.appendChild(td)
       }
@@ -512,7 +642,7 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
     wrapper.appendChild(table)
   }
 
-  // --- Event list (compact, below the chart) ---
+  // --- Event list ---
   if (events.length > 0) {
     const list = document.createElement('div')
     list.style.cssText = 'padding:4px 8px 8px;font-size:11px;line-height:1.5'
@@ -535,16 +665,36 @@ const render = (wrapper: HTMLElement, env: TrendEnvelope, state: TrendState): vo
   }
 }
 
+// --- Fence entry point ---
+
+interface LiveConfig { title?: string; trends: Array<{ tag: string }>; time?: TimeCfg }
+
+const parseFence = (source: string): { kind: 'live'; cfg: LiveConfig } | { kind: 'embedded'; data: TrendData; title: string } | null => {
+  try {
+    const raw = JSON.parse(source) as Record<string, unknown>
+    if (Array.isArray(raw.trends)) {
+      const trends = (raw.trends as Array<{ tag?: unknown }>).filter(t => typeof t?.tag === 'string') as Array<{ tag: string }>
+      if (trends.length === 0) return null
+      return { kind: 'live', cfg: { title: typeof raw.title === 'string' ? raw.title : undefined, trends, time: (raw.time ?? {}) as TimeCfg } }
+    }
+    if (Array.isArray(raw.series)) {
+      for (const s of raw.series as Array<{ points?: unknown }>) if (!Array.isArray(s.points)) return null
+      return { kind: 'embedded', data: raw as unknown as TrendData, title: typeof raw.title === 'string' ? raw.title : 'Trend' }
+    }
+    return null
+  } catch { return null }
+}
+
 export const renderTrendBlocks = async (container: HTMLElement): Promise<void> => {
   const blocks = container.querySelectorAll('code.language-trend')
   if (blocks.length === 0) return
   for (const block of blocks) {
     const pre = block.parentElement
     if (!pre) continue
-    const env = parseEnvelope(block.textContent ?? '')
-    if (!env) {
-      // Loud failure: keep the raw fence visible and flag it, mirroring the
-      // map fallback philosophy — an operator should never silently lose data.
+    const parsed = parseFence(block.textContent ?? '')
+    if (!parsed) {
+      // Loud failure: keep the raw fence visible and flag it — an operator
+      // should never silently lose a display.
       const warn = document.createElement('div')
       warn.className = 'text-warning text-xs'
       warn.textContent = '⚠ trend block failed to parse — showing raw source'
@@ -554,7 +704,15 @@ export const renderTrendBlocks = async (container: HTMLElement): Promise<void> =
     const wrapper = document.createElement('div')
     wrapper.className = 'my-2 rounded border border-border overflow-hidden'
     pre.replaceWith(wrapper)
-    render(wrapper, env, { hidden: new Set(), mode: 'last', windowS: null, rFrom: null, rTo: null, nPts: 60 })
+    if (parsed.kind === 'live') {
+      const pens = parsed.cfg.trends.map(t => t.tag)
+      renderControl(wrapper, parsed.cfg.title ?? `Plant trend — ${pens.join(', ')}`, archiveProvider,
+        { pens, hidden: new Set(), time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null }, true)
+    } else {
+      const pens = parsed.data.series.map(s => s.tag)
+      renderControl(wrapper, parsed.title, makeEmbeddedProvider(parsed.data),
+        { pens, hidden: new Set(), time: {}, rulerLocked: false, rulerT: null }, false)
+    }
   }
 }
 

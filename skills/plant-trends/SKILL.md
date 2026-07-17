@@ -27,9 +27,11 @@ Procedure:
    - Relative window → { window }: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w
      ("past week" → 1w). Default 8h if the operator didn't say.
 2. Call `trend_query` with { tags } plus the chosen time-axis fields.
-3. Post the returned `report` field EXACTLY as returned (it is a ```trend
-   fence — the display has its own on-screen series toggles and time-window
-   selector; alarms and anomalies are marked on it automatically).
+3. Post the returned `report` field EXACTLY as returned. It is a SMALL
+   ```trend config fence — the display fetches its own data from the server
+   and the operator can then add/remove pens, change the time window, move a
+   ruler cursor, and export CSV directly on the display; alarms and anomalies
+   are marked on it automatically. Never write data points into the fence.
 4. Then interpret the display in 2–4 sentences using `analysis`:
    - `analysis.overall` is NORMAL / ATTENTION / ALARM — state it plainly
      (e.g. "operating within parameters" / "needs attention" / "alarm state").

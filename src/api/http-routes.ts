@@ -35,6 +35,7 @@ import { geodataRoutes } from './routes/geodata.ts'
 import { documentRoutes } from './routes/documents.ts'
 import { diagnosticRoutes } from './routes/diagnostics.ts'
 import { leitbildMirrorRoutes } from './routes/leitbild-mirror.ts'
+import { trendRoutes } from './routes/trends.ts'
 import type { RouteContext } from './routes/types.ts'
 
 // Route helpers live in ./routes/helpers.ts to keep http-routes.ts cycle-free.
@@ -46,6 +47,7 @@ const allRoutes = [
   // Tool routes come before houseRoutes so /api/tools/:name + /api/tools/rescan
   // are matched before any catch-all patterns elsewhere.
   ...toolRoutes,
+  ...trendRoutes,
   ...houseRoutes,
   ...skillRoutes,
   ...ollamaRoutes,
