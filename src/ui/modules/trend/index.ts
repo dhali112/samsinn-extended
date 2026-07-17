@@ -54,6 +54,11 @@ interface CtlState {
   time: TimeCfg
   rulerLocked: boolean
   rulerT: number | null
+  // Cursor tooling: 'ruler' = single line + readout; 'region' = drag to
+  // select a span (two boundary lines + shaded area) with exact stats and
+  // a server-side selection the agent can reference ("the window shown").
+  cursorMode: 'ruler' | 'region'
+  region: { from: number; to: number } | null
 }
 
 const PALETTE = ['#2563eb', '#f59e0b', '#059669', '#8b5cf6', '#0891b2', '#d946ef', '#84cc16', '#f97316']
@@ -316,6 +321,23 @@ const draw = (
     }
   }
 
+  // Cursor tooling toggle: Ruler (one line) vs Region (drag two lines)
+  const cursorSel = document.createElement('select')
+  cursorSel.style.cssText = CTL_STYLE
+  for (const [value, label] of [['ruler', 'Ruler'], ['region', 'Region']] as const) {
+    const o = document.createElement('option')
+    o.value = value
+    o.textContent = label
+    if (state.cursorMode === value) o.selected = true
+    cursorSel.appendChild(o)
+  }
+  cursorSel.title = 'Ruler: hover readout at one instant. Region: drag across the plot to select a span and get its statistics.'
+  cursorSel.onchange = () => {
+    state.cursorMode = cursorSel.value as CtlState['cursorMode']
+    redraw()
+  }
+  bar.appendChild(cursorSel)
+
   // Export CSV of what is currently displayed
   const exp = document.createElement('button')
   exp.textContent = '⬇ CSV'
@@ -515,26 +537,82 @@ const draw = (
     readout.style.left = `${Math.min(rx, rect.width - 170)}px`
     readout.style.top = `${clientY - rect.top + 12}px`
   }
-  svg.addEventListener('mousemove', (ev) => {
-    if (state.rulerLocked) return
+  const timeAtClientX = (clientX: number): number | null => {
     const rect = svg.getBoundingClientRect()
-    const sx = (ev.clientX - rect.left) * (width / rect.width)
-    if (sx < ml || sx > width - mr) { rulerLine.setAttribute('x1', '-10'); rulerLine.setAttribute('x2', '-10'); readout.style.display = 'none'; return }
-    const t = from + (sx - ml) / (width - ml - mr) * (to - from)
-    state.rulerT = t
-    positionRuler(t, ev.clientX, ev.clientY)
-  })
-  svg.addEventListener('mouseleave', () => {
-    if (state.rulerLocked) return
-    rulerLine.setAttribute('x1', '-10')
-    rulerLine.setAttribute('x2', '-10')
-    readout.style.display = 'none'
-  })
-  svg.addEventListener('click', (ev) => {
-    state.rulerLocked = !state.rulerLocked
-    if (state.rulerLocked && state.rulerT !== null) positionRuler(state.rulerT, ev.clientX, ev.clientY)
-  })
-  svg.style.cursor = 'crosshair'
+    const sx = (clientX - rect.left) * (width / rect.width)
+    if (sx < ml || sx > width - mr) return null
+    return from + (sx - ml) / (width - ml - mr) * (to - from)
+  }
+
+  if (state.cursorMode === 'ruler') {
+    svg.addEventListener('mousemove', (ev) => {
+      if (state.rulerLocked) return
+      const t = timeAtClientX(ev.clientX)
+      if (t === null) { rulerLine.setAttribute('x1', '-10'); rulerLine.setAttribute('x2', '-10'); readout.style.display = 'none'; return }
+      state.rulerT = t
+      positionRuler(t, ev.clientX, ev.clientY)
+    })
+    svg.addEventListener('mouseleave', () => {
+      if (state.rulerLocked) return
+      rulerLine.setAttribute('x1', '-10')
+      rulerLine.setAttribute('x2', '-10')
+      readout.style.display = 'none'
+    })
+    svg.addEventListener('click', (ev) => {
+      state.rulerLocked = !state.rulerLocked
+      if (state.rulerLocked && state.rulerT !== null) positionRuler(state.rulerT, ev.clientX, ev.clientY)
+    })
+    svg.style.cursor = 'crosshair'
+  } else {
+    // Region mode: drag across the plot to select [t0, t1].
+    const dragRect = el('rect', { x: -10, y: mt, width: 0, height: plotH + lanesH, fill: '#2563eb', 'fill-opacity': 0.12 })
+    svg.appendChild(dragRect)
+    let dragT0: number | null = null
+    svg.addEventListener('mousedown', (ev) => {
+      const t = timeAtClientX(ev.clientX)
+      if (t !== null) { dragT0 = t; ev.preventDefault() }
+    })
+    svg.addEventListener('mousemove', (ev) => {
+      if (dragT0 === null) return
+      const t = timeAtClientX(ev.clientX)
+      if (t === null) return
+      const x0 = x(Math.min(dragT0, t)), x1 = x(Math.max(dragT0, t))
+      dragRect.setAttribute('x', String(x0))
+      dragRect.setAttribute('width', String(Math.max(0, x1 - x0)))
+    })
+    const finish = (ev: MouseEvent): void => {
+      if (dragT0 === null) return
+      const t = timeAtClientX(ev.clientX)
+      const t0 = dragT0
+      dragT0 = null
+      if (t === null) return
+      const rFrom = Math.min(t0, t), rTo = Math.max(t0, t)
+      if (rTo - rFrom < 30) return   // ignore accidental clicks (< 30 s span)
+      state.region = { from: Math.round(rFrom), to: Math.round(rTo) }
+      // Persist so the agent can resolve "the window shown" via trend_query.
+      void fetch('/api/trends/selection', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: state.region.from, to: state.region.to, tags: state.pens }),
+      })
+      redraw()
+    }
+    svg.addEventListener('mouseup', finish)
+    svg.addEventListener('mouseleave', (ev) => { if (dragT0 !== null) finish(ev) })
+    svg.style.cursor = 'col-resize'
+  }
+
+  // Persistent region overlay (survives redraws and window changes)
+  if (state.region) {
+    const rFrom = Math.max(from, state.region.from)
+    const rTo = Math.min(to, state.region.to)
+    if (rTo > rFrom) {
+      const x0 = x(rFrom), x1 = x(rTo)
+      svg.appendChild(el('rect', { x: x0, y: mt, width: x1 - x0, height: plotH + lanesH, fill: '#2563eb', 'fill-opacity': 0.1 }))
+      for (const bx of [x0, x1]) {
+        svg.appendChild(el('line', { x1: bx, x2: bx, y1: mt, y2: mt + plotH + lanesH, stroke: '#2563eb', 'stroke-opacity': 0.8, 'stroke-width': 1.2, 'stroke-dasharray': '4 3' }))
+      }
+    }
+  }
 
   wrapper.style.position = 'relative'
   wrapper.appendChild(svg)
@@ -568,6 +646,75 @@ const draw = (
       redraw()
     }
     chips.appendChild(chip)
+  }
+
+  // --- Region statistics strip (exact server stats for the selected span) ---
+  if (state.region) {
+    const strip = document.createElement('div')
+    strip.style.cssText = 'margin:2px 8px 4px;padding:4px 8px;border:1px dashed rgba(37,99,235,.55);border-radius:6px;font-size:11px;line-height:1.6'
+    const dur = state.region.to - state.region.from
+    const head = document.createElement('div')
+    head.style.cssText = 'display:flex;align-items:center;gap:8px'
+    const headText = document.createElement('b')
+    headText.textContent = `Region ${fmt(state.region.from)} – ${fmt(state.region.to)} (${dur >= 3600 ? `${(dur / 3600).toFixed(1)}h` : `${Math.round(dur / 60)} min`})`
+    head.appendChild(headText)
+    const hint = document.createElement('span')
+    hint.style.cssText = 'opacity:.6'
+    hint.textContent = 'saved — you can ask the agent about "the selected region"'
+    head.appendChild(hint)
+    const clear = document.createElement('button')
+    clear.textContent = '✕ clear'
+    clear.style.cssText = CTL_STYLE + ';cursor:pointer;margin-left:auto'
+    clear.onclick = () => {
+      state.region = null
+      void fetch('/api/trends/selection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: 'null' })
+      redraw()
+    }
+    head.appendChild(clear)
+    strip.appendChild(head)
+    const body = document.createElement('div')
+    body.textContent = 'Computing region statistics…'
+    body.style.opacity = '0.7'
+    strip.appendChild(body)
+    wrapper.appendChild(strip)
+
+    void (async () => {
+      try {
+        const qs = new URLSearchParams({ tags: state.pens.join(','), from: String(state.region!.from), to: String(state.region!.to) })
+        const res = await fetch(`/api/trends/data?${qs}`)
+        if (!res.ok) { body.textContent = `⚠ region stats failed (${res.status})`; return }
+        const rd = await res.json() as TrendData
+        body.style.opacity = '1'
+        body.textContent = ''
+        for (const s of rd.series) {
+          if (state.hidden.has(s.tag)) continue
+          const st = (s.stats ?? {}) as Record<string, number>
+          const row = document.createElement('div')
+          const dot = document.createElement('span')
+          dot.textContent = '● '
+          dot.style.color = colorOf.get(s.tag) ?? '#888'
+          row.appendChild(dot)
+          let text: string
+          if (s.kind === 'binary') {
+            text = `${s.tag}: ${st.transitions ?? 0} state change(s), stopped ${Math.round((st.downtimeS ?? 0) / 60)} min`
+          } else {
+            text = `${s.tag}: avg ${st.avg}${s.unit} · min ${st.min}${s.unit} · max ${st.max}${s.unit}`
+            if (typeof st.energyMWh === 'number') text += ` · ≈${Math.round(st.energyMWh).toLocaleString()} MWh`
+          }
+          row.appendChild(document.createTextNode(text))
+          body.appendChild(row)
+        }
+        const evCount = (rd.events ?? []).length
+        if (evCount > 0) {
+          const ev = document.createElement('div')
+          ev.style.color = '#ea580c'
+          ev.textContent = `▲ ${evCount} event(s) in region — ${(rd.events ?? []).slice(0, 2).map(e => e.text).join(' · ')}${evCount > 2 ? ' …' : ''}`
+          body.appendChild(ev)
+        }
+      } catch (err) {
+        body.textContent = `⚠ region stats failed: ${err instanceof Error ? err.message : String(err)}`
+      }
+    })()
   }
 
   // --- Statistics table (server stats are exact for the fetched window) ---
@@ -707,11 +854,11 @@ export const renderTrendBlocks = async (container: HTMLElement): Promise<void> =
     if (parsed.kind === 'live') {
       const pens = parsed.cfg.trends.map(t => t.tag)
       renderControl(wrapper, parsed.cfg.title ?? `Plant trend — ${pens.join(', ')}`, archiveProvider,
-        { pens, hidden: new Set(), time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null }, true)
+        { pens, hidden: new Set(), time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null }, true)
     } else {
       const pens = parsed.data.series.map(s => s.tag)
       renderControl(wrapper, parsed.title, makeEmbeddedProvider(parsed.data),
-        { pens, hidden: new Set(), time: {}, rulerLocked: false, rulerT: null }, false)
+        { pens, hidden: new Set(), time: {}, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null }, false)
     }
   }
 }

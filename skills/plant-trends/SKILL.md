@@ -26,6 +26,9 @@ Procedure:
    - Last N samples → { points } ("show me the last 100 data points" → points: 100, max 240)
    - Relative window → { window }: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w
      ("past week" → 1w). Default 8h if the operator didn't say.
+   - Operator's selected region → { useSelectedRegion: true } when they say
+     "the window shown", "the selected region", "this region", "the span I
+     selected". Tags may be omitted (they default to that display's pens).
 2. Call `trend_query` with { tags } plus the chosen time-axis fields.
 3. Post the returned `report` field EXACTLY as returned. It is a SMALL
    ```trend config fence — the display fetches its own data from the server

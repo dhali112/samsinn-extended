@@ -7,7 +7,7 @@
 // src/trends/historian.ts (which also backs the API), so the agent's
 // interpretation and the operator's display read from the same source.
 
-import { queryTrends, TREND_TAGS, MAX_POINTS } from '../../../src/trends/historian.ts'
+import { queryTrends, TREND_TAGS, MAX_POINTS, getSelectedRegion } from '../../../src/trends/historian.ts'
 
 const tool = {
   name: 'trend_query',
@@ -22,16 +22,33 @@ const tool = {
       from: { type: 'string', description: 'Absolute range start (ISO datetime, e.g. 2026-07-14T06:00). Overrides window/points.' },
       to: { type: 'string', description: 'Absolute range end (ISO datetime). Defaults to latest data when only from is given.' },
       points: { type: 'number', description: `Plot exactly the last N samples per tag (10–${MAX_POINTS}). Overrides window.` },
+      useSelectedRegion: { type: 'boolean', description: 'Use the region the operator selected on a trend display (Region mode drag). Use when the operator says "the window shown", "the selected region", "this region". Tags default to the pens of that display if omitted.' },
     },
-    required: ['tags'],
+    required: [],
   },
   execute: async (params: Record<string, unknown>): Promise<Record<string, unknown>> => {
-    const tags = Array.isArray(params.tags) ? params.tags.map(String) : []
+    let tags = Array.isArray(params.tags) ? params.tags.map(String) : []
+    let from = typeof params.from === 'string' || typeof params.from === 'number' ? params.from : undefined
+    let to = typeof params.to === 'string' || typeof params.to === 'number' ? params.to : undefined
+
+    if (params.useSelectedRegion === true) {
+      const sel = getSelectedRegion()
+      if (!sel) {
+        return { success: false, error: 'No region is currently selected on a trend display. Ask the operator to switch the display to Region mode and drag across the span of interest first.' }
+      }
+      from = sel.from
+      to = sel.to
+      if (tags.length === 0) tags = [...sel.tags]
+    }
+    if (tags.length === 0) {
+      return { success: false, error: `No tags given. Available: ${Object.keys(TREND_TAGS).join(', ')}` }
+    }
+
     const result = await queryTrends({
       tags,
       window: typeof params.window === 'string' ? params.window : undefined,
-      from: typeof params.from === 'string' || typeof params.from === 'number' ? params.from : undefined,
-      to: typeof params.to === 'string' || typeof params.to === 'number' ? params.to : undefined,
+      from,
+      to,
       points: typeof params.points === 'number' ? params.points : undefined,
     })
     if ('error' in result) return { success: false, error: result.error }
@@ -40,7 +57,7 @@ const tool = {
     // resolves this against /api/trends/data on render and on every operator
     // interaction (add pens, change window, etc.).
     const time: Record<string, unknown> = {}
-    if (typeof params.from === 'string' || typeof params.to === 'string') {
+    if (from !== undefined || to !== undefined) {
       time.from = new Date(result.from * 1000).toISOString()
       time.to = new Date(result.to * 1000).toISOString()
     } else if (typeof params.points === 'number') {

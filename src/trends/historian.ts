@@ -195,6 +195,23 @@ const analyzeSeries = (
   return { stats, events, lines }
 }
 
+// --- Operator region selection ---
+// The trend control POSTs the operator's selected region here so the agent
+// can reference "the window shown" in prompts (trend_query useSelectedRegion).
+// In-memory + latest-wins: single-operator local instance; a multi-user
+// deployment would key this per instance/room.
+export interface RegionSelection {
+  readonly from: number
+  readonly to: number
+  readonly tags: ReadonlyArray<string>
+  readonly savedAt: number
+}
+let selectedRegion: RegionSelection | null = null
+export const setSelectedRegion = (sel: { from: number; to: number; tags: ReadonlyArray<string> } | null): void => {
+  selectedRegion = sel ? { ...sel, savedAt: Date.now() } : null
+}
+export const getSelectedRegion = (): RegionSelection | null => selectedRegion
+
 export interface TrendQueryParams {
   readonly tags: ReadonlyArray<string>
   readonly window?: string
