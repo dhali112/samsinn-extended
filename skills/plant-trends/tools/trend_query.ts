@@ -31,6 +31,7 @@ const tool = {
     let from = typeof params.from === 'string' || typeof params.from === 'number' ? params.from : undefined
     let to = typeof params.to === 'string' || typeof params.to === 'number' ? params.to : undefined
 
+    let regionContext: string | null = null
     if (params.useSelectedRegion === true) {
       const sel = getSelectedRegion()
       if (!sel) {
@@ -39,6 +40,7 @@ const tool = {
       from = sel.from
       to = sel.to
       if (tags.length === 0) tags = [...sel.tags]
+      regionContext = `This is the region the operator selected on the PLANT TREND display (tags: ${sel.tags.join(', ')}). Answer only about these plant process tags in this time span — the selection has nothing to do with weather, maps, or Leitbild scenarios.`
     }
     if (tags.length === 0) {
       return { success: false, error: `No tags given. Available: ${Object.keys(TREND_TAGS).join(', ')}` }
@@ -78,6 +80,7 @@ const tool = {
         analysis: result.analysis,
         window: result.modeLabel,
         availableTags: Object.keys(TREND_TAGS),
+        ...(regionContext ? { regionContext } : {}),
       },
     }
   },

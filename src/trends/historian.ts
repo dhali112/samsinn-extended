@@ -144,6 +144,7 @@ const analyzeSeries = (
   }
 
   const lim = meta.limits
+  const excursionIntervals: Array<[number, number]> = []
   if (lim?.high !== undefined) {
     let inExc = false, excStart = 0, peak = -Infinity, excTotal = 0, hihi = false
     for (let i = 0; i < pts.length; i++) {
@@ -156,6 +157,7 @@ const analyzeSeries = (
       if (inExc && (v <= lim.high || i === pts.length - 1)) {
         inExc = v > lim.high
         excTotal += t - excStart
+        excursionIntervals.push([excStart, t])
         events.push({ t: excStart, tag, level: hihi ? 'HIHI' : 'HIGH', text: `${meta.label} exceeded ${hihi ? 'HIGH-HIGH' : 'HIGH'} limit — peaked ${peak.toFixed(1)}${meta.unit} at ${hhmm(excStart)}` })
         if (!inExc) { peak = -Infinity; hihi = false }
       }
@@ -171,6 +173,11 @@ const analyzeSeries = (
     lines.push(`${meta.label}: dropped below LOW limit (${lim.low}${meta.unit}), minimum ${min.toFixed(1)}${meta.unit}.`)
   }
 
+  // Rate-of-change notices. Suppressed inside (±10 min of) this tag's own
+  // limit excursions — the excursion event already flags that disturbance,
+  // and double-reporting made one visible alarm read as two events.
+  const insideOwnExcursion = (t: number): boolean =>
+    excursionIntervals.some(([s, e]) => t >= s - 600 && t <= e + 600)
   const diffs: number[] = []
   for (let i = 1; i < pts.length; i++) diffs.push(Math.abs(pts[i]![1] - pts[i - 1]![1]))
   const sorted = [...diffs].sort((a, b) => a - b)
@@ -178,7 +185,7 @@ const analyzeSeries = (
   if (median > 0) {
     let lastRoc = -Infinity
     for (let i = 1; i < pts.length; i++) {
-      if (diffs[i - 1]! > median * 8 && pts[i]![0] - lastRoc > 1800) {
+      if (diffs[i - 1]! > median * 8 && pts[i]![0] - lastRoc > 1800 && !insideOwnExcursion(pts[i]![0])) {
         lastRoc = pts[i]![0]
         events.push({ t: pts[i]![0], tag, level: 'ROC', text: `${meta.label}: rapid change at ${hhmm(pts[i]![0])}` })
       }
@@ -232,7 +239,12 @@ export interface TrendQueryResult {
 const parseWhen = (v: unknown): number | null => {
   if (typeof v === 'number' && isFinite(v)) return v > 1e12 ? Math.floor(v / 1000) : Math.floor(v)
   if (typeof v === 'string' && v.trim()) {
-    const ms = Date.parse(v.trim().replace(' ', 'T'))
+    const s = v.trim()
+    // Numeric strings are epoch seconds/ms (URL query params arrive as
+    // strings — Date.parse would reject them, and the old silent fallback
+    // to the default window made region queries return window stats).
+    if (/^\d{9,13}$/.test(s)) return Number(s) > 1e12 ? Math.floor(Number(s) / 1000) : Number(s)
+    const ms = Date.parse(s.replace(' ', 'T'))
     if (!Number.isNaN(ms)) return Math.floor(ms / 1000)
   }
   return null
@@ -255,6 +267,11 @@ export const queryTrends = async (params: TrendQueryParams): Promise<TrendQueryR
 
   const fromP = parseWhen(params.from)
   const toP = parseWhen(params.to)
+  // Loud failure: a supplied-but-unparseable bound must NOT silently fall
+  // through to the default window (that made region stats show window stats).
+  if ((params.from !== undefined && fromP === null) || (params.to !== undefined && toP === null)) {
+    return { error: `Unparseable from/to — use ISO datetimes or epoch seconds (got from=${String(params.from)}, to=${String(params.to)})` }
+  }
   const nPts = typeof params.points === 'number' && isFinite(params.points)
     ? Math.min(MAX_POINTS, Math.max(10, Math.round(params.points))) : null
 

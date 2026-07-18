@@ -28,7 +28,11 @@ Procedure:
      ("past week" → 1w). Default 8h if the operator didn't say.
    - Operator's selected region → { useSelectedRegion: true } when they say
      "the window shown", "the selected region", "this region", "the span I
-     selected". Tags may be omitted (they default to that display's pens).
+     selected". Tags may be omitted (they default to that display's tags).
+     IMPORTANT: a "region" or "window shown" ALWAYS refers to the plant trend
+     display and its process tags — never to weather maps, Leitbild
+     scenarios, or any other earlier display. For region questions use ONLY
+     trend_query; do not call weather or lb_* tools.
 2. Call `trend_query` with { tags } plus the chosen time-axis fields.
 3. Post the returned `report` field EXACTLY as returned. It is a SMALL
    ```trend config fence — the display fetches its own data from the server

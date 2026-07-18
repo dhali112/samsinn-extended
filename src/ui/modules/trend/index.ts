@@ -49,8 +49,9 @@ interface TagInfo { readonly tag: string; readonly label: string; readonly unit:
 type Provider = (pens: ReadonlyArray<string>, time: TimeCfg) => Promise<TrendData | { error: string }>
 
 interface CtlState {
-  pens: string[]
-  readonly hidden: Set<string>
+  // Tags currently plotted. The tag list UI shows EVERY catalog tag with a
+  // checkbox; checked = in this list (fetched + drawn).
+  tags: string[]
   time: TimeCfg
   rulerLocked: boolean
   rulerT: number | null
@@ -181,9 +182,9 @@ const loadCatalog = async (): Promise<TagInfo[]> => {
 
 const renderControl = (
   wrapper: HTMLElement, title: string, provider: Provider,
-  state: CtlState, live: boolean,
+  state: CtlState, catalogFn: () => Promise<TagInfo[]>,
 ): void => {
-  const refresh = (): void => renderControl(wrapper, title, provider, state, live)
+  const refresh = (): void => renderControl(wrapper, title, provider, state, catalogFn)
 
   wrapper.textContent = ''
   const loading = document.createElement('div')
@@ -192,10 +193,7 @@ const renderControl = (
   wrapper.appendChild(loading)
 
   void (async () => {
-    const [data, catalog] = await Promise.all([
-      provider(state.pens, state.time),
-      live ? loadCatalog() : Promise.resolve([] as TagInfo[]),
-    ])
+    const [data, catalog] = await Promise.all([provider(state.tags, state.time), catalogFn()])
     wrapper.textContent = ''
 
     if ('error' in data) {
@@ -210,17 +208,20 @@ const renderControl = (
       wrapper.appendChild(err)
       return
     }
-    draw(wrapper, title, data, catalog, state, live, refresh)
+    draw(wrapper, title, data, catalog, state, refresh)
   })()
 }
 
 const draw = (
   wrapper: HTMLElement, title: string, data: TrendData, catalog: TagInfo[],
-  state: CtlState, live: boolean, refresh: () => void,
+  state: CtlState, refresh: () => void,
 ): void => {
-  const colorOf = new Map(state.pens.map((tag, i) => [tag, PALETTE[i % PALETTE.length]!]))
+  // Stable colors: assigned by catalog position, so toggling tags on/off
+  // never recolors the remaining traces.
+  const colorOrder = [...catalog.map(c => c.tag), ...state.tags.filter(t => !catalog.some(c => c.tag === t))]
+  const colorOf = new Map(colorOrder.map((tag, i) => [tag, PALETTE[i % PALETTE.length]!]))
   const from = data.from, to = data.to
-  const redraw = (): void => draw(wrapper, title, data, catalog, state, live, refresh)
+  const redraw = (): void => draw(wrapper, title, data, catalog, state, refresh)
 
   wrapper.textContent = ''
 
@@ -297,29 +298,16 @@ const draw = (
     bar.appendChild(lbl)
   }
 
-  // Add-pen picker (live/archive mode only)
-  if (live && catalog.length > 0) {
-    const addable = catalog.filter(t => !state.pens.includes(t.tag))
-    if (addable.length > 0) {
-      const add = document.createElement('select')
-      add.style.cssText = CTL_STYLE
-      const o0 = document.createElement('option')
-      o0.value = ''
-      o0.textContent = '＋ add pen…'
-      add.appendChild(o0)
-      for (const t of addable) {
-        const o = document.createElement('option')
-        o.value = t.tag
-        o.textContent = `${t.tag}${t.unit ? ` (${t.unit})` : ''}`
-        o.title = t.label
-        add.appendChild(o)
-      }
-      add.onchange = () => {
-        if (add.value) { state.pens = [...state.pens, add.value]; refresh() }
-      }
-      bar.appendChild(add)
-    }
-  }
+  // Refresh: re-runs the query with the SAME time config. Relative modes
+  // (Last 8h, N points) are anchored to the latest archive data at query
+  // time, so refreshing hours later loads the newest 8 hours — not the
+  // hours originally displayed.
+  const refreshBtn = document.createElement('button')
+  refreshBtn.textContent = '⟳'
+  refreshBtn.title = 'Refresh — reload from the archive (relative windows re-anchor to the latest data)'
+  refreshBtn.style.cssText = CTL_STYLE + ';cursor:pointer;font-size:13px'
+  refreshBtn.onclick = refresh
+  bar.appendChild(refreshBtn)
 
   // Cursor tooling toggle: Ruler (one line) vs Region (drag two lines)
   const cursorSel = document.createElement('select')
@@ -346,7 +334,6 @@ const draw = (
   exp.onclick = () => {
     const rows = ['ts_iso,tag,value']
     for (const s of data.series) {
-      if (state.hidden.has(s.tag)) continue
       for (const p of s.points) rows.push(`${new Date(p[0] * 1000).toISOString()},${s.tag},${p[1]}`)
     }
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
@@ -359,13 +346,42 @@ const draw = (
   bar.appendChild(exp)
   wrapper.appendChild(bar)
 
-  const chips = document.createElement('div')
-  chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:0 8px 6px;font-size:11px'
-  wrapper.appendChild(chips)
+  // --- Tag list: every catalog tag with an on/off checkbox ---
+  const tagList = document.createElement('div')
+  tagList.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:0 8px 6px;font-size:11px'
+  const tagsCaption = document.createElement('span')
+  tagsCaption.textContent = 'Tags:'
+  tagsCaption.style.cssText = 'opacity:.6;font-weight:600'
+  tagList.appendChild(tagsCaption)
+  for (const info of catalog) {
+    const on = state.tags.includes(info.tag)
+    const label = document.createElement('label')
+    label.style.cssText = `display:inline-flex;align-items:center;gap:4px;cursor:pointer;color:${on ? colorOf.get(info.tag) : 'inherit'};opacity:${on ? 1 : 0.6}`
+    label.title = `${info.label}${info.unit ? ` (${info.unit})` : ''}`
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = on
+    cb.onchange = () => {
+      if (cb.checked) state.tags = [...state.tags, info.tag]
+      else state.tags = state.tags.filter(t => t !== info.tag)
+      refresh()
+    }
+    label.appendChild(cb)
+    const s = data.series.find(sr => sr.tag === info.tag)
+    const last = s && s.points.length ? s.points[s.points.length - 1]![1] : null
+    let text = info.tag
+    if (on && s && last !== null) {
+      text += ` ${+last.toFixed(2)}${s.unit}`
+      if (s.kind === 'power' && typeof s.stats?.energyMWh === 'number') text += ` · ≈${Math.round(s.stats.energyMWh).toLocaleString()} MWh`
+    }
+    label.appendChild(document.createTextNode(text))
+    tagList.appendChild(label)
+  }
+  wrapper.appendChild(tagList)
 
   // --- Plot layout ---
   const width = Math.max(360, wrapper.clientWidth || 640)
-  const visible = data.series.filter(s => !state.hidden.has(s.tag))
+  const visible = data.series.filter(s => state.tags.includes(s.tag))
   const analog = visible.filter(s => s.kind !== 'binary')
   const binary = visible.filter(s => s.kind === 'binary')
   const laneH = 18
@@ -494,7 +510,7 @@ const draw = (
   })
 
   // Event markers
-  const events = (data.events ?? []).filter(e => !state.hidden.has(e.tag))
+  const events = (data.events ?? []).filter(e => state.tags.includes(e.tag))
   for (const e of events) {
     const px = x(e.t)
     const color = EVENT_COLOR[e.level] ?? '#6b7280'
@@ -592,7 +608,7 @@ const draw = (
       // Persist so the agent can resolve "the window shown" via trend_query.
       void fetch('/api/trends/selection', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: state.region.from, to: state.region.to, tags: state.pens }),
+        body: JSON.stringify({ from: state.region.from, to: state.region.to, tags: state.tags }),
       })
       redraw()
     }
@@ -617,36 +633,6 @@ const draw = (
   wrapper.style.position = 'relative'
   wrapper.appendChild(svg)
   wrapper.appendChild(readout)
-
-  // --- Pen chips: click toggles visibility; ✕ removes the pen ---
-  for (const tag of state.pens) {
-    const s = data.series.find(sr => sr.tag === tag)
-    const chip = document.createElement('button')
-    const off = state.hidden.has(tag)
-    const last = s && s.points.length ? s.points[s.points.length - 1]![1] : null
-    let statText = s && last !== null ? ` ${+last.toFixed(2)}${s.unit}` : ''
-    if (s?.kind === 'power' && typeof s.stats?.energyMWh === 'number') statText += ` · ≈${Math.round(s.stats.energyMWh).toLocaleString()} MWh`
-    chip.textContent = `${off ? '◻' : '◼'} ${tag}${statText} `
-    chip.title = `${s?.label ?? tag} — click to ${off ? 'show' : 'hide'}`
-    chip.style.cssText = `border:1px solid rgba(128,128,128,.35);border-radius:10px;padding:1px 8px;background:transparent;cursor:pointer;font-size:11px;color:${off ? 'inherit' : colorOf.get(tag)};opacity:${off ? 0.55 : 1}`
-    const removeBtn = document.createElement('span')
-    removeBtn.textContent = '✕'
-    removeBtn.title = `Remove ${tag} from the display`
-    removeBtn.style.cssText = 'margin-left:4px;opacity:.5'
-    removeBtn.onclick = (ev) => {
-      ev.stopPropagation()
-      state.pens = state.pens.filter(p => p !== tag)
-      state.hidden.delete(tag)
-      refresh()
-    }
-    chip.appendChild(removeBtn)
-    chip.onclick = () => {
-      if (state.hidden.has(tag)) state.hidden.delete(tag)
-      else state.hidden.add(tag)
-      redraw()
-    }
-    chips.appendChild(chip)
-  }
 
   // --- Region statistics strip (exact server stats for the selected span) ---
   if (state.region) {
@@ -680,14 +666,13 @@ const draw = (
 
     void (async () => {
       try {
-        const qs = new URLSearchParams({ tags: state.pens.join(','), from: String(state.region!.from), to: String(state.region!.to) })
+        const qs = new URLSearchParams({ tags: state.tags.join(','), from: String(state.region!.from), to: String(state.region!.to) })
         const res = await fetch(`/api/trends/data?${qs}`)
         if (!res.ok) { body.textContent = `⚠ region stats failed (${res.status})`; return }
         const rd = await res.json() as TrendData
         body.style.opacity = '1'
         body.textContent = ''
         for (const s of rd.series) {
-          if (state.hidden.has(s.tag)) continue
           const st = (s.stats ?? {}) as Record<string, number>
           const row = document.createElement('div')
           const dot = document.createElement('span')
@@ -704,11 +689,32 @@ const draw = (
           row.appendChild(document.createTextNode(text))
           body.appendChild(row)
         }
-        const evCount = (rd.events ?? []).length
-        if (evCount > 0) {
+        // Classify events honestly: alarms (limit violations) are not the
+        // same thing as state changes or rate-of-change notices, and lumping
+        // them into one count misread as "N alerts".
+        const evs = rd.events ?? []
+        const alarms = evs.filter(e => e.level === 'HIGH' || e.level === 'HIHI' || e.level === 'LOW')
+        const states = evs.filter(e => e.level === 'STATE')
+        const notices = evs.filter(e => e.level === 'ROC')
+        if (alarms.length > 0) {
           const ev = document.createElement('div')
-          ev.style.color = '#ea580c'
-          ev.textContent = `▲ ${evCount} event(s) in region — ${(rd.events ?? []).slice(0, 2).map(e => e.text).join(' · ')}${evCount > 2 ? ' …' : ''}`
+          ev.style.color = '#dc2626'
+          ev.textContent = `▲ ${alarms.length} alarm${alarms.length === 1 ? '' : 's'} — ${alarms.slice(0, 2).map(e => e.text).join(' · ')}${alarms.length > 2 ? ' …' : ''}`
+          body.appendChild(ev)
+        }
+        if (states.length > 0 || notices.length > 0) {
+          const ev = document.createElement('div')
+          ev.style.opacity = '0.75'
+          const parts: string[] = []
+          if (states.length > 0) parts.push(`${states.length} state change${states.length === 1 ? '' : 's'} (${states.map(e => e.text).slice(0, 2).join('; ')})`)
+          if (notices.length > 0) parts.push(`${notices.length} rapid-change notice${notices.length === 1 ? '' : 's'}`)
+          ev.textContent = parts.join(' · ')
+          body.appendChild(ev)
+        }
+        if (evs.length === 0) {
+          const ev = document.createElement('div')
+          ev.style.opacity = '0.6'
+          ev.textContent = 'No alarms or events in this region.'
           body.appendChild(ev)
         }
       } catch (err) {
@@ -852,13 +858,17 @@ export const renderTrendBlocks = async (container: HTMLElement): Promise<void> =
     wrapper.className = 'my-2 rounded border border-border overflow-hidden'
     pre.replaceWith(wrapper)
     if (parsed.kind === 'live') {
-      const pens = parsed.cfg.trends.map(t => t.tag)
-      renderControl(wrapper, parsed.cfg.title ?? `Plant trend — ${pens.join(', ')}`, archiveProvider,
-        { pens, hidden: new Set(), time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null }, true)
+      const tags = parsed.cfg.trends.map(t => t.tag)
+      renderControl(wrapper, parsed.cfg.title ?? `Plant trend — ${tags.join(', ')}`, archiveProvider,
+        { tags, time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null },
+        loadCatalog)
     } else {
-      const pens = parsed.data.series.map(s => s.tag)
+      const tags = parsed.data.series.map(s => s.tag)
+      // Embedded fences carry their own catalog: the series they embed.
+      const embeddedCatalog: TagInfo[] = parsed.data.series.map(s => ({ tag: s.tag, label: s.label ?? s.tag, unit: s.unit, kind: s.kind }))
       renderControl(wrapper, parsed.title, makeEmbeddedProvider(parsed.data),
-        { pens, hidden: new Set(), time: {}, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null }, false)
+        { tags, time: {}, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null },
+        () => Promise.resolve(embeddedCatalog))
     }
   }
 }
