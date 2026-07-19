@@ -64,6 +64,12 @@ interface CtlState {
   // collapse the menu the operator is working in.
   tagMenuOpen: boolean
   readonly openCats: Set<string>
+  // Operator color overrides (tag → palette color); default colors come
+  // from catalog position.
+  readonly colorOverrides: Map<string, string>
+  // Which active tag currently has its color palette unfolded (click the
+  // tag name on the display to toggle).
+  colorPickerFor: string | null
 }
 
 const PALETTE = ['#2563eb', '#f59e0b', '#059669', '#8b5cf6', '#0891b2', '#d946ef', '#84cc16', '#f97316']
@@ -221,9 +227,10 @@ const draw = (
   state: CtlState, refresh: () => void,
 ): void => {
   // Stable colors: assigned by catalog position, so toggling tags on/off
-  // never recolors the remaining traces.
+  // never recolors the remaining traces. Operator overrides win.
   const colorOrder = [...catalog.map(c => c.tag), ...state.tags.filter(t => !catalog.some(c => c.tag === t))]
   const colorOf = new Map(colorOrder.map((tag, i) => [tag, PALETTE[i % PALETTE.length]!]))
+  for (const [tag, color] of state.colorOverrides) colorOf.set(tag, color)
   const from = data.from, to = data.to
   const redraw = (): void => draw(wrapper, title, data, catalog, state, refresh)
 
@@ -360,20 +367,47 @@ const draw = (
   tagBtn.onclick = () => { state.tagMenuOpen = !state.tagMenuOpen; redraw() }
   tagBar.appendChild(tagBtn)
 
-  // Active-tag summary: colored last values for what is plotted
+  // Active-tag summary: colored last values for what is plotted. Clicking
+  // a tag name unfolds a palette row beneath it to recolor that trace.
   for (const tag of state.tags) {
     const s = data.series.find(sr => sr.tag === tag)
-    const span = document.createElement('span')
-    span.style.cssText = `color:${colorOf.get(tag)};font-weight:600`
+    const box = document.createElement('span')
+    box.style.cssText = 'display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px'
+
+    const name = document.createElement('button')
+    name.style.cssText = `border:none;background:transparent;padding:0;cursor:pointer;font-size:11px;color:${colorOf.get(tag)};font-weight:600`
     const last = s && s.points.length ? s.points[s.points.length - 1]![1] : null
     let text = tag
     if (s && last !== null) {
       text += ` ${+last.toFixed(2)}${s.unit}`
       if (s.kind === 'power' && typeof s.stats?.energyMWh === 'number') text += ` · ≈${Math.round(s.stats.energyMWh).toLocaleString()} MWh`
     }
-    span.textContent = text
-    span.title = (catalog.find(c => c.tag === tag)?.label) ?? tag
-    tagBar.appendChild(span)
+    name.textContent = text
+    name.title = `${(catalog.find(c => c.tag === tag)?.label) ?? tag} — click to change color`
+    name.onclick = () => {
+      state.colorPickerFor = state.colorPickerFor === tag ? null : tag
+      redraw()
+    }
+    box.appendChild(name)
+
+    if (state.colorPickerFor === tag) {
+      const palette = document.createElement('span')
+      palette.style.cssText = 'display:inline-flex;gap:3px;padding:1px 0'
+      for (const color of PALETTE) {
+        const dot = document.createElement('button')
+        const active = colorOf.get(tag) === color
+        dot.style.cssText = `width:14px;height:14px;border-radius:50%;cursor:pointer;background:${color};border:2px solid ${active ? 'CanvasText' : 'transparent'};padding:0`
+        dot.title = color
+        dot.onclick = () => {
+          state.colorOverrides.set(tag, color)
+          state.colorPickerFor = null
+          redraw()
+        }
+        palette.appendChild(dot)
+      }
+      box.appendChild(palette)
+    }
+    tagBar.appendChild(box)
   }
 
   if (state.tagMenuOpen) {
@@ -861,7 +895,7 @@ const draw = (
 
 // --- Fence entry point ---
 
-interface LiveConfig { title?: string; trends: Array<{ tag: string }>; time?: TimeCfg }
+interface LiveConfig { title?: string; trends: Array<{ tag: string; color?: string }>; time?: TimeCfg }
 
 const parseFence = (source: string): { kind: 'live'; cfg: LiveConfig } | { kind: 'embedded'; data: TrendData; title: string } | null => {
   try {
@@ -900,15 +934,19 @@ export const renderTrendBlocks = async (container: HTMLElement): Promise<void> =
     pre.replaceWith(wrapper)
     if (parsed.kind === 'live') {
       const tags = parsed.cfg.trends.map(t => t.tag)
+      // Config-supplied trend colors (spec §10) seed the override map.
+      const colorOverrides = new Map(parsed.cfg.trends
+        .filter(t => typeof t.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(t.color))
+        .map(t => [t.tag, t.color!]))
       renderControl(wrapper, parsed.cfg.title ?? `Plant trend — ${tags.join(', ')}`, archiveProvider,
-        { tags, time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null, tagMenuOpen: false, openCats: new Set() },
+        { tags, time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null, tagMenuOpen: false, openCats: new Set(), colorOverrides, colorPickerFor: null },
         loadCatalog)
     } else {
       const tags = parsed.data.series.map(s => s.tag)
       // Embedded fences carry their own catalog: the series they embed.
       const embeddedCatalog: TagInfo[] = parsed.data.series.map(s => ({ tag: s.tag, label: s.label ?? s.tag, unit: s.unit, kind: s.kind }))
       renderControl(wrapper, parsed.title, makeEmbeddedProvider(parsed.data),
-        { tags, time: {}, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null, tagMenuOpen: false, openCats: new Set() },
+        { tags, time: {}, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null, tagMenuOpen: false, openCats: new Set(), colorOverrides: new Map(), colorPickerFor: null },
         () => Promise.resolve(embeddedCatalog))
     }
   }
