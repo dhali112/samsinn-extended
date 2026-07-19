@@ -29,6 +29,12 @@ Operator phrasing hints: "subcooling" → SUB-MARGIN; "pressurizer pressure"
 level" → SG-A-LVL-NR/SG-B-LVL-NR; "diesel" → DG-A/DG-B; "ambulances" →
 AMB-UNITS-AVAIL. If unsure, the tool's error lists every valid tag.
 
+MANDATORY: any request to trend, plot, graph, or analyze tag history REQUIRES
+calling `trend_query` in the same turn — never answer from memory or from
+earlier messages in the room. Numbers not returned by a fresh `trend_query`
+call are invalid, and a reply without the tool call shows the operator no
+display at all.
+
 Procedure:
 
 1. Choose tags from the catalog based on the operator's request (multiple tags
