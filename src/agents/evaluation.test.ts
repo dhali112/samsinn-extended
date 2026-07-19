@@ -335,6 +335,46 @@ describe('evaluate (tool loop)', () => {
     expect(result.decision.toolTrace![0]!.success).toBe(true)
   })
 
+  test('tool attachment appended when the model omits it', async () => {
+    const fence = '```trend\n{"trends":[{"tag":"PT-455"}],"time":{"window":"8h"}}\n```'
+    const { provider } = makeScriptedProvider([
+      { toolCalls: [{ function: { name: 'trend_query', arguments: { tags: ['PT-455'] } } }] },
+      { content: 'interpretation without the fence' },
+    ])
+    const exec: ToolExecutor = async (toolCalls) =>
+      toolCalls.map(() => ({ success: true, data: { report: fence, attachment: fence } }))
+    const result = await evaluate(
+      baseContextResult(), baseConfig, provider, exec, 5, 'room-1',
+      { toolDefinitions: [] },
+    )
+    const r = result.decision.response
+    expect(r.action).toBe('respond')
+    if (r.action === 'respond') {
+      expect(r.content).toContain('interpretation without the fence')
+      expect(r.content).toContain(fence)
+    }
+  })
+
+  test('tool attachment not duplicated when the model includes it verbatim', async () => {
+    const fence = '```trend\n{"trends":[{"tag":"PT-455"}],"time":{"window":"8h"}}\n```'
+    const { provider } = makeScriptedProvider([
+      { toolCalls: [{ function: { name: 'trend_query', arguments: { tags: ['PT-455'] } } }] },
+      { content: `${fence}\n\nlooks normal` },
+    ])
+    const exec: ToolExecutor = async (toolCalls) =>
+      toolCalls.map(() => ({ success: true, data: { report: fence, attachment: fence } }))
+    const result = await evaluate(
+      baseContextResult(), baseConfig, provider, exec, 5, 'room-1',
+      { toolDefinitions: [] },
+    )
+    const r = result.decision.response
+    expect(r.action).toBe('respond')
+    if (r.action === 'respond') {
+      const occurrences = r.content.split(fence).length - 1
+      expect(occurrences).toBe(1)
+    }
+  })
+
   test('multi-round tool loop (2 tools then content)', async () => {
     const { provider, calls } = makeScriptedProvider([
       { toolCalls: [{ function: { name: 'a', arguments: {} } }] },
