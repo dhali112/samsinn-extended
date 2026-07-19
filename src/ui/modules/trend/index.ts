@@ -376,14 +376,11 @@ const draw = (
 
     const name = document.createElement('button')
     name.style.cssText = `border:none;background:transparent;padding:0;cursor:pointer;font-size:11px;color:${colorOf.get(tag)};font-weight:600`
+    // Just the tag name — live values belong to the stats table (Last
+    // column) and the ruler readout, not the selector bar.
+    name.textContent = tag
     const last = s && s.points.length ? s.points[s.points.length - 1]![1] : null
-    let text = tag
-    if (s && last !== null) {
-      text += ` ${+last.toFixed(2)}${s.unit}`
-      if (s.kind === 'power' && typeof s.stats?.energyMWh === 'number') text += ` · ≈${Math.round(s.stats.energyMWh).toLocaleString()} MWh`
-    }
-    name.textContent = text
-    name.title = `${(catalog.find(c => c.tag === tag)?.label) ?? tag} — click to change color`
+    name.title = `${(catalog.find(c => c.tag === tag)?.label) ?? tag}${s && last !== null ? ` — now ${+last.toFixed(2)}${s.unit}` : ''} — click to change color`
     name.onclick = () => {
       state.colorPickerFor = state.colorPickerFor === tag ? null : tag
       redraw()
@@ -542,22 +539,26 @@ const draw = (
   // them unattributable with several limited tags on one plot) and labeled
   // with the tag name. Severity shows in the dash pattern: HIGH/LOW use a
   // long dash, HIGH-HIGH a tight one.
-  for (const s of analog) {
-    if (!s.limits || !axisUnits.includes(s.unit)) continue
+  // Each limited tag gets its own horizontal label column at the right
+  // edge so labels from different tags can never stack on the same spot
+  // (two tags' LOW labels at similar heights were unreadable in-line).
+  const limitedTags = analog.filter(s => s.limits && axisUnits.includes(s.unit))
+  limitedTags.forEach((s, tagIdx) => {
     const y = yFor(s)
     const color = colorOf.get(s.tag) ?? '#888'
+    const labelX = width - mr - 4 - tagIdx * 130
     const drawLimit = (v: number, text: string, dash: string): void => {
       const ly = y(v)
       if (ly < mt || ly > mt + plotH) return
       svg.appendChild(el('line', { x1: ml, x2: width - mr, y1: ly, y2: ly, stroke: color, 'stroke-opacity': 0.65, 'stroke-dasharray': dash, 'stroke-width': 1 }))
-      const label = el('text', { x: width - mr - 4, y: ly - 3, 'text-anchor': 'end', 'font-size': 9, fill: color })
+      const label = el('text', { x: labelX, y: ly - 3, 'text-anchor': 'end', 'font-size': 9, fill: color })
       label.textContent = `${s.tag} ${text}`
       svg.appendChild(label)
     }
-    if (s.limits.highHigh !== undefined) drawLimit(s.limits.highHigh, `HIHI ${s.limits.highHigh}`, '2 3')
-    if (s.limits.high !== undefined) drawLimit(s.limits.high, `HIGH ${s.limits.high}`, '8 5')
-    if (s.limits.low !== undefined) drawLimit(s.limits.low, `LOW ${s.limits.low}`, '8 5')
-  }
+    if (s.limits!.highHigh !== undefined) drawLimit(s.limits!.highHigh, `HIHI ${s.limits!.highHigh}`, '2 3')
+    if (s.limits!.high !== undefined) drawLimit(s.limits!.high, `HIGH ${s.limits!.high}`, '8 5')
+    if (s.limits!.low !== undefined) drawLimit(s.limits!.low, `LOW ${s.limits!.low}`, '8 5')
+  })
 
   // Analog traces
   for (const s of analog) {
