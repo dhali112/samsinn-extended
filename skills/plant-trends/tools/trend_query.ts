@@ -18,7 +18,7 @@ const tool = {
     type: 'object',
     properties: {
       tags: { type: 'array', items: { type: 'string' }, description: 'Tag names to plot, e.g. ["RCS_TEMP_C","RCS_PRESS_BAR"]' },
-      window: { type: 'string', description: 'Relative window back from latest data: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w (default 8h)' },
+      window: { type: 'string', description: 'Time window: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w (relative, default 8h) — or "selection" to use the region the operator selected on a trend display ("the selected region", "the window shown").' },
       from: { type: 'string', description: 'Absolute range start (ISO datetime, e.g. 2026-07-14T06:00). Overrides window/points.' },
       to: { type: 'string', description: 'Absolute range end (ISO datetime). Defaults to latest data when only from is given.' },
       points: { type: 'number', description: `Plot exactly the last N samples per tag (10–${MAX_POINTS}). Overrides window.` },
@@ -32,7 +32,7 @@ const tool = {
     let to = typeof params.to === 'string' || typeof params.to === 'number' ? params.to : undefined
 
     let regionContext: string | null = null
-    if (params.useSelectedRegion === true) {
+    if (params.useSelectedRegion === true || params.window === 'selection') {
       const sel = getSelectedRegion()
       if (!sel) {
         return { success: false, error: 'No region is currently selected on a trend display. Ask the operator to switch the display to Region mode and drag across the span of interest first.' }
@@ -48,7 +48,7 @@ const tool = {
 
     const result = await queryTrends({
       tags,
-      window: typeof params.window === 'string' ? params.window : undefined,
+      window: typeof params.window === 'string' && params.window !== 'selection' ? params.window : undefined,
       from,
       to,
       points: typeof params.points === 'number' ? params.points : undefined,

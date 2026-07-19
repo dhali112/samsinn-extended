@@ -595,7 +595,18 @@ const draw = (
     const px = x(e.t)
     const color = EVENT_COLOR[e.level] ?? '#6b7280'
     svg.appendChild(el('line', { x1: px, x2: px, y1: mt, y2: mt + plotH, stroke: color, 'stroke-opacity': 0.55, 'stroke-dasharray': '2 3' }))
-    const marker = el('path', { d: `M${px - 4},${mt} L${px + 4},${mt} L${px},${mt + 7} Z`, fill: color })
+    // Alarm markers sit ON the violated threshold line (at the crossing
+    // time); state changes and notices stay at the plot top as time flags.
+    let markerTop = mt
+    if (e.level === 'HIGH' || e.level === 'HIHI' || e.level === 'LOW') {
+      const s = analog.find(sr => sr.tag === e.tag && sr.limits && axisUnits.includes(sr.unit))
+      const lim = s ? (e.level === 'HIHI' ? s.limits!.highHigh : e.level === 'HIGH' ? s.limits!.high : s.limits!.low) : undefined
+      if (s && lim !== undefined) {
+        const ly = yFor(s)(lim)
+        if (ly >= mt + 7 && ly <= mt + plotH) markerTop = ly - 7
+      }
+    }
+    const marker = el('path', { d: `M${px - 4},${markerTop} L${px + 4},${markerTop} L${px},${markerTop + 7} Z`, fill: color })
     const tip = el('title')
     tip.textContent = `[${e.level}] ${e.text}`
     marker.appendChild(tip)

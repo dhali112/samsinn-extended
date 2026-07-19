@@ -26,10 +26,13 @@ Hints: "subcooling" → SUB-MARGIN · "pressurizer pressure" → PT-455 ·
 
 Time axis (one of): { window: 15m|30m|1h|4h|8h|24h|48h|1w } (default 8h) ·
 { from, to } as ISO datetimes · { points: N } for the last N samples (≤240) ·
-{ useSelectedRegion: true } when the operator says "the selected region" /
-"the window shown" (tags optional — they default to that display's tags; a
-region always refers to this trend display, never to weather or Leitbild).
+{ window: "selection" } when the operator says "the selected region", "the
+window shown", or "this region" (tags optional — they default to that
+display's tags; a region always refers to this trend display, never to
+weather or Leitbild).
 
 After the call, reply with 2–4 sentences from `analysis`: state
 `analysis.overall` (NORMAL / ATTENTION / ALARM) plainly and use
 `analysis.lines` for specifics. Use only numbers from the analysis.
+Do not write any diagram or fence yourself — the trend display is
+attached to your message automatically.

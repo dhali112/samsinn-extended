@@ -331,6 +331,25 @@ const parseWhen = (v: unknown): number | null => {
 }
 
 export const queryTrends = async (params: TrendQueryParams): Promise<TrendQueryResult | { error: string }> => {
+  // window === 'selection' resolves the operator's drag-selected region,
+  // with tags defaulting to the pens of the display the selection was made
+  // on. Folded into the window parameter because small models reliably
+  // choose among values of a parameter they already use, but tend to
+  // ignore a separate boolean flag.
+  if (params.window === 'selection') {
+    const sel = getSelectedRegion()
+    if (!sel) {
+      return { error: 'No region is currently selected on a trend display. Ask the operator to switch the display to Region mode and drag across the span of interest first.' }
+    }
+    return queryTrends({
+      ...params,
+      window: undefined,
+      from: sel.from,
+      to: sel.to,
+      tags: params.tags.length > 0 ? params.tags : sel.tags,
+    })
+  }
+
   const tags = params.tags.map(String)
   const unknown = tags.filter(t => !TREND_TAGS[t])
   if (tags.length === 0 || unknown.length > 0) {
