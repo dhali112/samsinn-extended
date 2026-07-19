@@ -19,7 +19,9 @@
 // fake data was generated once, so relative windows anchor to data end.
 
 import { readFile } from 'node:fs/promises'
+import { readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 export interface TagMeta {
   readonly label: string
@@ -293,11 +295,37 @@ export interface RegionSelection {
   readonly tags: ReadonlyArray<string>
   readonly savedAt: number
 }
+// Persisted to disk so a selection survives server restarts (a selection
+// made in the evening must still resolve the next morning).
+const SELECTION_FILE = join(homedir(), '.samsinn', 'trend-selection.json')
 let selectedRegion: RegionSelection | null = null
-export const setSelectedRegion = (sel: { from: number; to: number; tags: ReadonlyArray<string> } | null): void => {
-  selectedRegion = sel ? { ...sel, savedAt: Date.now() } : null
+let selectionLoaded = false
+const loadSelection = (): void => {
+  if (selectionLoaded) return
+  selectionLoaded = true
+  try {
+    const raw = JSON.parse(readFileSync(SELECTION_FILE, 'utf-8')) as RegionSelection
+    if (typeof raw?.from === 'number' && typeof raw?.to === 'number' && Array.isArray(raw.tags)) {
+      selectedRegion = raw
+    }
+  } catch { /* no stored selection yet — expected on first run / after clear */ }
 }
-export const getSelectedRegion = (): RegionSelection | null => selectedRegion
+export const setSelectedRegion = (sel: { from: number; to: number; tags: ReadonlyArray<string> } | null): void => {
+  loadSelection()
+  selectedRegion = sel ? { ...sel, savedAt: Date.now() } : null
+  try {
+    if (selectedRegion) writeFileSync(SELECTION_FILE, JSON.stringify(selectedRegion))
+    else rmSync(SELECTION_FILE, { force: true })
+  } catch (err) {
+    // Loud: a selection that silently fails to persist would resurface as
+    // "the agent forgot my region" after the next restart.
+    console.warn('[trends] failed to persist region selection:', err)
+  }
+}
+export const getSelectedRegion = (): RegionSelection | null => {
+  loadSelection()
+  return selectedRegion
+}
 
 export interface TrendQueryParams {
   readonly tags: ReadonlyArray<string>

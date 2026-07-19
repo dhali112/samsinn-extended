@@ -733,12 +733,25 @@ const draw = (
     const head = document.createElement('div')
     head.style.cssText = 'display:flex;align-items:center;gap:8px'
     const headText = document.createElement('b')
-    headText.textContent = `Region ${fmt(state.region.from)} – ${fmt(state.region.to)} (${dur >= 3600 ? `${(dur / 3600).toFixed(1)}h` : `${Math.round(dur / 60)} min`})`
+    headText.textContent = `Region ${fmt(state.region.from)} – ${fmt(state.region.to)} (${dur >= 3600 ? `${(dur / 3600).toFixed(1)}h` : `${Math.round(dur / 60)} min`}) —`
     head.appendChild(headText)
-    const hint = document.createElement('span')
-    hint.style.cssText = 'opacity:.6'
-    hint.textContent = 'saved — you can ask the agent about "the selected region"'
-    head.appendChild(hint)
+    // One-click handoff to the agent: sends the question through the room's
+    // own composer, so the message (with explicit times) lands in the
+    // conversation and the agent resolves it via trend_query.
+    const ask = document.createElement('button')
+    ask.textContent = 'ask the agent about the selected region'
+    ask.style.cssText = CTL_STYLE + ';cursor:pointer'
+    ask.onclick = () => {
+      const ta = document.querySelector('textarea[placeholder^="Type a message"]') as HTMLTextAreaElement | null
+      const form = ta?.closest('form')
+      if (!ta || !form) {
+        ask.textContent = '⚠ open a room composer first'
+        return
+      }
+      ta.value = `What's happening in the selected region (${fmt(state.region!.from)} – ${fmt(state.region!.to)}) on the plant trend? Analyze it and flag anything abnormal.`
+      form.requestSubmit()
+    }
+    head.appendChild(ask)
     const clear = document.createElement('button')
     clear.textContent = '✕ clear'
     clear.style.cssText = CTL_STYLE + ';cursor:pointer;margin-left:auto'
