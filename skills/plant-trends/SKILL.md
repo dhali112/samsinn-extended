@@ -4,16 +4,30 @@ description: Use when the operator asks to trend, plot, graph, or review the his
 ---
 
 Historical trend display for the plant simulation (WinCC OnlineTrendControl
-style). Tag catalog — pick the tags that match the operator's words:
+style). Tag catalog by category — pick tags matching the operator's words
+(names follow the pwr-ops wiki tag catalogue):
 
-| Tag | Meaning | Unit | Kind |
-|---|---|---|---|
-| REACTOR_POWER_MW | Reactor thermal power | MW | power |
-| GEN_POWER_MW | Generator electrical output / power draw | MW | power |
-| RCS_TEMP_C | Reactor coolant temperature | °C | analog (HIGH 305, HIHI 310, LOW 280) |
-| RCS_PRESS_BAR | Reactor coolant pressure | bar | analog (HIGH 158, LOW 150) |
-| CTRL_ROD_POS_PCT | Control rod position | % | analog |
-| CHARGING_PUMP_A_RUN | Charging pump A running status | – | binary |
+- Plant Overview: REACTOR_POWER_MW, GEN_POWER_MW (power → energy MWh),
+  RCS_TEMP_C, RCS_PRESS_BAR, CTRL_ROD_POS_PCT, CHARGING_PUMP_A_RUN
+- RCS: TAVG, TE-411-HOT, TE-411-COLD, SUB-MARGIN (subcooling), CET-AVG
+  (core-exit temp), RCS-BORON, RCP-1, RCP-2
+- Pressurizer: PT-455 (pressure), PZR-LVL, PZR-HTR, PORV-456A
+- Steam Generators: SG-A-LVL-NR, SG-B-LVL-NR, SG-A-PR, SG-B-PR, SG-A-N16,
+  MS-HEADER-PR, MSIV-A
+- Feedwater & AFW: MFW-A-CV, AFW-FLOW, AFW-PUMP-A, AFW-PUMP-T, TDAFW-SPEED,
+  CST-LVL
+- Safety Injection: SI-SIG, SI-PUMP-A, SI-FLOW, RWST-LVL, ACCUM-1
+- Containment: CTMT-PR, CTMT-TEMP, CTMT-RAD, CTMT-SUMP-LVL
+- Reactor Control: NIS-PR-AVG (reactor power %), NIS-IR, NIS-SR, ROD-POS-AVG
+- Electrical: DG-A, DG-B, BUS-A-EMERG, DC-BUS-LVL
+- Radiation Monitoring: AEJ-RAD (air ejector — steam-side activity),
+  MAB-RAD, CCW-RAD
+- Leitbild: AMB-UNITS-AVAIL, AMB-INCIDENTS-ACTIVE, HOSP-ED-OCC
+
+Operator phrasing hints: "subcooling" → SUB-MARGIN; "pressurizer pressure"
+→ PT-455; "reactor power" → NIS-PR-AVG or REACTOR_POWER_MW; "steam generator
+level" → SG-A-LVL-NR/SG-B-LVL-NR; "diesel" → DG-A/DG-B; "ambulances" →
+AMB-UNITS-AVAIL. If unsure, the tool's error lists every valid tag.
 
 Procedure:
 

@@ -19,7 +19,8 @@ export const trendRoutes: RouteEntry[] = [
     pattern: /^\/api\/trends\/tags$/,
     handler: () =>
       json(Object.entries(TREND_TAGS).map(([tag, m]) => ({
-        tag, label: m.label, unit: m.unit, kind: m.kind, ...(m.limits ? { limits: m.limits } : {}),
+        tag, label: m.label, unit: m.unit, kind: m.kind, category: m.category,
+        ...(m.limits ? { limits: m.limits } : {}),
       }))),
   },
   {

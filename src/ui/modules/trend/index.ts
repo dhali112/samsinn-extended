@@ -42,7 +42,7 @@ interface TrendData {
   readonly events?: ReadonlyArray<TrendEvent>
 }
 interface TimeCfg { window?: string; from?: string; to?: string; points?: number }
-interface TagInfo { readonly tag: string; readonly label: string; readonly unit: string; readonly kind: string }
+interface TagInfo { readonly tag: string; readonly label: string; readonly unit: string; readonly kind: string; readonly category?: string }
 
 // Provider: resolves (pens, time) → data. 'archive' hits the API; 'manual'
 // slices data embedded in a legacy fence.
@@ -60,6 +60,10 @@ interface CtlState {
   // a server-side selection the agent can reference ("the window shown").
   cursorMode: 'ruler' | 'region'
   region: { from: number; to: number } | null
+  // Tag dropdown UI state, kept across redraws so toggling a tag doesn't
+  // collapse the menu the operator is working in.
+  tagMenuOpen: boolean
+  readonly openCats: Set<string>
 }
 
 const PALETTE = ['#2563eb', '#f59e0b', '#059669', '#8b5cf6', '#0891b2', '#d946ef', '#84cc16', '#f97316']
@@ -346,38 +350,75 @@ const draw = (
   bar.appendChild(exp)
   wrapper.appendChild(bar)
 
-  // --- Tag list: every catalog tag with an on/off checkbox ---
-  const tagList = document.createElement('div')
-  tagList.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:0 8px 6px;font-size:11px'
-  const tagsCaption = document.createElement('span')
-  tagsCaption.textContent = 'Tags:'
-  tagsCaption.style.cssText = 'opacity:.6;font-weight:600'
-  tagList.appendChild(tagsCaption)
-  for (const info of catalog) {
-    const on = state.tags.includes(info.tag)
-    const label = document.createElement('label')
-    label.style.cssText = `display:inline-flex;align-items:center;gap:4px;cursor:pointer;color:${on ? colorOf.get(info.tag) : 'inherit'};opacity:${on ? 1 : 0.6}`
-    label.title = `${info.label}${info.unit ? ` (${info.unit})` : ''}`
-    const cb = document.createElement('input')
-    cb.type = 'checkbox'
-    cb.checked = on
-    cb.onchange = () => {
-      if (cb.checked) state.tags = [...state.tags, info.tag]
-      else state.tags = state.tags.filter(t => t !== info.tag)
-      refresh()
-    }
-    label.appendChild(cb)
-    const s = data.series.find(sr => sr.tag === info.tag)
+  // --- Tag selector: dropdown of categories, each expanding to its tags ---
+  const tagBar = document.createElement('div')
+  tagBar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:0 8px 6px;font-size:11px;position:relative'
+
+  const tagBtn = document.createElement('button')
+  tagBtn.textContent = `Tags (${state.tags.length}) ▾`
+  tagBtn.style.cssText = CTL_STYLE + ';cursor:pointer;font-weight:600'
+  tagBtn.onclick = () => { state.tagMenuOpen = !state.tagMenuOpen; redraw() }
+  tagBar.appendChild(tagBtn)
+
+  // Active-tag summary: colored last values for what is plotted
+  for (const tag of state.tags) {
+    const s = data.series.find(sr => sr.tag === tag)
+    const span = document.createElement('span')
+    span.style.cssText = `color:${colorOf.get(tag)};font-weight:600`
     const last = s && s.points.length ? s.points[s.points.length - 1]![1] : null
-    let text = info.tag
-    if (on && s && last !== null) {
+    let text = tag
+    if (s && last !== null) {
       text += ` ${+last.toFixed(2)}${s.unit}`
       if (s.kind === 'power' && typeof s.stats?.energyMWh === 'number') text += ` · ≈${Math.round(s.stats.energyMWh).toLocaleString()} MWh`
     }
-    label.appendChild(document.createTextNode(text))
-    tagList.appendChild(label)
+    span.textContent = text
+    span.title = (catalog.find(c => c.tag === tag)?.label) ?? tag
+    tagBar.appendChild(span)
   }
-  wrapper.appendChild(tagList)
+
+  if (state.tagMenuOpen) {
+    const menu = document.createElement('div')
+    menu.style.cssText = 'position:absolute;top:100%;left:8px;z-index:20;min-width:280px;max-height:320px;overflow-y:auto;border:1px solid rgba(128,128,128,.45);border-radius:6px;padding:6px 8px;background:Canvas;color:CanvasText;box-shadow:0 4px 14px rgba(0,0,0,.35);font-size:11px'
+    const cats = new Map<string, TagInfo[]>()
+    for (const info of catalog) {
+      const cat = info.category ?? 'Other'
+      if (!cats.has(cat)) cats.set(cat, [])
+      cats.get(cat)!.push(info)
+    }
+    for (const [cat, infos] of cats) {
+      const det = document.createElement('details')
+      det.open = state.openCats.has(cat)
+      det.ontoggle = () => {
+        if (det.open) state.openCats.add(cat)
+        else state.openCats.delete(cat)
+      }
+      const sum = document.createElement('summary')
+      const onCount = infos.filter(i => state.tags.includes(i.tag)).length
+      sum.textContent = `${cat} (${onCount}/${infos.length})`
+      sum.style.cssText = `cursor:pointer;font-weight:600;padding:2px 0;${onCount > 0 ? '' : 'opacity:.75'}`
+      det.appendChild(sum)
+      for (const info of infos) {
+        const on = state.tags.includes(info.tag)
+        const label = document.createElement('label')
+        label.style.cssText = `display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0 1px 14px;color:${on ? colorOf.get(info.tag) : 'inherit'};opacity:${on ? 1 : 0.75}`
+        label.title = info.label
+        const cb = document.createElement('input')
+        cb.type = 'checkbox'
+        cb.checked = on
+        cb.onchange = () => {
+          if (cb.checked) state.tags = [...state.tags, info.tag]
+          else state.tags = state.tags.filter(t => t !== info.tag)
+          refresh()
+        }
+        label.appendChild(cb)
+        label.appendChild(document.createTextNode(`${info.tag}${info.unit ? ` (${info.unit.trim()})` : ''}`))
+        det.appendChild(label)
+      }
+      menu.appendChild(det)
+    }
+    tagBar.appendChild(menu)
+  }
+  wrapper.appendChild(tagBar)
 
   // --- Plot layout ---
   const width = Math.max(360, wrapper.clientWidth || 640)
@@ -860,14 +901,14 @@ export const renderTrendBlocks = async (container: HTMLElement): Promise<void> =
     if (parsed.kind === 'live') {
       const tags = parsed.cfg.trends.map(t => t.tag)
       renderControl(wrapper, parsed.cfg.title ?? `Plant trend — ${tags.join(', ')}`, archiveProvider,
-        { tags, time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null },
+        { tags, time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null, tagMenuOpen: false, openCats: new Set() },
         loadCatalog)
     } else {
       const tags = parsed.data.series.map(s => s.tag)
       // Embedded fences carry their own catalog: the series they embed.
       const embeddedCatalog: TagInfo[] = parsed.data.series.map(s => ({ tag: s.tag, label: s.label ?? s.tag, unit: s.unit, kind: s.kind }))
       renderControl(wrapper, parsed.title, makeEmbeddedProvider(parsed.data),
-        { tags, time: {}, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null },
+        { tags, time: {}, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null, tagMenuOpen: false, openCats: new Set() },
         () => Promise.resolve(embeddedCatalog))
     }
   }

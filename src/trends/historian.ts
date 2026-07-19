@@ -25,17 +25,97 @@ export interface TagMeta {
   readonly label: string
   readonly unit: string
   readonly kind: 'analog' | 'binary' | 'power'
+  readonly category: string
   readonly limits?: { low?: number; high?: number; highHigh?: number }
   readonly states?: Record<number, string>
 }
 
+// Tag catalog. Names, units, and system groupings follow the pwr-ops wiki
+// tag catalogue (samsinn-wikis.github.io/pwr-ops/tags — 113 tags documented);
+// this is a representative subset spanning every system group, plus the
+// original Plant Overview tags (kept for existing displays) and a Leitbild
+// group mirroring the ambulance-scenario domain. Extending: add a row here
+// and teach the generator its behavior — everything else (API, dropdown,
+// alarms, analysis) picks it up automatically.
+const RUN_STATES = { 0: 'STOPPED', 1: 'RUNNING' }
+const VALVE_STATES = { 0: 'CLOSED', 1: 'OPEN' }
+
 export const TREND_TAGS: Record<string, TagMeta> = {
-  REACTOR_POWER_MW: { label: 'Reactor thermal power', unit: 'MW', kind: 'power' },
-  GEN_POWER_MW: { label: 'Generator electrical power', unit: 'MW', kind: 'power', limits: { high: 1050 } },
-  RCS_TEMP_C: { label: 'RCS coolant temperature', unit: '°C', kind: 'analog', limits: { low: 280, high: 305, highHigh: 310 } },
-  RCS_PRESS_BAR: { label: 'RCS pressure', unit: 'bar', kind: 'analog', limits: { low: 150, high: 158 } },
-  CTRL_ROD_POS_PCT: { label: 'Control rod position', unit: '%', kind: 'analog' },
-  CHARGING_PUMP_A_RUN: { label: 'Charging pump A', unit: '', kind: 'binary', states: { 0: 'STOPPED', 1: 'RUNNING' } },
+  // — Plant Overview (original tags; existing displays reference these) —
+  REACTOR_POWER_MW: { label: 'Reactor thermal power', unit: 'MW', kind: 'power', category: 'Plant Overview' },
+  GEN_POWER_MW: { label: 'Generator electrical power', unit: 'MW', kind: 'power', category: 'Plant Overview', limits: { high: 1050 } },
+  RCS_TEMP_C: { label: 'RCS coolant temperature', unit: '°C', kind: 'analog', category: 'Plant Overview', limits: { low: 280, high: 305, highHigh: 310 } },
+  RCS_PRESS_BAR: { label: 'RCS pressure', unit: 'bar', kind: 'analog', category: 'Plant Overview', limits: { low: 150, high: 158 } },
+  CTRL_ROD_POS_PCT: { label: 'Control rod position', unit: '%', kind: 'analog', category: 'Plant Overview' },
+  CHARGING_PUMP_A_RUN: { label: 'Charging pump A', unit: '', kind: 'binary', category: 'Plant Overview', states: RUN_STATES },
+
+  // — RCS —
+  'TAVG': { label: 'RCS average temperature (4-loop)', unit: '°F', kind: 'analog', category: 'RCS', limits: { low: 547, high: 594 } },
+  'TE-411-HOT': { label: 'Loop 1 hot-leg temperature', unit: '°F', kind: 'analog', category: 'RCS' },
+  'TE-411-COLD': { label: 'Loop 1 cold-leg temperature', unit: '°F', kind: 'analog', category: 'RCS' },
+  'SUB-MARGIN': { label: 'RCS subcooling margin', unit: '°F', kind: 'analog', category: 'RCS', limits: { low: 25 } },
+  'CET-AVG': { label: 'Core-exit thermocouple average', unit: '°F', kind: 'analog', category: 'RCS', limits: { high: 700 } },
+  'RCS-BORON': { label: 'RCS boron concentration', unit: ' ppm', kind: 'analog', category: 'RCS' },
+  'RCP-1': { label: 'Reactor coolant pump 1', unit: '', kind: 'binary', category: 'RCS', states: RUN_STATES },
+  'RCP-2': { label: 'Reactor coolant pump 2', unit: '', kind: 'binary', category: 'RCS', states: RUN_STATES },
+
+  // — Pressurizer —
+  'PT-455': { label: 'Pressurizer pressure (wide-range)', unit: ' psig', kind: 'analog', category: 'Pressurizer', limits: { low: 1870, high: 2350, highHigh: 2385 } },
+  'PZR-LVL': { label: 'Pressurizer level', unit: '%', kind: 'analog', category: 'Pressurizer', limits: { low: 17, high: 92 } },
+  'PZR-HTR': { label: 'Pressurizer heaters', unit: '', kind: 'binary', category: 'Pressurizer', states: { 0: 'OFF', 1: 'ON' } },
+  'PORV-456A': { label: 'PORV 456A position', unit: '', kind: 'binary', category: 'Pressurizer', states: VALVE_STATES },
+
+  // — Steam Generators —
+  'SG-A-LVL-NR': { label: 'SG A narrow-range level', unit: '%', kind: 'analog', category: 'Steam Generators', limits: { low: 30, high: 82 } },
+  'SG-B-LVL-NR': { label: 'SG B narrow-range level', unit: '%', kind: 'analog', category: 'Steam Generators', limits: { low: 30, high: 82 } },
+  'SG-A-PR': { label: 'SG A steam pressure', unit: ' psig', kind: 'analog', category: 'Steam Generators', limits: { high: 1106 } },
+  'SG-B-PR': { label: 'SG B steam pressure', unit: ' psig', kind: 'analog', category: 'Steam Generators', limits: { high: 1106 } },
+  'SG-A-N16': { label: 'SG A main steam N-16 monitor', unit: ' cps', kind: 'analog', category: 'Steam Generators' },
+  'MS-HEADER-PR': { label: 'Main steam header pressure', unit: ' psig', kind: 'analog', category: 'Steam Generators' },
+  'MSIV-A': { label: 'Main steam isolation valve A', unit: '', kind: 'binary', category: 'Steam Generators', states: VALVE_STATES },
+
+  // — Feedwater & AFW —
+  'MFW-A-CV': { label: 'Main feedwater control valve A', unit: '%', kind: 'analog', category: 'Feedwater & AFW' },
+  'AFW-FLOW': { label: 'Aggregate AFW header flow', unit: ' gpm', kind: 'analog', category: 'Feedwater & AFW' },
+  'AFW-PUMP-A': { label: 'Motor-driven AFW pump A', unit: '', kind: 'binary', category: 'Feedwater & AFW', states: RUN_STATES },
+  'AFW-PUMP-T': { label: 'Turbine-driven AFW pump', unit: '', kind: 'binary', category: 'Feedwater & AFW', states: RUN_STATES },
+  'TDAFW-SPEED': { label: 'Turbine-driven AFW pump speed', unit: ' rpm', kind: 'analog', category: 'Feedwater & AFW' },
+  'CST-LVL': { label: 'Condensate storage tank level', unit: '%', kind: 'analog', category: 'Feedwater & AFW', limits: { low: 30 } },
+
+  // — Safety Injection —
+  'SI-SIG': { label: 'Safety injection actuation signal', unit: '', kind: 'binary', category: 'Safety Injection', states: { 0: 'NORMAL', 1: 'ACTUATED' } },
+  'SI-PUMP-A': { label: 'High-head SI pump A', unit: '', kind: 'binary', category: 'Safety Injection', states: RUN_STATES },
+  'SI-FLOW': { label: 'High-head SI header flow', unit: ' gpm', kind: 'analog', category: 'Safety Injection' },
+  'RWST-LVL': { label: 'Refueling water storage tank level', unit: '%', kind: 'analog', category: 'Safety Injection', limits: { low: 30 } },
+  'ACCUM-1': { label: 'Accumulator 1 discharge isolation', unit: '', kind: 'binary', category: 'Safety Injection', states: VALVE_STATES },
+
+  // — Containment —
+  'CTMT-PR': { label: 'Containment building pressure', unit: ' psig', kind: 'analog', category: 'Containment', limits: { high: 3 } },
+  'CTMT-TEMP': { label: 'Containment average temperature', unit: '°F', kind: 'analog', category: 'Containment', limits: { high: 120 } },
+  'CTMT-RAD': { label: 'Containment area radiation', unit: ' rem/hr', kind: 'analog', category: 'Containment', limits: { high: 10 } },
+  'CTMT-SUMP-LVL': { label: 'Containment recirc sump level', unit: '%', kind: 'analog', category: 'Containment', limits: { high: 10 } },
+
+  // — Reactor Control (NIS + rods) —
+  'NIS-PR-AVG': { label: 'Power-range average (4-channel)', unit: '%', kind: 'analog', category: 'Reactor Control', limits: { high: 109 } },
+  'NIS-IR': { label: 'Intermediate-range signal', unit: ' µA', kind: 'analog', category: 'Reactor Control' },
+  'NIS-SR': { label: 'Source-range count rate', unit: ' cps', kind: 'analog', category: 'Reactor Control' },
+  'ROD-POS-AVG': { label: 'Average rod position', unit: ' steps', kind: 'analog', category: 'Reactor Control' },
+
+  // — Electrical —
+  'DG-A': { label: 'Emergency diesel generator A', unit: '', kind: 'binary', category: 'Electrical', states: RUN_STATES },
+  'DG-B': { label: 'Emergency diesel generator B', unit: '', kind: 'binary', category: 'Electrical', states: RUN_STATES },
+  'BUS-A-EMERG': { label: 'Emergency 4kV bus A energized', unit: '', kind: 'binary', category: 'Electrical', states: { 0: 'DEAD', 1: 'ENERGIZED' } },
+  'DC-BUS-LVL': { label: 'Vital DC bus voltage', unit: ' V', kind: 'analog', category: 'Electrical', limits: { low: 125 } },
+
+  // — Radiation Monitoring —
+  'AEJ-RAD': { label: 'Condenser air-ejector monitor', unit: ' cps', kind: 'analog', category: 'Radiation Monitoring', limits: { high: 1000 } },
+  'MAB-RAD': { label: 'Main aux building area monitor', unit: ' rem/hr', kind: 'analog', category: 'Radiation Monitoring', limits: { high: 2 } },
+  'CCW-RAD': { label: 'Component cooling water monitor', unit: ' rem/hr', kind: 'analog', category: 'Radiation Monitoring' },
+
+  // — Leitbild (ambulance scenario domain) —
+  'AMB-UNITS-AVAIL': { label: 'Ambulance units available', unit: '', kind: 'analog', category: 'Leitbild', limits: { low: 1 } },
+  'AMB-INCIDENTS-ACTIVE': { label: 'Active incidents', unit: '', kind: 'analog', category: 'Leitbild' },
+  'HOSP-ED-OCC': { label: 'Hospital ED occupancy', unit: '%', kind: 'analog', category: 'Leitbild', limits: { high: 95 } },
 }
 
 export const TREND_WINDOWS: Record<string, number> = {
