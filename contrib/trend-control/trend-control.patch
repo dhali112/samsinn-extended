@@ -1,0 +1,1666 @@
+diff --git a/skills/plant-trends/SKILL.md b/skills/plant-trends/SKILL.md
+new file mode 100644
+index 0000000..4b33a49
+--- /dev/null
++++ b/skills/plant-trends/SKILL.md
+@@ -0,0 +1,67 @@
++---
++name: plant-trends
++description: Use when the operator asks to trend, plot, graph, or review the history of plant process values — power, temperature, pressure, rod position, pump status — or asks whether a parameter is behaving normally. Call trend_query and post its trend display, then interpret it.
++---
++
++Historical trend display for the plant simulation (WinCC OnlineTrendControl
++style). Tag catalog by category — pick tags matching the operator's words
++(names follow the pwr-ops wiki tag catalogue):
++
++- Plant Overview: REACTOR_POWER_MW, GEN_POWER_MW (power → energy MWh),
++  RCS_TEMP_C, RCS_PRESS_BAR, CTRL_ROD_POS_PCT, CHARGING_PUMP_A_RUN
++- RCS: TAVG, TE-411-HOT, TE-411-COLD, SUB-MARGIN (subcooling), CET-AVG
++  (core-exit temp), RCS-BORON, RCP-1, RCP-2
++- Pressurizer: PT-455 (pressure), PZR-LVL, PZR-HTR, PORV-456A
++- Steam Generators: SG-A-LVL-NR, SG-B-LVL-NR, SG-A-PR, SG-B-PR, SG-A-N16,
++  MS-HEADER-PR, MSIV-A
++- Feedwater & AFW: MFW-A-CV, AFW-FLOW, AFW-PUMP-A, AFW-PUMP-T, TDAFW-SPEED,
++  CST-LVL
++- Safety Injection: SI-SIG, SI-PUMP-A, SI-FLOW, RWST-LVL, ACCUM-1
++- Containment: CTMT-PR, CTMT-TEMP, CTMT-RAD, CTMT-SUMP-LVL
++- Reactor Control: NIS-PR-AVG (reactor power %), NIS-IR, NIS-SR, ROD-POS-AVG
++- Electrical: DG-A, DG-B, BUS-A-EMERG, DC-BUS-LVL
++- Radiation Monitoring: AEJ-RAD (air ejector — steam-side activity),
++  MAB-RAD, CCW-RAD
++- Leitbild: AMB-UNITS-AVAIL, AMB-INCIDENTS-ACTIVE, HOSP-ED-OCC
++
++Operator phrasing hints: "subcooling" → SUB-MARGIN; "pressurizer pressure"
++→ PT-455; "reactor power" → NIS-PR-AVG or REACTOR_POWER_MW; "steam generator
++level" → SG-A-LVL-NR/SG-B-LVL-NR; "diesel" → DG-A/DG-B; "ambulances" →
++AMB-UNITS-AVAIL. If unsure, the tool's error lists every valid tag.
++
++Procedure:
++
++1. Choose tags from the catalog based on the operator's request (multiple tags
++   on one display is fine and encouraged when they are related, e.g. coolant
++   temperature + pressure). Choose ONE time-axis mode from the operator's
++   phrasing:
++   - Absolute range → { from, to } as ISO datetimes
++     ("between 06:00 and noon yesterday" → from: 2026-07-14T06:00, to: 2026-07-14T12:00)
++   - Last N samples → { points } ("show me the last 100 data points" → points: 100, max 240)
++   - Relative window → { window }: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w
++     ("past week" → 1w). Default 8h if the operator didn't say.
++   - Operator's selected region → { useSelectedRegion: true } when they say
++     "the window shown", "the selected region", "this region", "the span I
++     selected". Tags may be omitted (they default to that display's tags).
++     IMPORTANT: a "region" or "window shown" ALWAYS refers to the plant trend
++     display and its process tags — never to weather maps, Leitbild
++     scenarios, or any other earlier display. For region questions use ONLY
++     trend_query; do not call weather or lb_* tools.
++2. Call `trend_query` with { tags } plus the chosen time-axis fields.
++3. Post the returned `report` field EXACTLY as returned. It is a SMALL
++   ```trend config fence — the display fetches its own data from the server
++   and the operator can then add/remove pens, change the time window, move a
++   ruler cursor, and export CSV directly on the display; alarms and anomalies
++   are marked on it automatically. Never write data points into the fence.
++4. Then interpret the display in 2–4 sentences using `analysis`:
++   - `analysis.overall` is NORMAL / ATTENTION / ALARM — state it plainly
++     (e.g. "operating within parameters" / "needs attention" / "alarm state").
++   - Use `analysis.lines` for the specifics (excursions, pump trips, energy
++     totals). Do not invent numbers not present in the analysis.
++5. If the operator asks a follow-up about an already-posted trend, call
++   `trend_query` again with the same tags/window and answer from `analysis`
++   without re-posting the display.
++
++Binary tags render stepped automatically; power tags include energy (MWh)
++integrated over the window; alarm-limit crossings, rapid changes, and state
++changes appear as markers on the display.
+diff --git a/skills/plant-trends/tools/trend_query.ts b/skills/plant-trends/tools/trend_query.ts
+new file mode 100644
+index 0000000..816b488
+--- /dev/null
++++ b/skills/plant-trends/tools/trend_query.ts
+@@ -0,0 +1,89 @@
++// trend_query — configure a front-end trend display + get its analysis.
++//
++// ARCHITECTURE: the trend control is a front-end object. Data NEVER passes
++// through the LLM — the fence this tool returns is a small config (pens +
++// time axis); the browser control fetches actual samples itself from
++// /api/trends/data. The analysis returned here is computed server-side by
++// src/trends/historian.ts (which also backs the API), so the agent's
++// interpretation and the operator's display read from the same source.
++
++import { queryTrends, TREND_TAGS, MAX_POINTS, getSelectedRegion } from '../../../src/trends/historian.ts'
++
++const tool = {
++  name: 'trend_query',
++  description: 'Historical trend display for plant process tags (like WinCC OnlineTrendControl). Configures a front-end trend control (the browser fetches the data itself) and returns a server-computed analysis with alarms and anomalies.',
++  usage: 'Pick tags matching what the operator asked about (see skill for the tag catalog) and ONE time-axis mode: from/to for an absolute range, points for the last N samples, or window for a relative duration (default 8h). Post the returned `report` verbatim (it is small), then interpret using `analysis.lines` and `analysis.overall`.',
++  returns: 'Object with `report` (a small ```trend config fence, ready to post) and `analysis` { overall: NORMAL|ATTENTION|ALARM, lines: string[], series: per-tag stats }.',
++  parameters: {
++    type: 'object',
++    properties: {
++      tags: { type: 'array', items: { type: 'string' }, description: 'Tag names to plot, e.g. ["RCS_TEMP_C","RCS_PRESS_BAR"]' },
++      window: { type: 'string', description: 'Relative window back from latest data: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w (default 8h)' },
++      from: { type: 'string', description: 'Absolute range start (ISO datetime, e.g. 2026-07-14T06:00). Overrides window/points.' },
++      to: { type: 'string', description: 'Absolute range end (ISO datetime). Defaults to latest data when only from is given.' },
++      points: { type: 'number', description: `Plot exactly the last N samples per tag (10–${MAX_POINTS}). Overrides window.` },
++      useSelectedRegion: { type: 'boolean', description: 'Use the region the operator selected on a trend display (Region mode drag). Use when the operator says "the window shown", "the selected region", "this region". Tags default to the pens of that display if omitted.' },
++    },
++    required: [],
++  },
++  execute: async (params: Record<string, unknown>): Promise<Record<string, unknown>> => {
++    let tags = Array.isArray(params.tags) ? params.tags.map(String) : []
++    let from = typeof params.from === 'string' || typeof params.from === 'number' ? params.from : undefined
++    let to = typeof params.to === 'string' || typeof params.to === 'number' ? params.to : undefined
++
++    let regionContext: string | null = null
++    if (params.useSelectedRegion === true) {
++      const sel = getSelectedRegion()
++      if (!sel) {
++        return { success: false, error: 'No region is currently selected on a trend display. Ask the operator to switch the display to Region mode and drag across the span of interest first.' }
++      }
++      from = sel.from
++      to = sel.to
++      if (tags.length === 0) tags = [...sel.tags]
++      regionContext = `This is the region the operator selected on the PLANT TREND display (tags: ${sel.tags.join(', ')}). Answer only about these plant process tags in this time span — the selection has nothing to do with weather, maps, or Leitbild scenarios.`
++    }
++    if (tags.length === 0) {
++      return { success: false, error: `No tags given. Available: ${Object.keys(TREND_TAGS).join(', ')}` }
++    }
++
++    const result = await queryTrends({
++      tags,
++      window: typeof params.window === 'string' ? params.window : undefined,
++      from,
++      to,
++      points: typeof params.points === 'number' ? params.points : undefined,
++    })
++    if ('error' in result) return { success: false, error: result.error }
++
++    // Config-only fence (spec §10): pens + time axis. The front-end control
++    // resolves this against /api/trends/data on render and on every operator
++    // interaction (add pens, change window, etc.).
++    const time: Record<string, unknown> = {}
++    if (from !== undefined || to !== undefined) {
++      time.from = new Date(result.from * 1000).toISOString()
++      time.to = new Date(result.to * 1000).toISOString()
++    } else if (typeof params.points === 'number') {
++      time.points = Math.round(params.points)
++    } else {
++      time.window = typeof params.window === 'string' ? params.window : '8h'
++    }
++    const config = {
++      title: `Plant trend — ${tags.join(', ')} (${result.modeLabel})`,
++      trends: tags.map(tag => ({ tag })),
++      time,
++    }
++
++    return {
++      success: true,
++      data: {
++        report: '```trend\n' + JSON.stringify(config) + '\n```',
++        analysis: result.analysis,
++        window: result.modeLabel,
++        availableTags: Object.keys(TREND_TAGS),
++        ...(regionContext ? { regionContext } : {}),
++      },
++    }
++  },
++}
++
++export default tool
+diff --git a/src/api/http-routes.ts b/src/api/http-routes.ts
+index b28e3dd..1e20c1b 100644
+--- a/src/api/http-routes.ts
++++ b/src/api/http-routes.ts
+@@ -35,6 +35,7 @@ import { geodataRoutes } from './routes/geodata.ts'
+ import { documentRoutes } from './routes/documents.ts'
+ import { diagnosticRoutes } from './routes/diagnostics.ts'
+ import { leitbildMirrorRoutes } from './routes/leitbild-mirror.ts'
++import { trendRoutes } from './routes/trends.ts'
+ import type { RouteContext } from './routes/types.ts'
+ 
+ // Route helpers live in ./routes/helpers.ts to keep http-routes.ts cycle-free.
+@@ -46,6 +47,7 @@ const allRoutes = [
+   // Tool routes come before houseRoutes so /api/tools/:name + /api/tools/rescan
+   // are matched before any catch-all patterns elsewhere.
+   ...toolRoutes,
++  ...trendRoutes,
+   ...houseRoutes,
+   ...skillRoutes,
+   ...ollamaRoutes,
+diff --git a/src/api/routes/trends.ts b/src/api/routes/trends.ts
+new file mode 100644
+index 0000000..d86bb0b
+--- /dev/null
++++ b/src/api/routes/trends.ts
+@@ -0,0 +1,68 @@
++// Plant historian trend data — backend for the front-end trend control.
++//
++//   GET /api/trends/tags — tag catalog (name, label, unit, kind, limits)
++//   GET /api/trends/data?tags=A,B&window=8h
++//                        ?tags=A&from=ISO&to=ISO
++//                        ?tags=A&points=N
++//     → { from, to, modeLabel, series, events, analysis }
++//
++// The trend control in the UI fetches from these endpoints directly; trend
++// fences in chat carry only a config (pens + time axis), never data.
++
++import { TREND_TAGS, queryTrends, setSelectedRegion, getSelectedRegion } from '../../trends/historian.ts'
++import { json, errorResponse } from './helpers.ts'
++import type { RouteEntry } from './types.ts'
++
++export const trendRoutes: RouteEntry[] = [
++  {
++    method: 'GET',
++    pattern: /^\/api\/trends\/tags$/,
++    handler: () =>
++      json(Object.entries(TREND_TAGS).map(([tag, m]) => ({
++        tag, label: m.label, unit: m.unit, kind: m.kind, category: m.category,
++        ...(m.limits ? { limits: m.limits } : {}),
++      }))),
++  },
++  {
++    method: 'GET',
++    pattern: /^\/api\/trends\/data$/,
++    handler: async (req) => {
++      const url = new URL(req.url)
++      const tags = (url.searchParams.get('tags') ?? '').split(',').map(s => s.trim()).filter(Boolean)
++      const window = url.searchParams.get('window') ?? undefined
++      const from = url.searchParams.get('from') ?? undefined
++      const to = url.searchParams.get('to') ?? undefined
++      const pointsRaw = url.searchParams.get('points')
++      const points = pointsRaw !== null ? Number(pointsRaw) : undefined
++
++      const result = await queryTrends({ tags, window, from, to, points })
++      if ('error' in result) return errorResponse(result.error, 400)
++      return json(result)
++    },
++  },
++  {
++    // Operator region selection (Region mode drag on a trend display).
++    // Stored server-side so the agent can resolve "the window shown"
++    // via trend_query { useSelectedRegion: true }.
++    method: 'POST',
++    pattern: /^\/api\/trends\/selection$/,
++    handler: async (req) => {
++      let body: { from?: number; to?: number; tags?: string[] } | null
++      try { body = await req.json() as typeof body } catch { return errorResponse('Invalid JSON body', 400) }
++      if (body === null || body.from === undefined || body.to === undefined) {
++        setSelectedRegion(null)
++        return json({ cleared: true })
++      }
++      if (typeof body.from !== 'number' || typeof body.to !== 'number' || body.from >= body.to) {
++        return errorResponse('Selection needs numeric from < to (epoch seconds)', 400)
++      }
++      setSelectedRegion({ from: body.from, to: body.to, tags: Array.isArray(body.tags) ? body.tags.map(String) : [] })
++      return json({ saved: true })
++    },
++  },
++  {
++    method: 'GET',
++    pattern: /^\/api\/trends\/selection$/,
++    handler: () => json({ selection: getSelectedRegion() }),
++  },
++]
+diff --git a/src/trends/historian.ts b/src/trends/historian.ts
+new file mode 100644
+index 0000000..fb34f5d
+--- /dev/null
++++ b/src/trends/historian.ts
+@@ -0,0 +1,420 @@
++// Plant historian — server-side data layer for the trend control.
++//
++// The trend control is a FRONT-END object: it never receives data through
++// the LLM. The agent (or an operator prompt) produces only a small config
++// (which pens, which time axis); the browser control fetches the actual
++// samples from /api/trends/data, which calls into this module.
++//
++// Storage: skills/plant-trends/data/historian.csv (fake 48h historian,
++// long format: ts_epoch_s,tag,value). loadHistory() is the ONLY function
++// that touches storage — to move to a real database, replace its body:
++//   PostgreSQL (Bun ≥1.2 built-in):
++//     import { sql } from 'bun'
++//     const rows = await sql`SELECT ts, value FROM historian
++//                            WHERE tag = ${tag} AND ts BETWEEN ${from} AND ${to}
++//                            ORDER BY ts`
++//   MS SQL: use the `mssql` npm package with the same return shape.
++//
++// "Now" is the last timestamp in the historian, not wall-clock time — the
++// fake data was generated once, so relative windows anchor to data end.
++
++import { readFile } from 'node:fs/promises'
++import { join } from 'node:path'
++
++export interface TagMeta {
++  readonly label: string
++  readonly unit: string
++  readonly kind: 'analog' | 'binary' | 'power'
++  readonly category: string
++  readonly limits?: { low?: number; high?: number; highHigh?: number }
++  readonly states?: Record<number, string>
++}
++
++// Tag catalog. Names, units, and system groupings follow the pwr-ops wiki
++// tag catalogue (samsinn-wikis.github.io/pwr-ops/tags — 113 tags documented);
++// this is a representative subset spanning every system group, plus the
++// original Plant Overview tags (kept for existing displays) and a Leitbild
++// group mirroring the ambulance-scenario domain. Extending: add a row here
++// and teach the generator its behavior — everything else (API, dropdown,
++// alarms, analysis) picks it up automatically.
++const RUN_STATES = { 0: 'STOPPED', 1: 'RUNNING' }
++const VALVE_STATES = { 0: 'CLOSED', 1: 'OPEN' }
++
++export const TREND_TAGS: Record<string, TagMeta> = {
++  // — Plant Overview (original tags; existing displays reference these) —
++  REACTOR_POWER_MW: { label: 'Reactor thermal power', unit: 'MW', kind: 'power', category: 'Plant Overview' },
++  GEN_POWER_MW: { label: 'Generator electrical power', unit: 'MW', kind: 'power', category: 'Plant Overview', limits: { high: 1050 } },
++  RCS_TEMP_C: { label: 'RCS coolant temperature', unit: '°C', kind: 'analog', category: 'Plant Overview', limits: { low: 280, high: 305, highHigh: 310 } },
++  RCS_PRESS_BAR: { label: 'RCS pressure', unit: 'bar', kind: 'analog', category: 'Plant Overview', limits: { low: 150, high: 158 } },
++  CTRL_ROD_POS_PCT: { label: 'Control rod position', unit: '%', kind: 'analog', category: 'Plant Overview' },
++  CHARGING_PUMP_A_RUN: { label: 'Charging pump A', unit: '', kind: 'binary', category: 'Plant Overview', states: RUN_STATES },
++
++  // — RCS —
++  'TAVG': { label: 'RCS average temperature (4-loop)', unit: '°F', kind: 'analog', category: 'RCS', limits: { low: 547, high: 594 } },
++  'TE-411-HOT': { label: 'Loop 1 hot-leg temperature', unit: '°F', kind: 'analog', category: 'RCS' },
++  'TE-411-COLD': { label: 'Loop 1 cold-leg temperature', unit: '°F', kind: 'analog', category: 'RCS' },
++  'SUB-MARGIN': { label: 'RCS subcooling margin', unit: '°F', kind: 'analog', category: 'RCS', limits: { low: 25 } },
++  'CET-AVG': { label: 'Core-exit thermocouple average', unit: '°F', kind: 'analog', category: 'RCS', limits: { high: 700 } },
++  'RCS-BORON': { label: 'RCS boron concentration', unit: ' ppm', kind: 'analog', category: 'RCS' },
++  'RCP-1': { label: 'Reactor coolant pump 1', unit: '', kind: 'binary', category: 'RCS', states: RUN_STATES },
++  'RCP-2': { label: 'Reactor coolant pump 2', unit: '', kind: 'binary', category: 'RCS', states: RUN_STATES },
++
++  // — Pressurizer —
++  'PT-455': { label: 'Pressurizer pressure (wide-range)', unit: ' psig', kind: 'analog', category: 'Pressurizer', limits: { low: 1870, high: 2350, highHigh: 2385 } },
++  'PZR-LVL': { label: 'Pressurizer level', unit: '%', kind: 'analog', category: 'Pressurizer', limits: { low: 17, high: 92 } },
++  'PZR-HTR': { label: 'Pressurizer heaters', unit: '', kind: 'binary', category: 'Pressurizer', states: { 0: 'OFF', 1: 'ON' } },
++  'PORV-456A': { label: 'PORV 456A position', unit: '', kind: 'binary', category: 'Pressurizer', states: VALVE_STATES },
++
++  // — Steam Generators —
++  'SG-A-LVL-NR': { label: 'SG A narrow-range level', unit: '%', kind: 'analog', category: 'Steam Generators', limits: { low: 30, high: 82 } },
++  'SG-B-LVL-NR': { label: 'SG B narrow-range level', unit: '%', kind: 'analog', category: 'Steam Generators', limits: { low: 30, high: 82 } },
++  'SG-A-PR': { label: 'SG A steam pressure', unit: ' psig', kind: 'analog', category: 'Steam Generators', limits: { high: 1106 } },
++  'SG-B-PR': { label: 'SG B steam pressure', unit: ' psig', kind: 'analog', category: 'Steam Generators', limits: { high: 1106 } },
++  'SG-A-N16': { label: 'SG A main steam N-16 monitor', unit: ' cps', kind: 'analog', category: 'Steam Generators' },
++  'MS-HEADER-PR': { label: 'Main steam header pressure', unit: ' psig', kind: 'analog', category: 'Steam Generators' },
++  'MSIV-A': { label: 'Main steam isolation valve A', unit: '', kind: 'binary', category: 'Steam Generators', states: VALVE_STATES },
++
++  // — Feedwater & AFW —
++  'MFW-A-CV': { label: 'Main feedwater control valve A', unit: '%', kind: 'analog', category: 'Feedwater & AFW' },
++  'AFW-FLOW': { label: 'Aggregate AFW header flow', unit: ' gpm', kind: 'analog', category: 'Feedwater & AFW' },
++  'AFW-PUMP-A': { label: 'Motor-driven AFW pump A', unit: '', kind: 'binary', category: 'Feedwater & AFW', states: RUN_STATES },
++  'AFW-PUMP-T': { label: 'Turbine-driven AFW pump', unit: '', kind: 'binary', category: 'Feedwater & AFW', states: RUN_STATES },
++  'TDAFW-SPEED': { label: 'Turbine-driven AFW pump speed', unit: ' rpm', kind: 'analog', category: 'Feedwater & AFW' },
++  'CST-LVL': { label: 'Condensate storage tank level', unit: '%', kind: 'analog', category: 'Feedwater & AFW', limits: { low: 30 } },
++
++  // — Safety Injection —
++  'SI-SIG': { label: 'Safety injection actuation signal', unit: '', kind: 'binary', category: 'Safety Injection', states: { 0: 'NORMAL', 1: 'ACTUATED' } },
++  'SI-PUMP-A': { label: 'High-head SI pump A', unit: '', kind: 'binary', category: 'Safety Injection', states: RUN_STATES },
++  'SI-FLOW': { label: 'High-head SI header flow', unit: ' gpm', kind: 'analog', category: 'Safety Injection' },
++  'RWST-LVL': { label: 'Refueling water storage tank level', unit: '%', kind: 'analog', category: 'Safety Injection', limits: { low: 30 } },
++  'ACCUM-1': { label: 'Accumulator 1 discharge isolation', unit: '', kind: 'binary', category: 'Safety Injection', states: VALVE_STATES },
++
++  // — Containment —
++  'CTMT-PR': { label: 'Containment building pressure', unit: ' psig', kind: 'analog', category: 'Containment', limits: { high: 3 } },
++  'CTMT-TEMP': { label: 'Containment average temperature', unit: '°F', kind: 'analog', category: 'Containment', limits: { high: 120 } },
++  'CTMT-RAD': { label: 'Containment area radiation', unit: ' rem/hr', kind: 'analog', category: 'Containment', limits: { high: 10 } },
++  'CTMT-SUMP-LVL': { label: 'Containment recirc sump level', unit: '%', kind: 'analog', category: 'Containment', limits: { high: 10 } },
++
++  // — Reactor Control (NIS + rods) —
++  'NIS-PR-AVG': { label: 'Power-range average (4-channel)', unit: '%', kind: 'analog', category: 'Reactor Control', limits: { high: 109 } },
++  'NIS-IR': { label: 'Intermediate-range signal', unit: ' µA', kind: 'analog', category: 'Reactor Control' },
++  'NIS-SR': { label: 'Source-range count rate', unit: ' cps', kind: 'analog', category: 'Reactor Control' },
++  'ROD-POS-AVG': { label: 'Average rod position', unit: ' steps', kind: 'analog', category: 'Reactor Control' },
++
++  // — Electrical —
++  'DG-A': { label: 'Emergency diesel generator A', unit: '', kind: 'binary', category: 'Electrical', states: RUN_STATES },
++  'DG-B': { label: 'Emergency diesel generator B', unit: '', kind: 'binary', category: 'Electrical', states: RUN_STATES },
++  'BUS-A-EMERG': { label: 'Emergency 4kV bus A energized', unit: '', kind: 'binary', category: 'Electrical', states: { 0: 'DEAD', 1: 'ENERGIZED' } },
++  'DC-BUS-LVL': { label: 'Vital DC bus voltage', unit: ' V', kind: 'analog', category: 'Electrical', limits: { low: 125 } },
++
++  // — Radiation Monitoring —
++  'AEJ-RAD': { label: 'Condenser air-ejector monitor', unit: ' cps', kind: 'analog', category: 'Radiation Monitoring', limits: { high: 1000 } },
++  'MAB-RAD': { label: 'Main aux building area monitor', unit: ' rem/hr', kind: 'analog', category: 'Radiation Monitoring', limits: { high: 2 } },
++  'CCW-RAD': { label: 'Component cooling water monitor', unit: ' rem/hr', kind: 'analog', category: 'Radiation Monitoring' },
++
++  // — Leitbild (ambulance scenario domain) —
++  'AMB-UNITS-AVAIL': { label: 'Ambulance units available', unit: '', kind: 'analog', category: 'Leitbild', limits: { low: 1 } },
++  'AMB-INCIDENTS-ACTIVE': { label: 'Active incidents', unit: '', kind: 'analog', category: 'Leitbild' },
++  'HOSP-ED-OCC': { label: 'Hospital ED occupancy', unit: '%', kind: 'analog', category: 'Leitbild', limits: { high: 95 } },
++}
++
++export const TREND_WINDOWS: Record<string, number> = {
++  '15m': 15 * 60, '30m': 30 * 60, '1h': 3600, '4h': 4 * 3600,
++  '8h': 8 * 3600, '24h': 24 * 3600, '48h': 48 * 3600, '1w': 7 * 86400,
++}
++
++export const MAX_POINTS = 240
++const BUCKETS = 48
++
++export type Point = readonly [number, number]
++
++// --- Storage layer (swap point for MS SQL / PostgreSQL — see header) ---
++let csvCache: Map<string, Point[]> | null = null
++const loadAll = async (): Promise<Map<string, Point[]>> => {
++  if (csvCache) return csvCache
++  const raw = await readFile(join(process.cwd(), 'skills', 'plant-trends', 'data', 'historian.csv'), 'utf-8')
++  const map = new Map<string, Point[]>()
++  for (const line of raw.split('\n').slice(1)) {
++    if (!line) continue
++    const c1 = line.indexOf(','); const c2 = line.indexOf(',', c1 + 1)
++    const ts = Number(line.slice(0, c1))
++    const tag = line.slice(c1 + 1, c2)
++    const v = Number(line.slice(c2 + 1))
++    let arr = map.get(tag)
++    if (!arr) { arr = []; map.set(tag, arr) }
++    arr.push([ts, v])
++  }
++  csvCache = map
++  return map
++}
++const loadHistory = async (tag: string, from: number, to: number): Promise<Point[]> => {
++  const all = await loadAll()
++  return (all.get(tag) ?? []).filter(p => p[0] >= from && p[0] <= to)
++}
++
++// Analog/power: min-max bucketing (preserves spikes). Binary: exact
++// change-point compression.
++const downsample = (pts: Point[], kind: TagMeta['kind']): Point[] => {
++  if (kind === 'binary') {
++    const out: Point[] = []
++    for (let i = 0; i < pts.length; i++) {
++      if (i === 0 || i === pts.length - 1 || pts[i]![1] !== pts[i - 1]![1]) out.push(pts[i]!)
++    }
++    return out
++  }
++  if (pts.length <= BUCKETS * 2) return pts
++  const size = Math.ceil(pts.length / BUCKETS)
++  const out: Point[] = []
++  for (let i = 0; i < pts.length; i += size) {
++    const bucket = pts.slice(i, i + size)
++    let mn = bucket[0]!, mx = bucket[0]!
++    for (const p of bucket) { if (p[1] < mn[1]) mn = p; if (p[1] > mx[1]) mx = p }
++    const pair = mn[0] <= mx[0] ? [mn, mx] : [mx, mn]
++    for (const p of pair) if (out[out.length - 1] !== p) out.push(p)
++  }
++  return out
++}
++
++const hhmm = (ts: number): string => {
++  const d = new Date(ts * 1000)
++  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
++}
++const fmtDur = (s: number): string => s >= 3600 ? `${(s / 3600).toFixed(1)}h` : `${Math.round(s / 60)} min`
++
++export interface TrendEvent { readonly t: number; readonly tag: string; readonly level: 'HIGH' | 'HIHI' | 'LOW' | 'ROC' | 'STATE'; readonly text: string }
++
++const analyzeSeries = (
++  tag: string, meta: TagMeta, pts: Point[],
++): { stats: Record<string, unknown>; events: TrendEvent[]; lines: string[] } => {
++  const events: TrendEvent[] = []
++  const lines: string[] = []
++  if (pts.length === 0) return { stats: {}, events, lines: [`${tag}: no data in window`] }
++
++  const values = pts.map(p => p[1])
++  const min = Math.min(...values), max = Math.max(...values)
++  const avg = values.reduce((s, v) => s + v, 0) / values.length
++  const last = values[values.length - 1]!
++  const stats: Record<string, unknown> = {
++    min: +min.toFixed(2), max: +max.toFixed(2), avg: +avg.toFixed(2), last: +last.toFixed(2),
++  }
++
++  if (meta.kind === 'binary') {
++    let transitions = 0, downtime = 0
++    for (let i = 1; i < pts.length; i++) {
++      if (pts[i]![1] !== pts[i - 1]![1]) {
++        transitions++
++        const state = meta.states?.[pts[i]![1]] ?? String(pts[i]![1])
++        events.push({ t: pts[i]![0], tag, level: 'STATE', text: `${meta.label} → ${state} at ${hhmm(pts[i]![0])}` })
++      }
++      if (pts[i - 1]![1] === 0) downtime += pts[i]![0] - pts[i - 1]![0]
++    }
++    stats.transitions = transitions
++    stats.downtimeS = downtime
++    const nowState = meta.states?.[last] ?? String(last)
++    lines.push(`${meta.label}: currently ${nowState}; ${transitions} state change${transitions === 1 ? '' : 's'} in window${downtime > 0 ? `, stopped for ${fmtDur(downtime)} total` : ''}.`)
++    return { stats, events, lines }
++  }
++
++  if (meta.kind === 'power') {
++    let mwS = 0
++    for (let i = 1; i < pts.length; i++) {
++      mwS += (pts[i]![1] + pts[i - 1]![1]) / 2 * (pts[i]![0] - pts[i - 1]![0])
++    }
++    stats.energyMWh = +(mwS / 3600).toFixed(1)
++  }
++
++  const lim = meta.limits
++  const excursionIntervals: Array<[number, number]> = []
++  if (lim?.high !== undefined) {
++    let inExc = false, excStart = 0, peak = -Infinity, excTotal = 0, hihi = false
++    for (let i = 0; i < pts.length; i++) {
++      const [t, v] = pts[i]!
++      if (v > lim.high && !inExc) { inExc = true; excStart = t; peak = v }
++      if (inExc) {
++        peak = Math.max(peak, v)
++        if (lim.highHigh !== undefined && v > lim.highHigh) hihi = true
++      }
++      if (inExc && (v <= lim.high || i === pts.length - 1)) {
++        inExc = v > lim.high
++        excTotal += t - excStart
++        excursionIntervals.push([excStart, t])
++        events.push({ t: excStart, tag, level: hihi ? 'HIHI' : 'HIGH', text: `${meta.label} exceeded ${hihi ? 'HIGH-HIGH' : 'HIGH'} limit — peaked ${peak.toFixed(1)}${meta.unit} at ${hhmm(excStart)}` })
++        if (!inExc) { peak = -Infinity; hihi = false }
++      }
++    }
++    if (excTotal > 0) {
++      const ongoing = last > lim.high
++      lines.push(`${meta.label}: EXCEEDED HIGH limit (${lim.high}${meta.unit}) for ${fmtDur(excTotal)}${lim.highHigh !== undefined && max > lim.highHigh ? `, peaking above HIGH-HIGH (${lim.highHigh}${meta.unit})` : ''} — peak ${max.toFixed(1)}${meta.unit}; ${ongoing ? 'STILL above limit now' : `back in band, now ${last.toFixed(1)}${meta.unit}`}.`)
++    }
++  }
++  if (lim?.low !== undefined && min < lim.low) {
++    const t = pts[values.indexOf(min)]![0]
++    events.push({ t, tag, level: 'LOW', text: `${meta.label} below LOW limit — ${min.toFixed(1)}${meta.unit} at ${hhmm(t)}` })
++    lines.push(`${meta.label}: dropped below LOW limit (${lim.low}${meta.unit}), minimum ${min.toFixed(1)}${meta.unit}.`)
++  }
++
++  // Rate-of-change notices. Suppressed inside (±10 min of) this tag's own
++  // limit excursions — the excursion event already flags that disturbance,
++  // and double-reporting made one visible alarm read as two events.
++  const insideOwnExcursion = (t: number): boolean =>
++    excursionIntervals.some(([s, e]) => t >= s - 600 && t <= e + 600)
++  const diffs: number[] = []
++  for (let i = 1; i < pts.length; i++) diffs.push(Math.abs(pts[i]![1] - pts[i - 1]![1]))
++  const sorted = [...diffs].sort((a, b) => a - b)
++  const median = sorted[Math.floor(sorted.length / 2)] ?? 0
++  if (median > 0) {
++    let lastRoc = -Infinity
++    for (let i = 1; i < pts.length; i++) {
++      if (diffs[i - 1]! > median * 8 && pts[i]![0] - lastRoc > 1800 && !insideOwnExcursion(pts[i]![0])) {
++        lastRoc = pts[i]![0]
++        events.push({ t: pts[i]![0], tag, level: 'ROC', text: `${meta.label}: rapid change at ${hhmm(pts[i]![0])}` })
++      }
++    }
++  }
++
++  if (lines.length === 0) {
++    const extra = meta.kind === 'power' ? ` ≈ ${stats.energyMWh} MWh over window.` : ''
++    lines.push(`${meta.label}: ${min.toFixed(1)}–${max.toFixed(1)}${meta.unit} (avg ${avg.toFixed(1)}), now ${last.toFixed(1)}${meta.unit} — within parameters.${extra}`)
++  } else if (meta.kind === 'power') {
++    lines.push(`${meta.label}: ≈ ${stats.energyMWh} MWh generated over window.`)
++  }
++
++  return { stats, events, lines }
++}
++
++// --- Operator region selection ---
++// The trend control POSTs the operator's selected region here so the agent
++// can reference "the window shown" in prompts (trend_query useSelectedRegion).
++// In-memory + latest-wins: single-operator local instance; a multi-user
++// deployment would key this per instance/room.
++export interface RegionSelection {
++  readonly from: number
++  readonly to: number
++  readonly tags: ReadonlyArray<string>
++  readonly savedAt: number
++}
++let selectedRegion: RegionSelection | null = null
++export const setSelectedRegion = (sel: { from: number; to: number; tags: ReadonlyArray<string> } | null): void => {
++  selectedRegion = sel ? { ...sel, savedAt: Date.now() } : null
++}
++export const getSelectedRegion = (): RegionSelection | null => selectedRegion
++
++export interface TrendQueryParams {
++  readonly tags: ReadonlyArray<string>
++  readonly window?: string
++  readonly from?: number | string
++  readonly to?: number | string
++  readonly points?: number
++}
++
++export interface TrendQueryResult {
++  readonly from: number
++  readonly to: number
++  readonly modeLabel: string
++  readonly series: Array<Record<string, unknown>>
++  readonly events: TrendEvent[]
++  readonly analysis: { overall: 'NORMAL' | 'ATTENTION' | 'ALARM'; lines: string[]; series: Record<string, unknown>; eventCount: number }
++}
++
++const parseWhen = (v: unknown): number | null => {
++  if (typeof v === 'number' && isFinite(v)) return v > 1e12 ? Math.floor(v / 1000) : Math.floor(v)
++  if (typeof v === 'string' && v.trim()) {
++    const s = v.trim()
++    // Numeric strings are epoch seconds/ms (URL query params arrive as
++    // strings — Date.parse would reject them, and the old silent fallback
++    // to the default window made region queries return window stats).
++    if (/^\d{9,13}$/.test(s)) return Number(s) > 1e12 ? Math.floor(Number(s) / 1000) : Number(s)
++    const ms = Date.parse(s.replace(' ', 'T'))
++    if (!Number.isNaN(ms)) return Math.floor(ms / 1000)
++  }
++  return null
++}
++
++export const queryTrends = async (params: TrendQueryParams): Promise<TrendQueryResult | { error: string }> => {
++  const tags = params.tags.map(String)
++  const unknown = tags.filter(t => !TREND_TAGS[t])
++  if (tags.length === 0 || unknown.length > 0) {
++    return { error: `${unknown.length ? `Unknown tag(s): ${unknown.join(', ')}. ` : 'No tags given. '}Available: ${Object.keys(TREND_TAGS).join(', ')}` }
++  }
++
++  const all = await loadAll()
++  let dataEnd = 0, dataStart = Infinity
++  for (const pts of all.values()) if (pts.length) {
++    dataEnd = Math.max(dataEnd, pts[pts.length - 1]![0])
++    dataStart = Math.min(dataStart, pts[0]![0])
++  }
++  if (dataEnd === 0) return { error: 'Historian is empty' }
++
++  const fromP = parseWhen(params.from)
++  const toP = parseWhen(params.to)
++  // Loud failure: a supplied-but-unparseable bound must NOT silently fall
++  // through to the default window (that made region stats show window stats).
++  if ((params.from !== undefined && fromP === null) || (params.to !== undefined && toP === null)) {
++    return { error: `Unparseable from/to — use ISO datetimes or epoch seconds (got from=${String(params.from)}, to=${String(params.to)})` }
++  }
++  const nPts = typeof params.points === 'number' && isFinite(params.points)
++    ? Math.min(MAX_POINTS, Math.max(10, Math.round(params.points))) : null
++
++  let from: number, to: number, modeLabel: string, pointsMode = false
++  if (fromP !== null || toP !== null) {
++    from = Math.max(dataStart, fromP ?? dataStart)
++    to = Math.min(dataEnd, toP ?? dataEnd)
++    if (from >= to) return { error: `Empty range: from must be before to (data covers ${new Date(dataStart * 1000).toISOString()} – ${new Date(dataEnd * 1000).toISOString()})` }
++    const f = (t: number): string => { const d = new Date(t * 1000); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${hhmm(t)}` }
++    modeLabel = `${f(from)} – ${f(to)}`
++  } else if (nPts !== null) {
++    pointsMode = true
++    to = dataEnd
++    let earliest = dataEnd
++    for (const tag of tags) {
++      const pts = all.get(tag) ?? []
++      const slice = pts.slice(-nPts)
++      if (slice.length) earliest = Math.min(earliest, slice[0]![0])
++    }
++    from = earliest
++    modeLabel = `last ${nPts} samples`
++  } else {
++    const windowKey = typeof params.window === 'string' && TREND_WINDOWS[params.window] ? params.window : '8h'
++    to = dataEnd
++    from = Math.max(dataStart, dataEnd - TREND_WINDOWS[windowKey]!)
++    modeLabel = `last ${windowKey}`
++  }
++
++  const seriesOut: Array<Record<string, unknown>> = []
++  const allEvents: TrendEvent[] = []
++  const allLines: string[] = []
++  const seriesStats: Record<string, unknown> = {}
++
++  for (const tag of tags) {
++    const meta = TREND_TAGS[tag]!
++    let pts = await loadHistory(tag, from, to)
++    if (pointsMode && nPts !== null) pts = pts.slice(-nPts)
++    const { stats, events, lines } = analyzeSeries(tag, meta, pts)
++    allEvents.push(...events)
++    allLines.push(...lines)
++    seriesStats[tag] = stats
++    seriesOut.push({
++      tag, label: meta.label, unit: meta.unit, kind: meta.kind,
++      step: meta.kind === 'binary',
++      ...(meta.limits ? { limits: meta.limits } : {}),
++      stats,
++      points: (pointsMode ? pts : downsample(pts, meta.kind)).map(p => [p[0], +p[1].toFixed(2)]),
++    })
++  }
++
++  allEvents.sort((a, b) => a.t - b.t)
++  const stillOut = seriesOut.some(s => {
++    const lim = (s as { limits?: { high?: number } }).limits
++    const st = (s as { stats: { last?: number } }).stats
++    return lim?.high !== undefined && typeof st.last === 'number' && st.last > lim.high
++  })
++  const overall = stillOut || allEvents.some(e => e.level === 'HIHI') ? 'ALARM'
++    : allEvents.length > 0 ? 'ATTENTION' : 'NORMAL'
++
++  return {
++    from, to, modeLabel,
++    series: seriesOut,
++    events: allEvents.slice(0, 20),
++    analysis: { overall, lines: allLines, series: seriesStats, eventCount: allEvents.length },
++  }
++}
+diff --git a/src/ui/modules/render/render-message.ts b/src/ui/modules/render/render-message.ts
+index c4da229..e9d32e7 100644
+--- a/src/ui/modules/render/render-message.ts
++++ b/src/ui/modules/render/render-message.ts
+@@ -10,6 +10,7 @@ import type { UIMessage, AgentInfo } from '../render/render-types.ts'
+ // layer (../extensions/registry.ts), not via static import.
+ import '../mermaid/index.ts'
+ import '../map/index.ts'
++import '../trend/index.ts'
+ import { getPostRenderProcessors } from '../extensions/post-render-registry.ts'
+ import { icon } from '../icon.ts'
+ import { appendWhisperBadge } from '../whisper-badge.ts'
+diff --git a/src/ui/modules/trend/index.ts b/src/ui/modules/trend/index.ts
+new file mode 100644
+index 0000000..42f0d08
+--- /dev/null
++++ b/src/ui/modules/trend/index.ts
+@@ -0,0 +1,960 @@
++// Trend control — WinCC-OnlineTrendControl-style front-end object.
++//
++// ARCHITECTURE: this is a pure front-end control. A ```trend fence carries
++// only a CONFIG (pens + time axis); the control fetches actual samples from
++// /api/trends/data and re-fetches on every operator interaction. Data never
++// travels through chat messages or the LLM.
++//
++// Config fence (produced by trend_query or written by hand):
++//   { "title"?: string,
++//     "trends": [{ "tag": "RCS_TEMP_C" }, ...],
++//     "time": { "window": "8h" } | { "from": ISO, "to": ISO } | { "points": N } }
++//
++// Legacy fences with embedded data ({ series: [{points…}] }) still render,
++// backed by a local provider (spec's "manual" Provider kind) instead of the
++// archive API.
++//
++// Operator surface (spec correspondence):
++//   pen add/remove + visibility chips … ShowTrendSelection / ShowTagSelection
++//   time-axis mode controls           … ShowTimeSelection
++//   ruler with per-pen readout        … Ruler / RulerControl
++//   stats table                       … CalculateStatistic
++//   CSV export                        … Export()
++//   binary lanes, limit lines, event markers … pen semantics from tag metadata
++
++import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
++
++interface TrendSeries {
++  readonly tag: string
++  readonly label?: string
++  readonly unit: string
++  readonly kind: 'analog' | 'binary' | 'power'
++  readonly step?: boolean
++  readonly limits?: { low?: number; high?: number; highHigh?: number }
++  readonly stats?: Record<string, number>
++  readonly points: ReadonlyArray<readonly [number, number]>
++}
++interface TrendEvent { readonly t: number; readonly tag: string; readonly level: string; readonly text: string }
++interface TrendData {
++  readonly from: number
++  readonly to: number
++  readonly series: ReadonlyArray<TrendSeries>
++  readonly events?: ReadonlyArray<TrendEvent>
++}
++interface TimeCfg { window?: string; from?: string; to?: string; points?: number }
++interface TagInfo { readonly tag: string; readonly label: string; readonly unit: string; readonly kind: string; readonly category?: string }
++
++// Provider: resolves (pens, time) → data. 'archive' hits the API; 'manual'
++// slices data embedded in a legacy fence.
++type Provider = (pens: ReadonlyArray<string>, time: TimeCfg) => Promise<TrendData | { error: string }>
++
++interface CtlState {
++  // Tags currently plotted. The tag list UI shows EVERY catalog tag with a
++  // checkbox; checked = in this list (fetched + drawn).
++  tags: string[]
++  time: TimeCfg
++  rulerLocked: boolean
++  rulerT: number | null
++  // Cursor tooling: 'ruler' = single line + readout; 'region' = drag to
++  // select a span (two boundary lines + shaded area) with exact stats and
++  // a server-side selection the agent can reference ("the window shown").
++  cursorMode: 'ruler' | 'region'
++  region: { from: number; to: number } | null
++  // Tag dropdown UI state, kept across redraws so toggling a tag doesn't
++  // collapse the menu the operator is working in.
++  tagMenuOpen: boolean
++  readonly openCats: Set<string>
++  // Operator color overrides (tag → palette color); default colors come
++  // from catalog position.
++  readonly colorOverrides: Map<string, string>
++  // Which active tag currently has its color palette unfolded (click the
++  // tag name on the display to toggle).
++  colorPickerFor: string | null
++}
++
++const PALETTE = ['#2563eb', '#f59e0b', '#059669', '#8b5cf6', '#0891b2', '#d946ef', '#84cc16', '#f97316']
++const EVENT_COLOR: Record<string, string> = {
++  HIHI: '#dc2626', HIGH: '#ea580c', LOW: '#0284c7', ROC: '#9333ea', STATE: '#6b7280',
++}
++const WINDOW_CHOICES: ReadonlyArray<readonly [string, string]> = [
++  ['15m', '15m'], ['1h', '1h'], ['4h', '4h'], ['8h', '8h'], ['24h', '24h'], ['1 week', '1w'],
++]
++const CTL_STYLE = 'font-size:12px;padding:1px 4px;border:1px solid rgba(128,128,128,.4);border-radius:4px;background:transparent;color:inherit'
++
++const SVGNS = 'http://www.w3.org/2000/svg'
++const el = (tag: string, attrs: Record<string, string | number> = {}): SVGElement => {
++  const node = document.createElementNS(SVGNS, tag)
++  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v))
++  return node
++}
++const hhmm = (ts: number): string => {
++  const d = new Date(ts * 1000)
++  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
++}
++const dayHhmm = (ts: number): string => {
++  const d = new Date(ts * 1000)
++  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${hhmm(ts)}`
++}
++const epochToLocalInput = (ts: number): string => {
++  const d = new Date(ts * 1000)
++  const p = (n: number): string => String(n).padStart(2, '0')
++  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
++}
++
++const niceTicks = (min: number, max: number, count: number): number[] => {
++  if (!isFinite(min) || !isFinite(max) || min === max) { const v = isFinite(min) ? min : 0; return [v - 1, v, v + 1] }
++  const span = max - min
++  const step0 = span / count
++  const mag = Math.pow(10, Math.floor(Math.log10(step0)))
++  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= count) ?? mag * 10
++  const start = Math.ceil(min / step) * step
++  const out: number[] = []
++  for (let v = start; v <= max + step * 1e-6; v += step) out.push(+v.toFixed(6))
++  return out
++}
++
++const energyMWh = (pts: ReadonlyArray<readonly [number, number]>): number => {
++  let mwS = 0
++  for (let i = 1; i < pts.length; i++) mwS += (pts[i]![1] + pts[i - 1]![1]) / 2 * (pts[i]![0] - pts[i - 1]![0])
++  return mwS / 3600
++}
++
++const buildPath = (
++  pts: ReadonlyArray<readonly [number, number]>,
++  x: (t: number) => number, y: (v: number) => number, stepped: boolean,
++): string => {
++  let d = ''
++  for (let i = 0; i < pts.length; i++) {
++    const px = x(pts[i]![0]), py = y(pts[i]![1])
++    if (i === 0) d += `M${px.toFixed(1)},${py.toFixed(1)}`
++    else if (stepped) d += `H${px.toFixed(1)}V${py.toFixed(1)}`
++    else d += `L${px.toFixed(1)},${py.toFixed(1)}`
++  }
++  return d
++}
++
++// --- Providers ---
++
++const archiveProvider: Provider = async (pens, time) => {
++  const qs = new URLSearchParams({ tags: pens.join(',') })
++  if (time.from) qs.set('from', time.from)
++  if (time.to) qs.set('to', time.to)
++  if (!time.from && !time.to && time.points) qs.set('points', String(time.points))
++  else if (!time.from && !time.to && time.window) qs.set('window', time.window)
++  try {
++    const res = await fetch(`/api/trends/data?${qs}`)
++    if (!res.ok) return { error: `Trend data request failed (${res.status}): ${(await res.text()).slice(0, 200)}` }
++    return await res.json() as TrendData
++  } catch (err) {
++    return { error: `Trend data request failed: ${err instanceof Error ? err.message : String(err)}` }
++  }
++}
++
++const makeEmbeddedProvider = (envData: TrendData): Provider => async (pens, time) => {
++  const slice = (s: TrendSeries, from: number, to: number): TrendSeries => {
++    const pts = s.points.filter(p => p[0] >= from && p[0] <= to)
++    const before = s.points.filter(p => p[0] < from)
++    if (before.length > 0) pts.unshift([from, before[before.length - 1]![1]])
++    return { ...s, points: pts }
++  }
++  let from = envData.from, to = envData.to
++  if (time.window) {
++    const secs: Record<string, number> = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '8h': 28800, '24h': 86400, '48h': 172800, '1w': 604800 }
++    from = Math.max(envData.from, envData.to - (secs[time.window] ?? Infinity))
++  } else if (time.from || time.to) {
++    const p = (v?: string): number | null => { const ms = v ? Date.parse(v) : NaN; return Number.isNaN(ms) ? null : ms / 1000 }
++    from = Math.max(envData.from, p(time.from) ?? envData.from)
++    to = Math.min(envData.to, p(time.to) ?? envData.to)
++  } else if (time.points) {
++    const densest = [...envData.series].sort((a, b) => b.points.length - a.points.length)[0]
++    const sl = densest?.points.slice(-Math.max(2, time.points))
++    if (sl?.length) from = Math.max(envData.from, sl[0]![0])
++  }
++  return {
++    from, to,
++    series: envData.series.filter(s => pens.includes(s.tag)).map(s => slice(s, from, to)),
++    events: (envData.events ?? []).filter(e => e.t >= from && e.t <= to),
++  }
++}
++
++// --- Tag catalog (for the add-pen picker; fetched once, shared) ---
++let catalogCache: TagInfo[] | null = null
++const loadCatalog = async (): Promise<TagInfo[]> => {
++  if (catalogCache) return catalogCache
++  try {
++    const res = await fetch('/api/trends/tags')
++    if (res.ok) catalogCache = await res.json() as TagInfo[]
++  } catch { /* catalog unavailable → add-pen picker simply not shown */ }
++  return catalogCache ?? []
++}
++
++// --- Control ---
++
++const renderControl = (
++  wrapper: HTMLElement, title: string, provider: Provider,
++  state: CtlState, catalogFn: () => Promise<TagInfo[]>,
++): void => {
++  const refresh = (): void => renderControl(wrapper, title, provider, state, catalogFn)
++
++  wrapper.textContent = ''
++  const loading = document.createElement('div')
++  loading.style.cssText = 'padding:10px;font-size:12px;opacity:.7'
++  loading.textContent = 'Loading trend data…'
++  wrapper.appendChild(loading)
++
++  void (async () => {
++    const [data, catalog] = await Promise.all([provider(state.tags, state.time), catalogFn()])
++    wrapper.textContent = ''
++
++    if ('error' in data) {
++      const err = document.createElement('div')
++      err.style.cssText = 'padding:10px;font-size:12px;color:#dc2626'
++      err.textContent = `⚠ ${data.error}`
++      const retry = document.createElement('button')
++      retry.textContent = 'Retry'
++      retry.style.cssText = CTL_STYLE + ';margin-left:8px;cursor:pointer'
++      retry.onclick = refresh
++      err.appendChild(retry)
++      wrapper.appendChild(err)
++      return
++    }
++    draw(wrapper, title, data, catalog, state, refresh)
++  })()
++}
++
++const draw = (
++  wrapper: HTMLElement, title: string, data: TrendData, catalog: TagInfo[],
++  state: CtlState, refresh: () => void,
++): void => {
++  // Stable colors: assigned by catalog position, so toggling tags on/off
++  // never recolors the remaining traces. Operator overrides win.
++  const colorOrder = [...catalog.map(c => c.tag), ...state.tags.filter(t => !catalog.some(c => c.tag === t))]
++  const colorOf = new Map(colorOrder.map((tag, i) => [tag, PALETTE[i % PALETTE.length]!]))
++  for (const [tag, color] of state.colorOverrides) colorOf.set(tag, color)
++  const from = data.from, to = data.to
++  const redraw = (): void => draw(wrapper, title, data, catalog, state, refresh)
++
++  wrapper.textContent = ''
++
++  // --- Toolbar ---
++  const bar = document.createElement('div')
++  bar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;font-size:12px'
++  const titleEl = document.createElement('span')
++  titleEl.textContent = title
++  titleEl.style.cssText = 'font-weight:700;margin-right:auto'
++  bar.appendChild(titleEl)
++
++  // Time-axis mode picker
++  const mode: 'last' | 'range' | 'points' = state.time.from || state.time.to ? 'range' : state.time.points ? 'points' : 'last'
++  const modeSel = document.createElement('select')
++  modeSel.style.cssText = CTL_STYLE
++  for (const [value, label] of [['last', 'Last…'], ['range', 'Start–end'], ['points', 'N points']] as const) {
++    const o = document.createElement('option')
++    o.value = value
++    o.textContent = label
++    if (mode === value) o.selected = true
++    modeSel.appendChild(o)
++  }
++  modeSel.onchange = () => {
++    if (modeSel.value === 'last') state.time = { window: '8h' }
++    else if (modeSel.value === 'points') state.time = { points: 60 }
++    else state.time = { from: epochToLocalInput(from), to: epochToLocalInput(to) }
++    refresh()
++  }
++  bar.appendChild(modeSel)
++
++  if (mode === 'last') {
++    const sel = document.createElement('select')
++    sel.style.cssText = CTL_STYLE
++    for (const [label, key] of WINDOW_CHOICES) {
++      const o = document.createElement('option')
++      o.value = key
++      o.textContent = `Last ${label}`
++      if (state.time.window === key) o.selected = true
++      sel.appendChild(o)
++    }
++    sel.onchange = () => { state.time = { window: sel.value }; refresh() }
++    bar.appendChild(sel)
++  } else if (mode === 'range') {
++    const mk = (initial: string, onSet: (v: string) => void): HTMLInputElement => {
++      const inp = document.createElement('input')
++      inp.type = 'datetime-local'
++      inp.style.cssText = CTL_STYLE
++      inp.value = initial
++      inp.onchange = () => { if (inp.value) { onSet(inp.value); refresh() } }
++      return inp
++    }
++    bar.appendChild(mk(state.time.from ?? epochToLocalInput(from), v => { state.time = { ...state.time, from: v, window: undefined, points: undefined } }))
++    const dash = document.createElement('span')
++    dash.textContent = '–'
++    bar.appendChild(dash)
++    bar.appendChild(mk(state.time.to ?? epochToLocalInput(to), v => { state.time = { ...state.time, to: v, window: undefined, points: undefined } }))
++  } else {
++    const inp = document.createElement('input')
++    inp.type = 'number'
++    inp.min = '10'
++    inp.max = '240'
++    inp.value = String(state.time.points ?? 60)
++    inp.style.cssText = CTL_STYLE + ';width:64px'
++    inp.title = 'Show the last N samples (10–240)'
++    inp.onchange = () => {
++      const n = Math.max(10, Math.min(240, Math.round(Number(inp.value) || 60)))
++      state.time = { points: n }
++      refresh()
++    }
++    bar.appendChild(inp)
++    const lbl = document.createElement('span')
++    lbl.textContent = 'points'
++    lbl.style.opacity = '0.7'
++    bar.appendChild(lbl)
++  }
++
++  // Refresh: re-runs the query with the SAME time config. Relative modes
++  // (Last 8h, N points) are anchored to the latest archive data at query
++  // time, so refreshing hours later loads the newest 8 hours — not the
++  // hours originally displayed.
++  const refreshBtn = document.createElement('button')
++  refreshBtn.textContent = '⟳'
++  refreshBtn.title = 'Refresh — reload from the archive (relative windows re-anchor to the latest data)'
++  refreshBtn.style.cssText = CTL_STYLE + ';cursor:pointer;font-size:13px'
++  refreshBtn.onclick = refresh
++  bar.appendChild(refreshBtn)
++
++  // Cursor tooling toggle: Ruler (one line) vs Region (drag two lines)
++  const cursorSel = document.createElement('select')
++  cursorSel.style.cssText = CTL_STYLE
++  for (const [value, label] of [['ruler', 'Ruler'], ['region', 'Region']] as const) {
++    const o = document.createElement('option')
++    o.value = value
++    o.textContent = label
++    if (state.cursorMode === value) o.selected = true
++    cursorSel.appendChild(o)
++  }
++  cursorSel.title = 'Ruler: hover readout at one instant. Region: drag across the plot to select a span and get its statistics.'
++  cursorSel.onchange = () => {
++    state.cursorMode = cursorSel.value as CtlState['cursorMode']
++    redraw()
++  }
++  bar.appendChild(cursorSel)
++
++  // Export CSV of what is currently displayed
++  const exp = document.createElement('button')
++  exp.textContent = '⬇ CSV'
++  exp.title = 'Export the displayed data as CSV'
++  exp.style.cssText = CTL_STYLE + ';cursor:pointer'
++  exp.onclick = () => {
++    const rows = ['ts_iso,tag,value']
++    for (const s of data.series) {
++      for (const p of s.points) rows.push(`${new Date(p[0] * 1000).toISOString()},${s.tag},${p[1]}`)
++    }
++    const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
++    const a = document.createElement('a')
++    a.href = URL.createObjectURL(blob)
++    a.download = 'trend-export.csv'
++    a.click()
++    URL.revokeObjectURL(a.href)
++  }
++  bar.appendChild(exp)
++  wrapper.appendChild(bar)
++
++  // --- Tag selector: dropdown of categories, each expanding to its tags ---
++  const tagBar = document.createElement('div')
++  tagBar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:0 8px 6px;font-size:11px;position:relative'
++
++  const tagBtn = document.createElement('button')
++  tagBtn.textContent = `Tags (${state.tags.length}) ▾`
++  tagBtn.style.cssText = CTL_STYLE + ';cursor:pointer;font-weight:600'
++  tagBtn.onclick = () => { state.tagMenuOpen = !state.tagMenuOpen; redraw() }
++  tagBar.appendChild(tagBtn)
++
++  // Active-tag summary: colored last values for what is plotted. Clicking
++  // a tag name unfolds a palette row beneath it to recolor that trace.
++  for (const tag of state.tags) {
++    const s = data.series.find(sr => sr.tag === tag)
++    const box = document.createElement('span')
++    box.style.cssText = 'display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px'
++
++    const name = document.createElement('button')
++    name.style.cssText = `border:none;background:transparent;padding:0;cursor:pointer;font-size:11px;color:${colorOf.get(tag)};font-weight:600`
++    // Just the tag name — live values belong to the stats table (Last
++    // column) and the ruler readout, not the selector bar.
++    name.textContent = tag
++    const last = s && s.points.length ? s.points[s.points.length - 1]![1] : null
++    name.title = `${(catalog.find(c => c.tag === tag)?.label) ?? tag}${s && last !== null ? ` — now ${+last.toFixed(2)}${s.unit}` : ''} — click to change color`
++    name.onclick = () => {
++      state.colorPickerFor = state.colorPickerFor === tag ? null : tag
++      redraw()
++    }
++    box.appendChild(name)
++
++    if (state.colorPickerFor === tag) {
++      const palette = document.createElement('span')
++      palette.style.cssText = 'display:inline-flex;gap:3px;padding:1px 0'
++      for (const color of PALETTE) {
++        const dot = document.createElement('button')
++        const active = colorOf.get(tag) === color
++        dot.style.cssText = `width:14px;height:14px;border-radius:50%;cursor:pointer;background:${color};border:2px solid ${active ? 'CanvasText' : 'transparent'};padding:0`
++        dot.title = color
++        dot.onclick = () => {
++          state.colorOverrides.set(tag, color)
++          state.colorPickerFor = null
++          redraw()
++        }
++        palette.appendChild(dot)
++      }
++      box.appendChild(palette)
++    }
++    tagBar.appendChild(box)
++  }
++
++  if (state.tagMenuOpen) {
++    const menu = document.createElement('div')
++    menu.style.cssText = 'position:absolute;top:100%;left:8px;z-index:20;min-width:280px;max-height:320px;overflow-y:auto;border:1px solid rgba(128,128,128,.45);border-radius:6px;padding:6px 8px;background:Canvas;color:CanvasText;box-shadow:0 4px 14px rgba(0,0,0,.35);font-size:11px'
++    const cats = new Map<string, TagInfo[]>()
++    for (const info of catalog) {
++      const cat = info.category ?? 'Other'
++      if (!cats.has(cat)) cats.set(cat, [])
++      cats.get(cat)!.push(info)
++    }
++    for (const [cat, infos] of cats) {
++      const det = document.createElement('details')
++      det.open = state.openCats.has(cat)
++      det.ontoggle = () => {
++        if (det.open) state.openCats.add(cat)
++        else state.openCats.delete(cat)
++      }
++      const sum = document.createElement('summary')
++      const onCount = infos.filter(i => state.tags.includes(i.tag)).length
++      sum.textContent = `${cat} (${onCount}/${infos.length})`
++      sum.style.cssText = `cursor:pointer;font-weight:600;padding:2px 0;${onCount > 0 ? '' : 'opacity:.75'}`
++      det.appendChild(sum)
++      for (const info of infos) {
++        const on = state.tags.includes(info.tag)
++        const label = document.createElement('label')
++        label.style.cssText = `display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0 1px 14px;color:${on ? colorOf.get(info.tag) : 'inherit'};opacity:${on ? 1 : 0.75}`
++        label.title = info.label
++        const cb = document.createElement('input')
++        cb.type = 'checkbox'
++        cb.checked = on
++        cb.onchange = () => {
++          if (cb.checked) state.tags = [...state.tags, info.tag]
++          else state.tags = state.tags.filter(t => t !== info.tag)
++          refresh()
++        }
++        label.appendChild(cb)
++        label.appendChild(document.createTextNode(`${info.tag}${info.unit ? ` (${info.unit.trim()})` : ''}`))
++        det.appendChild(label)
++      }
++      menu.appendChild(det)
++    }
++    tagBar.appendChild(menu)
++  }
++  wrapper.appendChild(tagBar)
++
++  // --- Plot layout ---
++  const width = Math.max(360, wrapper.clientWidth || 640)
++  const visible = data.series.filter(s => state.tags.includes(s.tag))
++  const analog = visible.filter(s => s.kind !== 'binary')
++  const binary = visible.filter(s => s.kind === 'binary')
++  const laneH = 18
++  const ml = 52, mr = 52, mt = 8
++  const plotH = 220
++  const lanesH = binary.length * (laneH + 4)
++  const mb = 22
++  const height = mt + plotH + lanesH + mb
++  const svg = el('svg', { width, height, viewBox: `0 0 ${width} ${height}` }) as SVGSVGElement
++  svg.style.display = 'block'
++
++  const x = (t: number): number => ml + (t - from) / Math.max(1, to - from) * (width - ml - mr)
++
++  const unitOrder: string[] = []
++  for (const s of analog) if (!unitOrder.includes(s.unit)) unitOrder.push(s.unit)
++  const axisUnits = unitOrder.slice(0, 2)
++  const groupDomain = (unit: string): { min: number; max: number } => {
++    let min = Infinity, max = -Infinity
++    for (const s of analog.filter(sr => sr.unit === unit)) {
++      for (const p of s.points) { min = Math.min(min, p[1]); max = Math.max(max, p[1]) }
++      if (s.limits?.high !== undefined) max = Math.max(max, s.limits.high)
++      if (s.limits?.highHigh !== undefined) max = Math.max(max, s.limits.highHigh)
++      if (s.limits?.low !== undefined) min = Math.min(min, s.limits.low)
++    }
++    if (!isFinite(min)) { min = 0; max = 1 }
++    const pad = (max - min || 1) * 0.06
++    return { min: min - pad, max: max + pad }
++  }
++  const domains = new Map(axisUnits.map(u => [u, groupDomain(u)]))
++  const yFor = (s: TrendSeries): ((v: number) => number) => {
++    if (axisUnits.includes(s.unit)) {
++      const d = domains.get(s.unit)!
++      return v => mt + plotH - (v - d.min) / (d.max - d.min) * plotH
++    }
++    let mn = Infinity, mx = -Infinity
++    for (const p of s.points) { mn = Math.min(mn, p[1]); mx = Math.max(mx, p[1]) }
++    if (!isFinite(mn) || mn === mx) { mn = 0; mx = 1 }
++    return v => mt + plotH - (v - mn) / (mx - mn) * plotH
++  }
++
++  // Grid + axes
++  const leftDomain = axisUnits[0] ? domains.get(axisUnits[0])! : { min: 0, max: 1 }
++  for (const tick of niceTicks(leftDomain.min, leftDomain.max, 5)) {
++    const y = mt + plotH - (tick - leftDomain.min) / (leftDomain.max - leftDomain.min) * plotH
++    if (y < mt - 1 || y > mt + plotH + 1) continue
++    svg.appendChild(el('line', { x1: ml, x2: width - mr, y1: y, y2: y, stroke: 'currentColor', 'stroke-opacity': 0.12 }))
++    const label = el('text', { x: ml - 6, y: y + 3.5, 'text-anchor': 'end', 'font-size': 10, fill: 'currentColor', 'fill-opacity': 0.65 })
++    label.textContent = String(tick)
++    svg.appendChild(label)
++  }
++  if (axisUnits[0]) {
++    const uLabel = el('text', { x: ml - 6, y: mt + 2, 'text-anchor': 'end', 'font-size': 9, fill: 'currentColor', 'fill-opacity': 0.5 })
++    uLabel.textContent = axisUnits[0]
++    svg.appendChild(uLabel)
++  }
++  if (axisUnits[1]) {
++    const d = domains.get(axisUnits[1])!
++    for (const tick of niceTicks(d.min, d.max, 5)) {
++      const y = mt + plotH - (tick - d.min) / (d.max - d.min) * plotH
++      if (y < mt - 1 || y > mt + plotH + 1) continue
++      const label = el('text', { x: width - mr + 6, y: y + 3.5, 'text-anchor': 'start', 'font-size': 10, fill: 'currentColor', 'fill-opacity': 0.65 })
++      label.textContent = String(tick)
++      svg.appendChild(label)
++    }
++    const uLabel = el('text', { x: width - mr + 6, y: mt + 2, 'text-anchor': 'start', 'font-size': 9, fill: 'currentColor', 'fill-opacity': 0.5 })
++    uLabel.textContent = axisUnits[1]
++    svg.appendChild(uLabel)
++  }
++
++  const fmt = to - from > 26 * 3600 ? dayHhmm : hhmm
++  const tickCount = 6
++  for (let i = 0; i <= tickCount; i++) {
++    const t = from + (to - from) * i / tickCount
++    const px = x(t)
++    svg.appendChild(el('line', { x1: px, x2: px, y1: mt + plotH, y2: mt + plotH + 4, stroke: 'currentColor', 'stroke-opacity': 0.4 }))
++    const label = el('text', { x: px, y: height - 8, 'text-anchor': 'middle', 'font-size': 10, fill: 'currentColor', 'fill-opacity': 0.65 })
++    label.textContent = fmt(t)
++    svg.appendChild(label)
++  }
++  svg.appendChild(el('line', { x1: ml, x2: width - mr, y1: mt + plotH, y2: mt + plotH, stroke: 'currentColor', 'stroke-opacity': 0.4 }))
++
++  // Limit lines: drawn in the OWNING TRACE's color (severity color made
++  // them unattributable with several limited tags on one plot) and labeled
++  // with the tag name. Severity shows in the dash pattern: HIGH/LOW use a
++  // long dash, HIGH-HIGH a tight one.
++  // Each limited tag gets its own horizontal label column at the right
++  // edge so labels from different tags can never stack on the same spot
++  // (two tags' LOW labels at similar heights were unreadable in-line).
++  const limitedTags = analog.filter(s => s.limits && axisUnits.includes(s.unit))
++  limitedTags.forEach((s, tagIdx) => {
++    const y = yFor(s)
++    const color = colorOf.get(s.tag) ?? '#888'
++    const labelX = width - mr - 4 - tagIdx * 130
++    const drawLimit = (v: number, text: string, dash: string): void => {
++      const ly = y(v)
++      if (ly < mt || ly > mt + plotH) return
++      svg.appendChild(el('line', { x1: ml, x2: width - mr, y1: ly, y2: ly, stroke: color, 'stroke-opacity': 0.65, 'stroke-dasharray': dash, 'stroke-width': 1 }))
++      const label = el('text', { x: labelX, y: ly - 3, 'text-anchor': 'end', 'font-size': 9, fill: color })
++      label.textContent = `${s.tag} ${text}`
++      svg.appendChild(label)
++    }
++    if (s.limits!.highHigh !== undefined) drawLimit(s.limits!.highHigh, `HIHI ${s.limits!.highHigh}`, '2 3')
++    if (s.limits!.high !== undefined) drawLimit(s.limits!.high, `HIGH ${s.limits!.high}`, '8 5')
++    if (s.limits!.low !== undefined) drawLimit(s.limits!.low, `LOW ${s.limits!.low}`, '8 5')
++  })
++
++  // Analog traces
++  for (const s of analog) {
++    if (s.points.length === 0) continue
++    svg.appendChild(el('path', {
++      d: buildPath(s.points, x, yFor(s), !!s.step),
++      fill: 'none', stroke: colorOf.get(s.tag) ?? '#888', 'stroke-width': 1.6, 'stroke-linejoin': 'round',
++    }))
++  }
++
++  // Binary lanes
++  binary.forEach((s, i) => {
++    const laneTop = mt + plotH + 4 + i * (laneH + 4)
++    const pts = s.points
++    const y = (v: number): number => laneTop + (v >= 0.5 ? 2 : laneH - 2)
++    svg.appendChild(el('rect', { x: ml, y: laneTop, width: width - ml - mr, height: laneH, fill: 'currentColor', 'fill-opacity': 0.05 }))
++    for (let j = 0; j < pts.length; j++) {
++      if (pts[j]![1] < 0.5) continue
++      const x0 = x(pts[j]![0])
++      const x1 = x(j + 1 < pts.length ? pts[j + 1]![0] : to)
++      svg.appendChild(el('rect', { x: x0, y: laneTop, width: Math.max(0.5, x1 - x0), height: laneH, fill: colorOf.get(s.tag) ?? '#888', 'fill-opacity': 0.25 }))
++    }
++    if (pts.length > 0) {
++      svg.appendChild(el('path', { d: buildPath(pts, x, y, true), fill: 'none', stroke: colorOf.get(s.tag) ?? '#888', 'stroke-width': 1.4 }))
++    }
++    const label = el('text', { x: ml - 6, y: laneTop + laneH / 2 + 3, 'text-anchor': 'end', 'font-size': 9, fill: 'currentColor', 'fill-opacity': 0.65 })
++    label.textContent = s.tag
++    svg.appendChild(label)
++  })
++
++  // Event markers
++  const events = (data.events ?? []).filter(e => state.tags.includes(e.tag))
++  for (const e of events) {
++    const px = x(e.t)
++    const color = EVENT_COLOR[e.level] ?? '#6b7280'
++    svg.appendChild(el('line', { x1: px, x2: px, y1: mt, y2: mt + plotH, stroke: color, 'stroke-opacity': 0.55, 'stroke-dasharray': '2 3' }))
++    const marker = el('path', { d: `M${px - 4},${mt} L${px + 4},${mt} L${px},${mt + 7} Z`, fill: color })
++    const tip = el('title')
++    tip.textContent = `[${e.level}] ${e.text}`
++    marker.appendChild(tip)
++    svg.appendChild(marker)
++  }
++
++  // --- Ruler: vertical cursor + per-pen readout; click to lock ---
++  const rulerLine = el('line', { x1: -10, x2: -10, y1: mt, y2: mt + plotH + lanesH, stroke: 'currentColor', 'stroke-opacity': 0.6, 'stroke-width': 1 })
++  svg.appendChild(rulerLine)
++  const readout = document.createElement('div')
++  readout.style.cssText = 'position:absolute;display:none;pointer-events:none;background:rgba(20,20,25,.92);color:#eee;font-size:10px;line-height:1.5;padding:4px 7px;border-radius:4px;z-index:10;white-space:nowrap'
++  const nearestValue = (s: TrendSeries, t: number): number | null => {
++    if (s.points.length === 0) return null
++    let best: readonly [number, number] | null = null
++    for (const p of s.points) {
++      if (s.step || s.kind === 'binary') { if (p[0] <= t) best = p; else break }
++      else if (best === null || Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p
++    }
++    return best ? best[1] : null
++  }
++  const positionRuler = (t: number, clientX: number, clientY: number): void => {
++    const px = x(t)
++    rulerLine.setAttribute('x1', String(px))
++    rulerLine.setAttribute('x2', String(px))
++    const lines = [`<b>${fmt(t)}</b>`]
++    for (const s of visible) {
++      const v = nearestValue(s, t)
++      const color = colorOf.get(s.tag) ?? '#888'
++      lines.push(`<span style="color:${color}">●</span> ${s.tag}: ${v === null ? '–' : `${+v.toFixed(2)}${s.unit}`}`)
++    }
++    readout.innerHTML = lines.join('<br>')
++    readout.style.display = 'block'
++    const rect = wrapper.getBoundingClientRect()
++    const rx = clientX - rect.left + 12
++    readout.style.left = `${Math.min(rx, rect.width - 170)}px`
++    readout.style.top = `${clientY - rect.top + 12}px`
++  }
++  const timeAtClientX = (clientX: number): number | null => {
++    const rect = svg.getBoundingClientRect()
++    const sx = (clientX - rect.left) * (width / rect.width)
++    if (sx < ml || sx > width - mr) return null
++    return from + (sx - ml) / (width - ml - mr) * (to - from)
++  }
++
++  if (state.cursorMode === 'ruler') {
++    svg.addEventListener('mousemove', (ev) => {
++      if (state.rulerLocked) return
++      const t = timeAtClientX(ev.clientX)
++      if (t === null) { rulerLine.setAttribute('x1', '-10'); rulerLine.setAttribute('x2', '-10'); readout.style.display = 'none'; return }
++      state.rulerT = t
++      positionRuler(t, ev.clientX, ev.clientY)
++    })
++    svg.addEventListener('mouseleave', () => {
++      if (state.rulerLocked) return
++      rulerLine.setAttribute('x1', '-10')
++      rulerLine.setAttribute('x2', '-10')
++      readout.style.display = 'none'
++    })
++    svg.addEventListener('click', (ev) => {
++      state.rulerLocked = !state.rulerLocked
++      if (state.rulerLocked && state.rulerT !== null) positionRuler(state.rulerT, ev.clientX, ev.clientY)
++    })
++    svg.style.cursor = 'crosshair'
++  } else {
++    // Region mode: drag across the plot to select [t0, t1].
++    const dragRect = el('rect', { x: -10, y: mt, width: 0, height: plotH + lanesH, fill: '#2563eb', 'fill-opacity': 0.12 })
++    svg.appendChild(dragRect)
++    let dragT0: number | null = null
++    svg.addEventListener('mousedown', (ev) => {
++      const t = timeAtClientX(ev.clientX)
++      if (t !== null) { dragT0 = t; ev.preventDefault() }
++    })
++    svg.addEventListener('mousemove', (ev) => {
++      if (dragT0 === null) return
++      const t = timeAtClientX(ev.clientX)
++      if (t === null) return
++      const x0 = x(Math.min(dragT0, t)), x1 = x(Math.max(dragT0, t))
++      dragRect.setAttribute('x', String(x0))
++      dragRect.setAttribute('width', String(Math.max(0, x1 - x0)))
++    })
++    const finish = (ev: MouseEvent): void => {
++      if (dragT0 === null) return
++      const t = timeAtClientX(ev.clientX)
++      const t0 = dragT0
++      dragT0 = null
++      if (t === null) return
++      const rFrom = Math.min(t0, t), rTo = Math.max(t0, t)
++      if (rTo - rFrom < 30) return   // ignore accidental clicks (< 30 s span)
++      state.region = { from: Math.round(rFrom), to: Math.round(rTo) }
++      // Persist so the agent can resolve "the window shown" via trend_query.
++      void fetch('/api/trends/selection', {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ from: state.region.from, to: state.region.to, tags: state.tags }),
++      })
++      redraw()
++    }
++    svg.addEventListener('mouseup', finish)
++    svg.addEventListener('mouseleave', (ev) => { if (dragT0 !== null) finish(ev) })
++    svg.style.cursor = 'col-resize'
++  }
++
++  // Persistent region overlay (survives redraws and window changes)
++  if (state.region) {
++    const rFrom = Math.max(from, state.region.from)
++    const rTo = Math.min(to, state.region.to)
++    if (rTo > rFrom) {
++      const x0 = x(rFrom), x1 = x(rTo)
++      svg.appendChild(el('rect', { x: x0, y: mt, width: x1 - x0, height: plotH + lanesH, fill: '#2563eb', 'fill-opacity': 0.1 }))
++      for (const bx of [x0, x1]) {
++        svg.appendChild(el('line', { x1: bx, x2: bx, y1: mt, y2: mt + plotH + lanesH, stroke: '#2563eb', 'stroke-opacity': 0.8, 'stroke-width': 1.2, 'stroke-dasharray': '4 3' }))
++      }
++    }
++  }
++
++  wrapper.style.position = 'relative'
++  wrapper.appendChild(svg)
++  wrapper.appendChild(readout)
++
++  // --- Region statistics strip (exact server stats for the selected span) ---
++  if (state.region) {
++    const strip = document.createElement('div')
++    strip.style.cssText = 'margin:2px 8px 4px;padding:4px 8px;border:1px dashed rgba(37,99,235,.55);border-radius:6px;font-size:11px;line-height:1.6'
++    const dur = state.region.to - state.region.from
++    const head = document.createElement('div')
++    head.style.cssText = 'display:flex;align-items:center;gap:8px'
++    const headText = document.createElement('b')
++    headText.textContent = `Region ${fmt(state.region.from)} – ${fmt(state.region.to)} (${dur >= 3600 ? `${(dur / 3600).toFixed(1)}h` : `${Math.round(dur / 60)} min`})`
++    head.appendChild(headText)
++    const hint = document.createElement('span')
++    hint.style.cssText = 'opacity:.6'
++    hint.textContent = 'saved — you can ask the agent about "the selected region"'
++    head.appendChild(hint)
++    const clear = document.createElement('button')
++    clear.textContent = '✕ clear'
++    clear.style.cssText = CTL_STYLE + ';cursor:pointer;margin-left:auto'
++    clear.onclick = () => {
++      state.region = null
++      void fetch('/api/trends/selection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: 'null' })
++      redraw()
++    }
++    head.appendChild(clear)
++    strip.appendChild(head)
++    const body = document.createElement('div')
++    body.textContent = 'Computing region statistics…'
++    body.style.opacity = '0.7'
++    strip.appendChild(body)
++    wrapper.appendChild(strip)
++
++    void (async () => {
++      try {
++        const qs = new URLSearchParams({ tags: state.tags.join(','), from: String(state.region!.from), to: String(state.region!.to) })
++        const res = await fetch(`/api/trends/data?${qs}`)
++        if (!res.ok) { body.textContent = `⚠ region stats failed (${res.status})`; return }
++        const rd = await res.json() as TrendData
++        body.style.opacity = '1'
++        body.textContent = ''
++        for (const s of rd.series) {
++          const st = (s.stats ?? {}) as Record<string, number>
++          const row = document.createElement('div')
++          const dot = document.createElement('span')
++          dot.textContent = '● '
++          dot.style.color = colorOf.get(s.tag) ?? '#888'
++          row.appendChild(dot)
++          let text: string
++          if (s.kind === 'binary') {
++            text = `${s.tag}: ${st.transitions ?? 0} state change(s), stopped ${Math.round((st.downtimeS ?? 0) / 60)} min`
++          } else {
++            text = `${s.tag}: avg ${st.avg}${s.unit} · min ${st.min}${s.unit} · max ${st.max}${s.unit}`
++            if (typeof st.energyMWh === 'number') text += ` · ≈${Math.round(st.energyMWh).toLocaleString()} MWh`
++          }
++          row.appendChild(document.createTextNode(text))
++          body.appendChild(row)
++        }
++        // Classify events honestly: alarms (limit violations) are not the
++        // same thing as state changes or rate-of-change notices, and lumping
++        // them into one count misread as "N alerts".
++        const evs = rd.events ?? []
++        const alarms = evs.filter(e => e.level === 'HIGH' || e.level === 'HIHI' || e.level === 'LOW')
++        const states = evs.filter(e => e.level === 'STATE')
++        const notices = evs.filter(e => e.level === 'ROC')
++        if (alarms.length > 0) {
++          const ev = document.createElement('div')
++          ev.style.color = '#dc2626'
++          ev.textContent = `▲ ${alarms.length} alarm${alarms.length === 1 ? '' : 's'} — ${alarms.slice(0, 2).map(e => e.text).join(' · ')}${alarms.length > 2 ? ' …' : ''}`
++          body.appendChild(ev)
++        }
++        if (states.length > 0 || notices.length > 0) {
++          const ev = document.createElement('div')
++          ev.style.opacity = '0.75'
++          const parts: string[] = []
++          if (states.length > 0) parts.push(`${states.length} state change${states.length === 1 ? '' : 's'} (${states.map(e => e.text).slice(0, 2).join('; ')})`)
++          if (notices.length > 0) parts.push(`${notices.length} rapid-change notice${notices.length === 1 ? '' : 's'}`)
++          ev.textContent = parts.join(' · ')
++          body.appendChild(ev)
++        }
++        if (evs.length === 0) {
++          const ev = document.createElement('div')
++          ev.style.opacity = '0.6'
++          ev.textContent = 'No alarms or events in this region.'
++          body.appendChild(ev)
++        }
++      } catch (err) {
++        body.textContent = `⚠ region stats failed: ${err instanceof Error ? err.message : String(err)}`
++      }
++    })()
++  }
++
++  // --- Statistics table (server stats are exact for the fetched window) ---
++  if (visible.length > 0) {
++    const table = document.createElement('table')
++    table.style.cssText = 'width:calc(100% - 16px);margin:2px 8px 6px;border-collapse:collapse;font-size:11px'
++    const hrow = document.createElement('tr')
++    for (const h of ['Tag', 'Avg', 'Min', 'Max', 'Last', 'Info']) {
++      const th = document.createElement('th')
++      th.textContent = h
++      th.style.cssText = `text-align:${h === 'Tag' || h === 'Info' ? 'left' : 'right'};padding:2px 6px;border-bottom:1px solid rgba(128,128,128,.35);opacity:.7;font-weight:600`
++      hrow.appendChild(th)
++    }
++    const thead = document.createElement('thead')
++    thead.appendChild(hrow)
++    table.appendChild(thead)
++    const tbody = document.createElement('tbody')
++
++    for (const s of visible) {
++      if (s.points.length === 0) continue
++      const st = s.stats ?? {}
++      const vals = s.points.map(p => p[1])
++      const min = st.min ?? Math.min(...vals)
++      const max = st.max ?? Math.max(...vals)
++      const avg = st.avg ?? vals.reduce((a, v) => a + v, 0) / vals.length
++      const last = st.last ?? vals[vals.length - 1]!
++      const u = s.unit
++
++      let dutyPct = 0
++      if (s.kind === 'binary') {
++        let onS = 0
++        for (let i = 1; i < s.points.length; i++) {
++          if (s.points[i - 1]![1] >= 0.5) onS += s.points[i]![0] - s.points[i - 1]![0]
++        }
++        dutyPct = Math.round(onS / Math.max(1, s.points[s.points.length - 1]![0] - s.points[0]![0]) * 100)
++      }
++
++      let info: string
++      if (s.kind === 'power') {
++        const e = typeof st.energyMWh === 'number' ? st.energyMWh : energyMWh(s.points)
++        info = `≈ ${Math.round(e).toLocaleString()} MWh in window`
++      } else if (s.kind === 'binary') {
++        const stops = (data.events ?? []).filter(ev => ev.tag === s.tag && ev.level === 'STATE' && ev.text.includes('STOPPED')).length
++        info = `${stops} stop${stops === 1 ? '' : 's'} in window`
++      } else if (s.limits && (s.limits.high !== undefined || s.limits.low !== undefined)) {
++        const n = (data.events ?? []).filter(ev => ev.tag === s.tag && ev.level !== 'STATE').length
++        info = n > 0 ? `⚠ ${n} alarm event${n === 1 ? '' : 's'} in window` : 'no limit violations'
++      } else {
++        const std = Math.sqrt(vals.reduce((a, v) => a + (v - avg) ** 2, 0) / vals.length)
++        info = `σ ${std.toFixed(2)}${u}`
++      }
++
++      const row = document.createElement('tr')
++      const fmtV = (v: number): string => s.kind === 'binary' ? String(Math.round(v * 100) / 100) : `${(+v.toFixed(2)).toLocaleString()}${u}`
++      const cells: Array<{ text: string; align: string; color?: string }> = [
++        { text: `● ${s.tag}`, align: 'left', color: colorOf.get(s.tag) },
++        { text: s.kind === 'binary' ? `${dutyPct}% on` : fmtV(avg), align: 'right' },
++        { text: fmtV(min), align: 'right' },
++        { text: fmtV(max), align: 'right' },
++        { text: fmtV(last), align: 'right' },
++        { text: info, align: 'left' },
++      ]
++      for (const c of cells) {
++        const td = document.createElement('td')
++        td.textContent = c.text
++        td.style.cssText = `text-align:${c.align};padding:2px 6px;border-bottom:1px solid rgba(128,128,128,.15);white-space:nowrap${c.color ? `;color:${c.color};font-weight:600` : ''}`
++        row.appendChild(td)
++      }
++      tbody.appendChild(row)
++    }
++    table.appendChild(tbody)
++    wrapper.appendChild(table)
++  }
++
++  // --- Event list ---
++  if (events.length > 0) {
++    const list = document.createElement('div')
++    list.style.cssText = 'padding:4px 8px 8px;font-size:11px;line-height:1.5'
++    for (const e of events.slice(0, 6)) {
++      const row = document.createElement('div')
++      const dot = document.createElement('span')
++      dot.textContent = '▲ '
++      dot.style.color = EVENT_COLOR[e.level] ?? '#6b7280'
++      row.appendChild(dot)
++      row.appendChild(document.createTextNode(`${fmt(e.t)} — ${e.text}`))
++      list.appendChild(row)
++    }
++    if (events.length > 6) {
++      const more = document.createElement('div')
++      more.style.opacity = '0.6'
++      more.textContent = `… ${events.length - 6} more event(s) in window`
++      list.appendChild(more)
++    }
++    wrapper.appendChild(list)
++  }
++}
++
++// --- Fence entry point ---
++
++interface LiveConfig { title?: string; trends: Array<{ tag: string; color?: string }>; time?: TimeCfg }
++
++const parseFence = (source: string): { kind: 'live'; cfg: LiveConfig } | { kind: 'embedded'; data: TrendData; title: string } | null => {
++  try {
++    const raw = JSON.parse(source) as Record<string, unknown>
++    if (Array.isArray(raw.trends)) {
++      const trends = (raw.trends as Array<{ tag?: unknown }>).filter(t => typeof t?.tag === 'string') as Array<{ tag: string }>
++      if (trends.length === 0) return null
++      return { kind: 'live', cfg: { title: typeof raw.title === 'string' ? raw.title : undefined, trends, time: (raw.time ?? {}) as TimeCfg } }
++    }
++    if (Array.isArray(raw.series)) {
++      for (const s of raw.series as Array<{ points?: unknown }>) if (!Array.isArray(s.points)) return null
++      return { kind: 'embedded', data: raw as unknown as TrendData, title: typeof raw.title === 'string' ? raw.title : 'Trend' }
++    }
++    return null
++  } catch { return null }
++}
++
++export const renderTrendBlocks = async (container: HTMLElement): Promise<void> => {
++  const blocks = container.querySelectorAll('code.language-trend')
++  if (blocks.length === 0) return
++  for (const block of blocks) {
++    const pre = block.parentElement
++    if (!pre) continue
++    const parsed = parseFence(block.textContent ?? '')
++    if (!parsed) {
++      // Loud failure: keep the raw fence visible and flag it — an operator
++      // should never silently lose a display.
++      const warn = document.createElement('div')
++      warn.className = 'text-warning text-xs'
++      warn.textContent = '⚠ trend block failed to parse — showing raw source'
++      pre.before(warn)
++      continue
++    }
++    const wrapper = document.createElement('div')
++    wrapper.className = 'my-2 rounded border border-border overflow-hidden'
++    pre.replaceWith(wrapper)
++    if (parsed.kind === 'live') {
++      const tags = parsed.cfg.trends.map(t => t.tag)
++      // Config-supplied trend colors (spec §10) seed the override map.
++      const colorOverrides = new Map(parsed.cfg.trends
++        .filter(t => typeof t.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(t.color))
++        .map(t => [t.tag, t.color!]))
++      renderControl(wrapper, parsed.cfg.title ?? `Plant trend — ${tags.join(', ')}`, archiveProvider,
++        { tags, time: parsed.cfg.time ?? { window: '8h' }, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null, tagMenuOpen: false, openCats: new Set(), colorOverrides, colorPickerFor: null },
++        loadCatalog)
++    } else {
++      const tags = parsed.data.series.map(s => s.tag)
++      // Embedded fences carry their own catalog: the series they embed.
++      const embeddedCatalog: TagInfo[] = parsed.data.series.map(s => ({ tag: s.tag, label: s.label ?? s.tag, unit: s.unit, kind: s.kind }))
++      renderControl(wrapper, parsed.title, makeEmbeddedProvider(parsed.data),
++        { tags, time: {}, rulerLocked: false, rulerT: null, cursorMode: 'ruler', region: null, tagMenuOpen: false, openCats: new Set(), colorOverrides: new Map(), colorPickerFor: null },
++        () => Promise.resolve(embeddedCatalog))
++    }
++  }
++}
++
++addPostRenderProcessor('trend', renderTrendBlocks)
