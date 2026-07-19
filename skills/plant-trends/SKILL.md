@@ -3,8 +3,8 @@ name: plant-trends
 description: Use when the operator asks to trend, plot, graph, or review the history of plant process values — power, temperature, pressure, rod position, pump status — or asks whether a parameter is behaving normally. Call trend_query and post its trend display, then interpret it.
 ---
 
-Historical trend display for the plant simulation (WinCC OnlineTrendControl
-style). Tag catalog by category — pick tags matching the operator's words
+Historical trend display for the plant simulation (SCADA-style online trend
+control). Tag catalog by category — pick tags matching the operator's words
 (names follow the pwr-ops wiki tag catalogue):
 
 - Plant Overview: REACTOR_POWER_MW, GEN_POWER_MW (power → energy MWh),

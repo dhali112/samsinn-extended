@@ -1,6 +1,6 @@
 diff --git a/skills/plant-trends/SKILL.md b/skills/plant-trends/SKILL.md
 new file mode 100644
-index 0000000..4b33a49
+index 0000000..ef36ba2
 --- /dev/null
 +++ b/skills/plant-trends/SKILL.md
 @@ -0,0 +1,67 @@
@@ -9,8 +9,8 @@ index 0000000..4b33a49
 +description: Use when the operator asks to trend, plot, graph, or review the history of plant process values — power, temperature, pressure, rod position, pump status — or asks whether a parameter is behaving normally. Call trend_query and post its trend display, then interpret it.
 +---
 +
-+Historical trend display for the plant simulation (WinCC OnlineTrendControl
-+style). Tag catalog by category — pick tags matching the operator's words
++Historical trend display for the plant simulation (SCADA-style online trend
++control). Tag catalog by category — pick tags matching the operator's words
 +(names follow the pwr-ops wiki tag catalogue):
 +
 +- Plant Overview: REACTOR_POWER_MW, GEN_POWER_MW (power → energy MWh),
@@ -73,7 +73,7 @@ index 0000000..4b33a49
 +changes appear as markers on the display.
 diff --git a/skills/plant-trends/tools/trend_query.ts b/skills/plant-trends/tools/trend_query.ts
 new file mode 100644
-index 0000000..816b488
+index 0000000..595e2a4
 --- /dev/null
 +++ b/skills/plant-trends/tools/trend_query.ts
 @@ -0,0 +1,89 @@
@@ -90,7 +90,7 @@ index 0000000..816b488
 +
 +const tool = {
 +  name: 'trend_query',
-+  description: 'Historical trend display for plant process tags (like WinCC OnlineTrendControl). Configures a front-end trend control (the browser fetches the data itself) and returns a server-computed analysis with alarms and anomalies.',
++  description: 'Historical trend display for plant process tags (SCADA-style online trend control). Configures a front-end trend control (the browser fetches the data itself) and returns a server-computed analysis with alarms and anomalies.',
 +  usage: 'Pick tags matching what the operator asked about (see skill for the tag catalog) and ONE time-axis mode: from/to for an absolute range, points for the last N samples, or window for a relative duration (default 8h). Post the returned `report` verbatim (it is small), then interpret using `analysis.lines` and `analysis.overall`.',
 +  returns: 'Object with `report` (a small ```trend config fence, ready to post) and `analysis` { overall: NORMAL|ATTENTION|ALARM, lines: string[], series: per-tag stats }.',
 +  parameters: {
@@ -700,11 +700,11 @@ index c4da229..e9d32e7 100644
  import { appendWhisperBadge } from '../whisper-badge.ts'
 diff --git a/src/ui/modules/trend/index.ts b/src/ui/modules/trend/index.ts
 new file mode 100644
-index 0000000..42f0d08
+index 0000000..2f72583
 --- /dev/null
 +++ b/src/ui/modules/trend/index.ts
 @@ -0,0 +1,960 @@
-+// Trend control — WinCC-OnlineTrendControl-style front-end object.
++// Trend control — SCADA/HMI-style online-trend front-end object.
 +//
 +// ARCHITECTURE: this is a pure front-end control. A ```trend fence carries
 +// only a CONFIG (pens + time axis); the control fetches actual samples from
@@ -721,9 +721,9 @@ index 0000000..42f0d08
 +// archive API.
 +//
 +// Operator surface (spec correspondence):
-+//   pen add/remove + visibility chips … ShowTrendSelection / ShowTagSelection
-+//   time-axis mode controls           … ShowTimeSelection
-+//   ruler with per-pen readout        … Ruler / RulerControl
++//   tag add/remove via categorized picker … operator tag-selection prompt
++//   time-axis mode controls               … operator time-selection prompt
++//   ruler with per-tag readout            … cursor/ruler readout
 +//   stats table                       … CalculateStatistic
 +//   CSV export                        … Export()
 +//   binary lanes, limit lines, event markers … pen semantics from tag metadata

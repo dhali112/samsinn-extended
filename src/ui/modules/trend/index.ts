@@ -1,4 +1,4 @@
-// Trend control — WinCC-OnlineTrendControl-style front-end object.
+// Trend control — SCADA/HMI-style online-trend front-end object.
 //
 // ARCHITECTURE: this is a pure front-end control. A ```trend fence carries
 // only a CONFIG (pens + time axis); the control fetches actual samples from
@@ -15,9 +15,9 @@
 // archive API.
 //
 // Operator surface (spec correspondence):
-//   pen add/remove + visibility chips … ShowTrendSelection / ShowTagSelection
-//   time-axis mode controls           … ShowTimeSelection
-//   ruler with per-pen readout        … Ruler / RulerControl
+//   tag add/remove via categorized picker … operator tag-selection prompt
+//   time-axis mode controls               … operator time-selection prompt
+//   ruler with per-tag readout            … cursor/ruler readout
 //   stats table                       … CalculateStatistic
 //   CSV export                        … Export()
 //   binary lanes, limit lines, event markers … pen semantics from tag metadata

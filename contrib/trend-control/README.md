@@ -1,6 +1,6 @@
 # Trend Control — contribution package
 
-A WinCC-OnlineTrendControl-style historical trend display for samsinn:
+A SCADA/HMI-style historical trend display for samsinn:
 an interactive front-end chart object driven by a new ```` ```trend ```` fence,
 an archive API backed by a plant historian, and an AI skill so agents can
 configure a display from operator phrasing and interpret what it shows.
@@ -18,11 +18,10 @@ as the repo. Tag names/units follow the pwr-ops wiki tag catalogue
   stepped binary lanes, dashed alarm-limit lines colored per owning trace,
   event markers with tooltips, live statistics table, event list.
 - **Operator controls on the display**: categorized tag dropdown with
-  checkboxes (spec: ShowTagSelection), three time-axis modes — relative
-  window / absolute start–end / last-N-samples (ShowTimeSelection), ruler
-  cursor with per-pen readout (RulerControl), drag-select region with exact
-  server statistics, per-tag color picker from a fixed palette, refresh
-  (relative windows re-anchor to latest data), CSV export.
+  checkboxes, three time-axis modes — relative window / absolute start–end /
+  last-N-samples, ruler cursor with per-tag readout, drag-select region with
+  exact server statistics, per-tag color picker from a fixed palette,
+  refresh (relative windows re-anchor to latest data), CSV export.
 - **Data never passes through the LLM.** The fence carries only a ~200-byte
   config (tags + time axis); the browser control fetches samples from
   `/api/trends/data` and re-fetches on every interaction. (First iteration
@@ -98,9 +97,9 @@ embedded `series[].points` still render via a local provider.
   right for a static demo CSV; with a live DB they coincide.
 - The region selection store is in-memory latest-wins (single-operator
   assumption); a multi-tenant deployment would key it per instance.
-- Known omissions vs the WinCC object model: multiple stacked trend windows
-  (binary lanes cover the common case), named/saved view configs, and
-  `Online` live-scrolling (meaningful once a live DB is behind it).
+- Known omissions vs a full HMI trend object model: multiple stacked trend
+  windows (binary lanes cover the common case), named/saved view configs,
+  and live-scrolling online mode (meaningful once a live DB is behind it).
 - The UI file is ~700 lines; the deliberate constraints were: no external
   chart lib, loud failures (unparseable fence keeps raw source visible with
   a warning), and every operator interaction = a fresh archive query rather
