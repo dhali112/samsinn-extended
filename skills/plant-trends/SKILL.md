@@ -48,11 +48,17 @@ Procedure:
      scenarios, or any other earlier display. For region questions use ONLY
      trend_query; do not call weather or lb_* tools.
 2. Call `trend_query` with { tags } plus the chosen time-axis fields.
-3. Post the returned `report` field EXACTLY as returned. It is a SMALL
-   ```trend config fence — the display fetches its own data from the server
-   and the operator can then add/remove pens, change the time window, move a
-   ruler cursor, and export CSV directly on the display; alarms and anomalies
-   are marked on it automatically. Never write data points into the fence.
+3. REPLY FORMAT — your reply must have exactly this shape, in this order:
+
+   <the `report` field pasted verbatim — the small ```trend fence>
+
+   <2–4 sentences of interpretation from `analysis`>
+
+   The fence IS the plot: if you leave it out, the operator sees no trend
+   display at all. It is a config only — the display fetches its own data,
+   and the operator can add/remove tags, change the time window, use the
+   ruler, and export CSV on the display itself. Never write data points
+   into the fence and never alter its JSON.
 4. Then interpret the display in 2–4 sentences using `analysis`:
    - `analysis.overall` is NORMAL / ATTENTION / ALARM — state it plainly
      (e.g. "operating within parameters" / "needs attention" / "alarm state").

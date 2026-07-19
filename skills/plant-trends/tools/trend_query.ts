@@ -11,8 +11,8 @@ import { queryTrends, TREND_TAGS, MAX_POINTS, getSelectedRegion } from '../../..
 
 const tool = {
   name: 'trend_query',
-  description: 'Historical trend display for plant process tags (SCADA-style online trend control). Configures a front-end trend control (the browser fetches the data itself) and returns a server-computed analysis with alarms and anomalies.',
-  usage: 'Pick tags matching what the operator asked about (see skill for the tag catalog) and ONE time-axis mode: from/to for an absolute range, points for the last N samples, or window for a relative duration (default 8h). Post the returned `report` verbatim (it is small), then interpret using `analysis.lines` and `analysis.overall`.',
+  description: 'Historical trend display for plant process tags (SCADA-style online trend control). Returns a small `report` fence the operator sees as an interactive chart — your reply MUST BEGIN with `report` pasted verbatim, then your interpretation; without it the operator gets no plot.',
+  usage: 'Pick tags matching what the operator asked about (see skill for the tag catalog) and ONE time-axis mode: from/to for an absolute range, points for the last N samples, or window for a relative duration (default 8h). Start your reply with the returned `report` verbatim, then interpret using `analysis.lines` and `analysis.overall`.',
   returns: 'Object with `report` (a small ```trend config fence, ready to post) and `analysis` { overall: NORMAL|ATTENTION|ALARM, lines: string[], series: per-tag stats }.',
   parameters: {
     type: 'object',
