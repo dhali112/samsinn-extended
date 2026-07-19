@@ -304,6 +304,12 @@ export const evaluate = async (
   // to the final Decision — lets downstream consumers (export_room, UI)
   // reconstruct what the agent actually did before answering.
   const toolTrace: Array<ToolTraceEntry> = []
+  // Tool results may carry data.attachment: a markdown block (e.g. a
+  // ```trend display fence) that MUST reach the room even when the model
+  // fails to paste it. Display delivery cannot depend on model compliance —
+  // small local models drop or reconstruct fences. Collected here and
+  // appended to the final message unless already present verbatim.
+  const pendingAttachments: string[] = []
 
   // Cap preview at 200 chars — this is a debugging/analysis aid for the
   // UI trace panel, not context fed to the LLM, and arbitrarily long
@@ -395,6 +401,12 @@ export const evaluate = async (
             success: result.success,
             resultPreview: previewFor(result),
           })
+          if (result.success && result.data && typeof result.data === 'object') {
+            const att = (result.data as Record<string, unknown>).attachment
+            if (typeof att === 'string' && att.trim().length > 0 && !pendingAttachments.includes(att.trim())) {
+              pendingAttachments.push(att.trim())
+            }
+          }
         }
         context.push({ role: 'assistant' as const, content: streamResult.content })
         context.push({ role: 'user' as const, content: formatToolResults(calls, results) })
@@ -453,7 +465,13 @@ export const evaluate = async (
         (ms) => { totalGenerationMs += ms },
         (m) => { lastMetrics = m },
       )
-      return makeResult({ response: { action: 'respond', content: finalContent }, generationMs: totalGenerationMs, triggerRoomId })
+      // Guarantee tool attachments (e.g. trend display fences) reach the
+      // room: append any the model did not include verbatim.
+      let delivered = finalContent
+      for (const att of pendingAttachments) {
+        if (!delivered.includes(att)) delivered += `\n\n${att}`
+      }
+      return makeResult({ response: { action: 'respond', content: delivered }, generationMs: totalGenerationMs, triggerRoomId })
     }
 
     // Max iterations reached. If the model produced any visible text along
@@ -462,10 +480,14 @@ export const evaluate = async (
     // [pass] error take its place.
     const loopReason = `Tool call loop exceeded ${effectiveMaxIterations} iterations`
     if (lastAssistantText.length > 0) {
+      let partial = lastAssistantText
+      for (const att of pendingAttachments) {
+        if (!partial.includes(att)) partial += `\n\n${att}`
+      }
       return makeResult({
         response: {
           action: 'respond',
-          content: `${lastAssistantText}\n\n_⚠ ${loopReason} — partial result._`,
+          content: `${partial}\n\n_⚠ ${loopReason} — partial result._`,
         },
         generationMs: totalGenerationMs,
         triggerRoomId,

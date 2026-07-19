@@ -73,10 +73,15 @@ const tool = {
       time,
     }
 
+    const report = '```trend\n' + JSON.stringify(config) + '\n```'
     return {
       success: true,
       data: {
-        report: '```trend\n' + JSON.stringify(config) + '\n```',
+        report,
+        // Guaranteed delivery: the eval layer appends `attachment` to the
+        // agent's message when the model fails to paste the fence itself
+        // (small local models drop or reconstruct it).
+        attachment: report,
         analysis: result.analysis,
         window: result.modeLabel,
         availableTags: Object.keys(TREND_TAGS),
