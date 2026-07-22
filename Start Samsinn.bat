@@ -1,14 +1,14 @@
 @echo off
 rem Double-click launcher for Samsinn (local, free setup)
-rem - Ensures Ollama is running in CPU mode (GTX 1060 driver is too old
-rem   for the CUDA toolkit newer Ollama builds ship)
-rem - Starts the Samsinn server in its own window
-rem - Waits until the server actually answers before opening the browser
-rem   (opening early showed a "can't connect" page that looked like a
-rem   failed startup while the server was still booting)
+rem - Ensures Ollama is running in CPU mode
+rem - Runs the Samsinn server in a minimized, self-restarting loop:
+rem   if the server crashes it restarts within 3 seconds, and every run
+rem   logs to %USERPROFILE%\.samsinn\server.log so crashes leave evidence
+rem - Waits until the server answers before opening the browser
+
+if "%~1"=="__serve" goto serve
 
 set CUDA_VISIBLE_DEVICES=-1
-rem Seed new sandboxes with the local model that actually works here
 set SAMSINN_SEED_MODEL=ollama:qwen2.5:7b
 cd /d "%~dp0"
 
@@ -19,18 +19,16 @@ if errorlevel 1 (
     start "Ollama" /MIN cmd /c "ollama serve"
 )
 
-rem Start the Samsinn server in its own MINIMIZED window (it lives in the
-rem taskbar as "Samsinn server" - closing that window stops the app, which
-rem is easy to do by accident when it sits open on the desktop)
-echo Starting Samsinn server...
-start "Samsinn server - close this window to stop" /MIN cmd /c "bun run start"
+echo Starting Samsinn server (minimized window "Samsinn server")...
+start "Samsinn server - close this window to stop" /MIN cmd /c ""%~f0" __serve"
 
 echo Waiting for the server to come up...
 set tries=0
 :wait
 set /a tries+=1
 if %tries% gtr 60 (
-    echo Server did not answer after 60 seconds - check the "Samsinn server" window for errors.
+    echo Server did not answer after 60 seconds.
+    echo Check %USERPROFILE%\.samsinn\server.log for the error.
     pause
     exit /b 1
 )
@@ -41,3 +39,25 @@ if errorlevel 1 goto wait
 echo Server is up - opening http://localhost:3000
 start "" http://localhost:3000
 timeout /t 3 /nobreak >nul
+exit /b 0
+
+rem ==== server loop (runs inside the minimized "Samsinn server" window) ====
+:serve
+cd /d "%~dp0"
+set CUDA_VISIBLE_DEVICES=-1
+set SAMSINN_SEED_MODEL=ollama:qwen2.5:7b
+set LOG=%USERPROFILE%\.samsinn\server.log
+echo [%date% %time%] ==== launcher session start ==== > "%LOG%"
+:loop
+rem Refuse to fight another server for the port (double-launch guard)
+netstat -ano | findstr ":3000" | findstr "LISTENING" >nul
+if not errorlevel 1 (
+    echo [%date% %time%] port 3000 already in use - another server is running; retrying in 15s >> "%LOG%"
+    timeout /t 15 /nobreak >nul
+    goto loop
+)
+echo [%date% %time%] starting server >> "%LOG%"
+bun run start >> "%LOG%" 2>&1
+echo [%date% %time%] server exited (code %errorlevel%) - restarting in 3s >> "%LOG%"
+timeout /t 3 /nobreak >nul
+goto loop
