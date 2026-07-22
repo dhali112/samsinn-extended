@@ -1,82 +1,53 @@
 diff --git a/skills/plant-trends/SKILL.md b/skills/plant-trends/SKILL.md
 new file mode 100644
-index 0000000..ef36ba2
+index 0000000..3ffb007
 --- /dev/null
 +++ b/skills/plant-trends/SKILL.md
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,38 @@
 +---
 +name: plant-trends
-+description: Use when the operator asks to trend, plot, graph, or review the history of plant process values — power, temperature, pressure, rod position, pump status — or asks whether a parameter is behaving normally. Call trend_query and post its trend display, then interpret it.
++description: Use when the operator asks to trend, plot, graph, or review the history of plant process values — temperature, pressure, power, levels, pump status — or asks whether a parameter is behaving normally. Call trend_query, then interpret its analysis.
 +---
 +
-+Historical trend display for the plant simulation (SCADA-style online trend
-+control). Tag catalog by category — pick tags matching the operator's words
-+(names follow the pwr-ops wiki tag catalogue):
++Historical trend display for the plant simulation. Always answer trend
++questions by calling `trend_query` — the display is delivered to the room
++automatically; your job is picking the right tags/time and interpreting.
 +
-+- Plant Overview: REACTOR_POWER_MW, GEN_POWER_MW (power → energy MWh),
-+  RCS_TEMP_C, RCS_PRESS_BAR, CTRL_ROD_POS_PCT, CHARGING_PUMP_A_RUN
-+- RCS: TAVG, TE-411-HOT, TE-411-COLD, SUB-MARGIN (subcooling), CET-AVG
-+  (core-exit temp), RCS-BORON, RCP-1, RCP-2
-+- Pressurizer: PT-455 (pressure), PZR-LVL, PZR-HTR, PORV-456A
-+- Steam Generators: SG-A-LVL-NR, SG-B-LVL-NR, SG-A-PR, SG-B-PR, SG-A-N16,
-+  MS-HEADER-PR, MSIV-A
-+- Feedwater & AFW: MFW-A-CV, AFW-FLOW, AFW-PUMP-A, AFW-PUMP-T, TDAFW-SPEED,
-+  CST-LVL
++Tags by category (pick the ones matching the operator's words):
++
++- Plant Overview: REACTOR_POWER_MW, GEN_POWER_MW, RCS_TEMP_C, RCS_PRESS_BAR, CTRL_ROD_POS_PCT, CHARGING_PUMP_A_RUN
++- RCS: TAVG, TE-411-HOT, TE-411-COLD, SUB-MARGIN, CET-AVG, RCS-BORON, RCP-1, RCP-2
++- Pressurizer: PT-455, PZR-LVL, PZR-HTR, PORV-456A
++- Steam Generators: SG-A-LVL-NR, SG-B-LVL-NR, SG-A-PR, SG-B-PR, SG-A-N16, MS-HEADER-PR, MSIV-A
++- Feedwater & AFW: MFW-A-CV, AFW-FLOW, AFW-PUMP-A, AFW-PUMP-T, TDAFW-SPEED, CST-LVL
 +- Safety Injection: SI-SIG, SI-PUMP-A, SI-FLOW, RWST-LVL, ACCUM-1
 +- Containment: CTMT-PR, CTMT-TEMP, CTMT-RAD, CTMT-SUMP-LVL
-+- Reactor Control: NIS-PR-AVG (reactor power %), NIS-IR, NIS-SR, ROD-POS-AVG
++- Reactor Control: NIS-PR-AVG, NIS-IR, NIS-SR, ROD-POS-AVG
 +- Electrical: DG-A, DG-B, BUS-A-EMERG, DC-BUS-LVL
-+- Radiation Monitoring: AEJ-RAD (air ejector — steam-side activity),
-+  MAB-RAD, CCW-RAD
++- Radiation Monitoring: AEJ-RAD, MAB-RAD, CCW-RAD
 +- Leitbild: AMB-UNITS-AVAIL, AMB-INCIDENTS-ACTIVE, HOSP-ED-OCC
 +
-+Operator phrasing hints: "subcooling" → SUB-MARGIN; "pressurizer pressure"
-+→ PT-455; "reactor power" → NIS-PR-AVG or REACTOR_POWER_MW; "steam generator
-+level" → SG-A-LVL-NR/SG-B-LVL-NR; "diesel" → DG-A/DG-B; "ambulances" →
-+AMB-UNITS-AVAIL. If unsure, the tool's error lists every valid tag.
++Hints: "subcooling" → SUB-MARGIN · "pressurizer pressure" → PT-455 ·
++"reactor power" → NIS-PR-AVG · "SG level" → SG-A-LVL-NR · "diesel" → DG-A.
 +
-+Procedure:
++Time axis (one of): { window: 15m|30m|1h|4h|8h|24h|48h|1w } (default 8h) ·
++{ from, to } as ISO datetimes · { points: N } for the last N samples (≤240) ·
++{ window: "selection" } when the operator says "the selected region", "the
++window shown", or "this region" (tags optional — they default to that
++display's tags; a region always refers to this trend display, never to
++weather or Leitbild).
 +
-+1. Choose tags from the catalog based on the operator's request (multiple tags
-+   on one display is fine and encouraged when they are related, e.g. coolant
-+   temperature + pressure). Choose ONE time-axis mode from the operator's
-+   phrasing:
-+   - Absolute range → { from, to } as ISO datetimes
-+     ("between 06:00 and noon yesterday" → from: 2026-07-14T06:00, to: 2026-07-14T12:00)
-+   - Last N samples → { points } ("show me the last 100 data points" → points: 100, max 240)
-+   - Relative window → { window }: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w
-+     ("past week" → 1w). Default 8h if the operator didn't say.
-+   - Operator's selected region → { useSelectedRegion: true } when they say
-+     "the window shown", "the selected region", "this region", "the span I
-+     selected". Tags may be omitted (they default to that display's tags).
-+     IMPORTANT: a "region" or "window shown" ALWAYS refers to the plant trend
-+     display and its process tags — never to weather maps, Leitbild
-+     scenarios, or any other earlier display. For region questions use ONLY
-+     trend_query; do not call weather or lb_* tools.
-+2. Call `trend_query` with { tags } plus the chosen time-axis fields.
-+3. Post the returned `report` field EXACTLY as returned. It is a SMALL
-+   ```trend config fence — the display fetches its own data from the server
-+   and the operator can then add/remove pens, change the time window, move a
-+   ruler cursor, and export CSV directly on the display; alarms and anomalies
-+   are marked on it automatically. Never write data points into the fence.
-+4. Then interpret the display in 2–4 sentences using `analysis`:
-+   - `analysis.overall` is NORMAL / ATTENTION / ALARM — state it plainly
-+     (e.g. "operating within parameters" / "needs attention" / "alarm state").
-+   - Use `analysis.lines` for the specifics (excursions, pump trips, energy
-+     totals). Do not invent numbers not present in the analysis.
-+5. If the operator asks a follow-up about an already-posted trend, call
-+   `trend_query` again with the same tags/window and answer from `analysis`
-+   without re-posting the display.
-+
-+Binary tags render stepped automatically; power tags include energy (MWh)
-+integrated over the window; alarm-limit crossings, rapid changes, and state
-+changes appear as markers on the display.
++After the call, reply with 2–4 sentences from `analysis`: state
++`analysis.overall` (NORMAL / ATTENTION / ALARM) plainly and use
++`analysis.lines` for specifics. Use only numbers from the analysis.
++Do not write any diagram or fence yourself — the trend display is
++attached to your message automatically.
 diff --git a/skills/plant-trends/tools/trend_query.ts b/skills/plant-trends/tools/trend_query.ts
 new file mode 100644
-index 0000000..595e2a4
+index 0000000..9434a13
 --- /dev/null
 +++ b/skills/plant-trends/tools/trend_query.ts
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,94 @@
 +// trend_query — configure a front-end trend display + get its analysis.
 +//
 +// ARCHITECTURE: the trend control is a front-end object. Data NEVER passes
@@ -90,14 +61,14 @@ index 0000000..595e2a4
 +
 +const tool = {
 +  name: 'trend_query',
-+  description: 'Historical trend display for plant process tags (SCADA-style online trend control). Configures a front-end trend control (the browser fetches the data itself) and returns a server-computed analysis with alarms and anomalies.',
-+  usage: 'Pick tags matching what the operator asked about (see skill for the tag catalog) and ONE time-axis mode: from/to for an absolute range, points for the last N samples, or window for a relative duration (default 8h). Post the returned `report` verbatim (it is small), then interpret using `analysis.lines` and `analysis.overall`.',
++  description: 'Query the plant historian and produce an interactive trend display with alarm analysis. Use whenever the operator asks to trend, plot, graph, or analyze the history of plant process tags (temperature, pressure, power, pump status, …).',
++  usage: 'Pick tags matching the operator words (tag catalog in the skill) and one time-axis mode: window (default 8h), from/to, or points. The display fence is delivered to the room automatically; write a short interpretation from analysis.lines and analysis.overall.',
 +  returns: 'Object with `report` (a small ```trend config fence, ready to post) and `analysis` { overall: NORMAL|ATTENTION|ALARM, lines: string[], series: per-tag stats }.',
 +  parameters: {
 +    type: 'object',
 +    properties: {
 +      tags: { type: 'array', items: { type: 'string' }, description: 'Tag names to plot, e.g. ["RCS_TEMP_C","RCS_PRESS_BAR"]' },
-+      window: { type: 'string', description: 'Relative window back from latest data: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w (default 8h)' },
++      window: { type: 'string', description: 'Time window: 15m, 30m, 1h, 4h, 8h, 24h, 48h, 1w (relative, default 8h) — or "selection" to use the region the operator selected on a trend display ("the selected region", "the window shown").' },
 +      from: { type: 'string', description: 'Absolute range start (ISO datetime, e.g. 2026-07-14T06:00). Overrides window/points.' },
 +      to: { type: 'string', description: 'Absolute range end (ISO datetime). Defaults to latest data when only from is given.' },
 +      points: { type: 'number', description: `Plot exactly the last N samples per tag (10–${MAX_POINTS}). Overrides window.` },
@@ -111,7 +82,7 @@ index 0000000..595e2a4
 +    let to = typeof params.to === 'string' || typeof params.to === 'number' ? params.to : undefined
 +
 +    let regionContext: string | null = null
-+    if (params.useSelectedRegion === true) {
++    if (params.useSelectedRegion === true || params.window === 'selection') {
 +      const sel = getSelectedRegion()
 +      if (!sel) {
 +        return { success: false, error: 'No region is currently selected on a trend display. Ask the operator to switch the display to Region mode and drag across the span of interest first.' }
@@ -127,7 +98,7 @@ index 0000000..595e2a4
 +
 +    const result = await queryTrends({
 +      tags,
-+      window: typeof params.window === 'string' ? params.window : undefined,
++      window: typeof params.window === 'string' && params.window !== 'selection' ? params.window : undefined,
 +      from,
 +      to,
 +      points: typeof params.points === 'number' ? params.points : undefined,
@@ -152,10 +123,15 @@ index 0000000..595e2a4
 +      time,
 +    }
 +
++    const report = '```trend\n' + JSON.stringify(config) + '\n```'
 +    return {
 +      success: true,
 +      data: {
-+        report: '```trend\n' + JSON.stringify(config) + '\n```',
++        report,
++        // Guaranteed delivery: the eval layer appends `attachment` to the
++        // agent's message when the model fails to paste the fence itself
++        // (small local models drop or reconstruct it).
++        attachment: report,
 +        analysis: result.analysis,
 +        window: result.modeLabel,
 +        availableTags: Object.keys(TREND_TAGS),
@@ -262,10 +238,10 @@ index 0000000..d86bb0b
 +]
 diff --git a/src/trends/historian.ts b/src/trends/historian.ts
 new file mode 100644
-index 0000000..fb34f5d
+index 0000000..3425cc7
 --- /dev/null
 +++ b/src/trends/historian.ts
-@@ -0,0 +1,420 @@
+@@ -0,0 +1,467 @@
 +// Plant historian — server-side data layer for the trend control.
 +//
 +// The trend control is a FRONT-END object: it never receives data through
@@ -287,7 +263,9 @@ index 0000000..fb34f5d
 +// fake data was generated once, so relative windows anchor to data end.
 +
 +import { readFile } from 'node:fs/promises'
++import { readFileSync, writeFileSync, rmSync } from 'node:fs'
 +import { join } from 'node:path'
++import { homedir } from 'node:os'
 +
 +export interface TagMeta {
 +  readonly label: string
@@ -561,11 +539,37 @@ index 0000000..fb34f5d
 +  readonly tags: ReadonlyArray<string>
 +  readonly savedAt: number
 +}
++// Persisted to disk so a selection survives server restarts (a selection
++// made in the evening must still resolve the next morning).
++const SELECTION_FILE = join(homedir(), '.samsinn', 'trend-selection.json')
 +let selectedRegion: RegionSelection | null = null
-+export const setSelectedRegion = (sel: { from: number; to: number; tags: ReadonlyArray<string> } | null): void => {
-+  selectedRegion = sel ? { ...sel, savedAt: Date.now() } : null
++let selectionLoaded = false
++const loadSelection = (): void => {
++  if (selectionLoaded) return
++  selectionLoaded = true
++  try {
++    const raw = JSON.parse(readFileSync(SELECTION_FILE, 'utf-8')) as RegionSelection
++    if (typeof raw?.from === 'number' && typeof raw?.to === 'number' && Array.isArray(raw.tags)) {
++      selectedRegion = raw
++    }
++  } catch { /* no stored selection yet — expected on first run / after clear */ }
 +}
-+export const getSelectedRegion = (): RegionSelection | null => selectedRegion
++export const setSelectedRegion = (sel: { from: number; to: number; tags: ReadonlyArray<string> } | null): void => {
++  loadSelection()
++  selectedRegion = sel ? { ...sel, savedAt: Date.now() } : null
++  try {
++    if (selectedRegion) writeFileSync(SELECTION_FILE, JSON.stringify(selectedRegion))
++    else rmSync(SELECTION_FILE, { force: true })
++  } catch (err) {
++    // Loud: a selection that silently fails to persist would resurface as
++    // "the agent forgot my region" after the next restart.
++    console.warn('[trends] failed to persist region selection:', err)
++  }
++}
++export const getSelectedRegion = (): RegionSelection | null => {
++  loadSelection()
++  return selectedRegion
++}
 +
 +export interface TrendQueryParams {
 +  readonly tags: ReadonlyArray<string>
@@ -599,6 +603,25 @@ index 0000000..fb34f5d
 +}
 +
 +export const queryTrends = async (params: TrendQueryParams): Promise<TrendQueryResult | { error: string }> => {
++  // window === 'selection' resolves the operator's drag-selected region,
++  // with tags defaulting to the pens of the display the selection was made
++  // on. Folded into the window parameter because small models reliably
++  // choose among values of a parameter they already use, but tend to
++  // ignore a separate boolean flag.
++  if (params.window === 'selection') {
++    const sel = getSelectedRegion()
++    if (!sel) {
++      return { error: 'No region is currently selected on a trend display. Ask the operator to switch the display to Region mode and drag across the span of interest first.' }
++    }
++    return queryTrends({
++      ...params,
++      window: undefined,
++      from: sel.from,
++      to: sel.to,
++      tags: params.tags.length > 0 ? params.tags : sel.tags,
++    })
++  }
++
 +  const tags = params.tags.map(String)
 +  const unknown = tags.filter(t => !TREND_TAGS[t])
 +  if (tags.length === 0 || unknown.length > 0) {
@@ -700,10 +723,10 @@ index c4da229..e9d32e7 100644
  import { appendWhisperBadge } from '../whisper-badge.ts'
 diff --git a/src/ui/modules/trend/index.ts b/src/ui/modules/trend/index.ts
 new file mode 100644
-index 0000000..2f72583
+index 0000000..fd7201e
 --- /dev/null
 +++ b/src/ui/modules/trend/index.ts
-@@ -0,0 +1,960 @@
+@@ -0,0 +1,984 @@
 +// Trend control — SCADA/HMI-style online-trend front-end object.
 +//
 +// ARCHITECTURE: this is a pure front-end control. A ```trend fence carries
@@ -1301,7 +1324,18 @@ index 0000000..2f72583
 +    const px = x(e.t)
 +    const color = EVENT_COLOR[e.level] ?? '#6b7280'
 +    svg.appendChild(el('line', { x1: px, x2: px, y1: mt, y2: mt + plotH, stroke: color, 'stroke-opacity': 0.55, 'stroke-dasharray': '2 3' }))
-+    const marker = el('path', { d: `M${px - 4},${mt} L${px + 4},${mt} L${px},${mt + 7} Z`, fill: color })
++    // Alarm markers sit ON the violated threshold line (at the crossing
++    // time); state changes and notices stay at the plot top as time flags.
++    let markerTop = mt
++    if (e.level === 'HIGH' || e.level === 'HIHI' || e.level === 'LOW') {
++      const s = analog.find(sr => sr.tag === e.tag && sr.limits && axisUnits.includes(sr.unit))
++      const lim = s ? (e.level === 'HIHI' ? s.limits!.highHigh : e.level === 'HIGH' ? s.limits!.high : s.limits!.low) : undefined
++      if (s && lim !== undefined) {
++        const ly = yFor(s)(lim)
++        if (ly >= mt + 7 && ly <= mt + plotH) markerTop = ly - 7
++      }
++    }
++    const marker = el('path', { d: `M${px - 4},${markerTop} L${px + 4},${markerTop} L${px},${markerTop + 7} Z`, fill: color })
 +    const tip = el('title')
 +    tip.textContent = `[${e.level}] ${e.text}`
 +    marker.appendChild(tip)
@@ -1428,12 +1462,25 @@ index 0000000..2f72583
 +    const head = document.createElement('div')
 +    head.style.cssText = 'display:flex;align-items:center;gap:8px'
 +    const headText = document.createElement('b')
-+    headText.textContent = `Region ${fmt(state.region.from)} – ${fmt(state.region.to)} (${dur >= 3600 ? `${(dur / 3600).toFixed(1)}h` : `${Math.round(dur / 60)} min`})`
++    headText.textContent = `Region ${fmt(state.region.from)} – ${fmt(state.region.to)} (${dur >= 3600 ? `${(dur / 3600).toFixed(1)}h` : `${Math.round(dur / 60)} min`}) —`
 +    head.appendChild(headText)
-+    const hint = document.createElement('span')
-+    hint.style.cssText = 'opacity:.6'
-+    hint.textContent = 'saved — you can ask the agent about "the selected region"'
-+    head.appendChild(hint)
++    // One-click handoff to the agent: sends the question through the room's
++    // own composer, so the message (with explicit times) lands in the
++    // conversation and the agent resolves it via trend_query.
++    const ask = document.createElement('button')
++    ask.textContent = 'ask the agent about the selected region'
++    ask.style.cssText = CTL_STYLE + ';cursor:pointer'
++    ask.onclick = () => {
++      const ta = document.querySelector('textarea[placeholder^="Type a message"]') as HTMLTextAreaElement | null
++      const form = ta?.closest('form')
++      if (!ta || !form) {
++        ask.textContent = '⚠ open a room composer first'
++        return
++      }
++      ta.value = `What's happening in the selected region (${fmt(state.region!.from)} – ${fmt(state.region!.to)}) on the plant trend? Analyze it and flag anything abnormal.`
++      form.requestSubmit()
++    }
++    head.appendChild(ask)
 +    const clear = document.createElement('button')
 +    clear.textContent = '✕ clear'
 +    clear.style.cssText = CTL_STYLE + ';cursor:pointer;margin-left:auto'
