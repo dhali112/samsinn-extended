@@ -244,19 +244,24 @@ export const createProviderRouter = (
     pinned: boolean
     structuralAttempts: ProviderAttemptRecord[]
   } => {
-    const { provider: pinned, modelId } = parseProviderPrefix(model)
+    let { modelId } = parseProviderPrefix(model)
+    const { provider: pinned } = parseProviderPrefix(model)
     if (pinned) {
-      if (!providers[pinned] || !isEnabled(pinned)) {
+      if (!providers[pinned]) {
+        // The prefix is not a provider name. Ollama model tags legitimately
+        // contain colons ("qwen2.5:7b", "llama3.2:latest") and the UI model
+        // dropdown emits them bare — treat the whole string as an unprefixed
+        // model id and fall through to the catalog walk instead of failing
+        // every such model with "unknown provider".
+        modelId = model
+      } else if (!isEnabled(pinned)) {
         return {
           candidates: [], modelId, pinned: true,
-          structuralAttempts: [{
-            provider: pinned,
-            reason: providers[pinned] ? 'disabled or no key' : 'unknown provider',
-            code: providers[pinned] ? 'disabled' : 'unknown',
-          }],
+          structuralAttempts: [{ provider: pinned, reason: 'disabled or no key', code: 'disabled' }],
         }
+      } else {
+        return { candidates: [pinned], modelId, pinned: true, structuralAttempts: [] }
       }
-      return { candidates: [pinned], modelId, pinned: true, structuralAttempts: [] }
     }
 
     // Filter order by providers whose cached availableModels includes modelId
