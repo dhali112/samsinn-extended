@@ -19,9 +19,11 @@ if errorlevel 1 (
     start "Ollama" /MIN cmd /c "ollama serve"
 )
 
-rem Start the Samsinn server in its own window (close that window to stop it)
+rem Start the Samsinn server in its own MINIMIZED window (it lives in the
+rem taskbar as "Samsinn server" - closing that window stops the app, which
+rem is easy to do by accident when it sits open on the desktop)
 echo Starting Samsinn server...
-start "Samsinn server - close this window to stop" cmd /c "bun run start"
+start "Samsinn server - close this window to stop" /MIN cmd /c "bun run start"
 
 echo Waiting for the server to come up...
 set tries=0
